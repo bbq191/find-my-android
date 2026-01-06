@@ -47,6 +47,10 @@ object CoordinateConverter {
      * @return GCJ-02坐标
      */
     fun wgs84ToGcj02(wgsLat: Double, wgsLng: Double): LatLng {
+        if (wgsLat.isNaN() || wgsLng.isNaN()) {
+            return LatLng(0.0, 0.0)
+        }
+
         if (!isInChina(wgsLat, wgsLng)) {
             // 不在中国大陆范围内，无需转换
             return LatLng(wgsLat, wgsLng)

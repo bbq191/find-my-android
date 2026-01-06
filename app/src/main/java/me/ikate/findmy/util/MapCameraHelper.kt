@@ -36,6 +36,7 @@ object MapCameraHelper {
      * @param zoom 缩放级别（默认 15）
      */
     fun animateToDevice(map: GoogleMap?, device: Device, zoom: Float = 15f) {
+        if (device.location.latitude.isNaN() || device.location.longitude.isNaN()) return
         map?.animateCamera(
             CameraUpdateFactory.newLatLngZoom(
                 device.location,
@@ -89,6 +90,7 @@ object MapCameraHelper {
         zoom: Float = 15f,
         animate: Boolean = true
     ) {
+        if (latLng.latitude.isNaN() || latLng.longitude.isNaN()) return
         val cameraUpdate = CameraUpdateFactory.newLatLngZoom(latLng, zoom)
         if (animate) {
             map?.animateCamera(cameraUpdate)

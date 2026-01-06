@@ -139,9 +139,34 @@ class LocationReportService(private val context: Context) {
     @SuppressLint("MissingPermission")
     suspend fun reportCurrentLocation(): Result<Device> {
         return try {
-            // 获取当前位置
-            val location = fusedLocationClient.lastLocation.await()
-                ?: throw Exception("无法获取位置信息，请确保已开启定位服务")
+            // 尝试获取最后已知位置
+            var location = try {
+                fusedLocationClient.lastLocation.await()
+            } catch (e: Exception) {
+                android.util.Log.w("LocationReportService", "无法获取 LastLocation", e)
+                null
+            }
+
+            // 如果没有最后已知位置，主动请求一次高精度位置
+            if (location == null) {
+                android.util.Log.d("LocationReportService", "Last location is null, requesting current location...")
+                try {
+                    location = fusedLocationClient.getCurrentLocation(
+                        com.google.android.gms.location.Priority.PRIORITY_HIGH_ACCURACY,
+                        null
+                    ).await()
+                } catch (e: SecurityException) {
+                    android.util.Log.e("LocationReportService", "获取当前位置权限/安全失败: 可能是 SHA-1 指纹不匹配或包名错误", e)
+                    return Result.failure(e)
+                } catch (e: Exception) {
+                    android.util.Log.e("LocationReportService", "获取当前位置失败", e)
+                    return Result.failure(e)
+                }
+            }
+
+            if (location == null) {
+                return Result.failure(Exception("无法获取位置信息，请确保已开启定位服务且信号良好"))
+            }
 
             // 获取GPS方向（bearing）
             val bearing = if (location.hasBearing()) location.bearing else 0f

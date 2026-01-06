@@ -89,31 +89,39 @@ fun CustomBottomSheet(
         val expandedOffset = maxHeightPx * 0.95f   // 全展开态：95%
 
         // 当前偏移量
+        val initialOffsetValue = when (initialValue) {
+            SheetValue.Collapsed -> collapsedOffset
+            SheetValue.HalfExpanded -> halfExpandedOffset
+            SheetValue.Expanded -> expandedOffset
+        }
+        
+        // 防御性检查：确保初始值不是 NaN
+        val safeInitialOffset = if (initialOffsetValue.isNaN()) 0f else initialOffsetValue
+
         var currentOffset by remember(maxHeightPx) {
-            mutableFloatStateOf(
-                when (initialValue) {
-                    SheetValue.Collapsed -> collapsedOffset
-                    SheetValue.HalfExpanded -> halfExpandedOffset
-                    SheetValue.Expanded -> expandedOffset
-                }
-            )
+            mutableFloatStateOf(safeInitialOffset)
         }
 
         // 初始化时通知偏移量
         LaunchedEffect(currentOffset) {
-            onOffsetChange(currentOffset)
+            if (!currentOffset.isNaN()) {
+                onOffsetChange(currentOffset)
+            }
         }
 
         // 背景内容（地图）
         Box(modifier = Modifier.fillMaxSize()) {
             backgroundContent()
         }
+        
+        // 确保传递给 height 的值有效且不为 0，避免除零错误
+        val sheetHeightDp = if (currentOffset.isNaN() || currentOffset <= 1f) 1.dp else with(density) { currentOffset.toDp() }
 
         // 底部面板
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(with(density) { currentOffset.toDp() })
+                .height(sheetHeightDp)
                 .align(Alignment.BottomCenter)
                 // 关键：避免被系统导航栏遮挡，增加底部内边距
                 // 注意：这里不在 height 上加 padding，而是在内部布局处理，或者让 Surface 整体上移？
@@ -124,6 +132,14 @@ fun CustomBottomSheet(
                     detectVerticalDragGestures(
                         onDragEnd = {
                             // 拖拽结束，根据当前位置吸附到最近的锚点
+                            // 防御 NaN
+                            if (currentOffset.isNaN()) {
+                                currentOffset = safeInitialOffset
+                                onSheetValueChange(initialValue)
+                                onOffsetChange(safeInitialOffset)
+                                return@detectVerticalDragGestures
+                            }
+
                             val targetOffset = when {
                                 currentOffset < (collapsedOffset + halfExpandedOffset) / 2 ->
                                     collapsedOffset
@@ -133,17 +149,19 @@ fun CustomBottomSheet(
 
                                 else -> expandedOffset
                             }
-                            currentOffset = targetOffset
+                            
+                            val finalOffset = if (targetOffset.isNaN()) safeInitialOffset else targetOffset
+                            currentOffset = finalOffset
 
                             // 回调状态变化
-                            val newState = when (targetOffset) {
+                            val newState = when (finalOffset) {
                                 collapsedOffset -> SheetValue.Collapsed
                                 halfExpandedOffset -> SheetValue.HalfExpanded
                                 else -> SheetValue.Expanded
                             }
                             onSheetValueChange(newState)
                             // 动画结束后再通知？这里为了响应速度直接通知
-                            onOffsetChange(targetOffset)
+                            onOffsetChange(finalOffset)
                         },
                         onVerticalDrag = { _, dragAmount ->
                             // 拖拽过程中更新偏移量
@@ -151,11 +169,18 @@ fun CustomBottomSheet(
                             // newOffset = currentOffset - dragAmount
                             // 向上拖动 (dragAmount < 0) -> offset 增加
                             // 向下拖动 (dragAmount > 0) -> offset 减少
-                            val newOffset =
-                                (currentOffset - dragAmount).coerceIn(
-                                    collapsedOffset,
-                                    expandedOffset
-                                )
+                            
+                            // 这里的 dragAmount 也有可能是 NaN? 极低概率，但防一下
+                            val safeDragAmount = if (dragAmount.isNaN()) 0f else dragAmount
+                            
+                            var newOffset = currentOffset - safeDragAmount
+                            if (newOffset.isNaN()) {
+                                newOffset = safeInitialOffset
+                            }
+                            newOffset = newOffset.coerceIn(
+                                collapsedOffset,
+                                expandedOffset
+                            )
                             currentOffset = newOffset
                             onOffsetChange(newOffset)
                         }

@@ -26,6 +26,7 @@ import me.ikate.findmy.ui.screen.main.components.DeviceListPanel
 import me.ikate.findmy.ui.screen.main.components.LocationButton
 import me.ikate.findmy.ui.screen.main.components.MapLayerButton
 import me.ikate.findmy.ui.screen.main.components.MapViewWrapper
+import me.ikate.findmy.util.CompassHelper
 import me.ikate.findmy.util.MapCameraHelper
 
 /**
@@ -52,6 +53,9 @@ fun MainScreen(
     val devices by viewModel.devices.collectAsState()
     val selectedDevice by viewModel.selectedDevice.collectAsState()
 
+    // 获取当前设备实时朝向
+    val currentHeading = CompassHelper.rememberCompassHeading()
+
     // 底部面板偏移量（用于动态调整按钮位置）
     var bottomSheetOffsetPx by remember { mutableFloatStateOf(0f) }
     val density = androidx.compose.ui.platform.LocalDensity.current
@@ -72,10 +76,12 @@ fun MainScreen(
             MapViewWrapper(
                 modifier = Modifier.fillMaxSize(),
                 devices = devices, // 传递设备列表用于渲染 Marker
+                currentDeviceHeading = currentHeading, // 传递实时朝向
                 onMapReady = { map ->
                     viewModel.setGoogleMap(map)
                 },
                 onMarkerClick = { device ->
+
                     // 点击 Marker 时，选中设备并移动地图到设备位置
                     viewModel.selectDevice(device)
                     MapCameraHelper.animateToDevice(googleMap, device, zoom = 15f)

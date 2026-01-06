@@ -66,10 +66,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         observeDevices()
         // 启动定期位置上报（根据用户类型调整频率）
         startPeriodicLocationReport()
-        // 注册用户立即上报一次位置，匿名用户不上报
-        if (!isAnonymousUser()) {
-            reportLocationNow()
-        }
+        // 立即上报一次位置，以便在地图上显示当前设备
+        reportLocationNow()
     }
 
     /**
