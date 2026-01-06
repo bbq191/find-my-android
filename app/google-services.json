@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "175502190264",
+    "project_id": "find-my-android-9e4e3",
+    "storage_bucket": "find-my-android-9e4e3.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:175502190264:android:2399ae108c3cf249e7b64d",
+        "android_client_info": {
+          "package_name": "me.ikate.findmy"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCCmrOyw0PbafqN1hjyMV9U0IT9AloZx_g"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

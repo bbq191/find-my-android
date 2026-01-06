@@ -1,0 +1,59 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ====================================================================
+    // 设备集合规则
+    // ====================================================================
+    match /devices/{deviceId} {
+
+      // 【开发/测试模式】- 允许所有读写操作
+      // ⚠️ 警告：这仅适用于开发和测试环境！
+      // 生产环境请使用下面注释的认证规则
+      allow read, write: if true;
+
+      // 【生产环境推荐规则】- 需要用户认证
+      // 取消下面的注释并删除上面的 "allow read, write: if true;"
+      /*
+      // 1. 读取权限：已登录用户可以读取自己的设备
+      allow read: if request.auth != null &&
+                     resource.data.ownerId == request.auth.uid;
+
+      // 2. 创建权限：已登录用户可以创建设备，且ownerId必须是自己
+      allow create: if request.auth != null &&
+                       request.resource.data.ownerId == request.auth.uid;
+
+      // 3. 更新权限：只能更新自己的设备
+      allow update: if request.auth != null &&
+                       resource.data.ownerId == request.auth.uid;
+
+      // 4. 删除权限：只能删除自己的设备
+      allow delete: if request.auth != null &&
+                       resource.data.ownerId == request.auth.uid;
+      */
+    }
+
+    // ====================================================================
+    // 联系人集合规则（如果需要）
+    // ====================================================================
+    match /contacts/{contactId} {
+      allow read, write: if true;
+
+      // 生产环境推荐规则
+      /*
+      allow read: if request.auth != null &&
+                     resource.data.ownerId == request.auth.uid;
+      allow write: if request.auth != null &&
+                      request.resource.data.ownerId == request.auth.uid;
+      */
+    }
+
+    // ====================================================================
+    // 默认拒绝所有其他集合的访问
+    // ====================================================================
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
