@@ -24,7 +24,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import me.ikate.findmy.data.model.ShareDuration
 
@@ -46,7 +45,7 @@ fun ShareLocationDialog(
     onConfirm: (email: String, duration: ShareDuration) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var email by remember { mutableStateOf("") }
+    var targetUid by remember { mutableStateOf("") }
     var selectedDuration by remember { mutableStateOf(ShareDuration.INDEFINITELY) }
     var localError by remember { mutableStateOf<String?>(null) }
 
@@ -65,15 +64,15 @@ fun ShareLocationDialog(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                // 邮箱输入
+                // UID 输入
                 OutlinedTextField(
-                    value = email,
+                    value = targetUid,
                     onValueChange = {
-                        email = it
+                        targetUid = it
                         localError = null  // 清除错误
                     },
-                    label = { Text("对方邮箱") },
-                    placeholder = { Text("example@email.com") },
+                    label = { Text("对方 UID") },
+                    placeholder = { Text("请输入对方的用户 ID") },
                     singleLine = true,
                     isError = localError != null,
                     supportingText = localError?.let { { Text(it, color = MaterialTheme.colorScheme.error) } },
@@ -116,16 +115,13 @@ fun ShareLocationDialog(
         confirmButton = {
             TextButton(
                 onClick = {
-                    // 邮箱验证
+                    // UID 验证
                     when {
-                        email.isBlank() -> {
-                            localError = "请输入邮箱地址"
-                        }
-                        !android.util.Patterns.EMAIL_ADDRESS.matcher(email).matches() -> {
-                            localError = "邮箱格式不正确"
+                        targetUid.isBlank() -> {
+                            localError = "请输入对方 UID"
                         }
                         else -> {
-                            onConfirm(email.trim(), selectedDuration)
+                            onConfirm(targetUid.trim(), selectedDuration)
                         }
                     }
                 },

@@ -6,12 +6,10 @@ data class Device(
     val id: String,
     val name: String, // 设备名称（型号，如 "Xiaomi Mi 11"）
     val location: LatLng,
-    val avatarUrl: String? = null,
     val battery: Int = 100,
     val lastUpdateTime: Long = System.currentTimeMillis(),
     val isOnline: Boolean = true,
     val deviceType: DeviceType = DeviceType.PHONE,
-    val ownerName: String? = null, // 机主名称（从通讯录获取）
     val customName: String? = null, // 设备自定义名称（用户给设备起的昵称，如 "我的手机"）
     val bearing: Float = 0f, // GPS方向角度（0-360度，0为北）
     val sharedWith: List<String> = emptyList() // 共享给哪些用户的 UID 列表

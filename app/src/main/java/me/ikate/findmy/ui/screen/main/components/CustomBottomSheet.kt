@@ -1,52 +1,41 @@
 package me.ikate.findmy.ui.screen.main.components
 
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBars
-import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.windowInsetsBottomHeight
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.dp
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.size
-import androidx.compose.material3.Surface
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.input.pointer.pointerInput
-import kotlin.math.roundToInt
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.dp
 
 /**
  * 底部面板的三种状态
  */
 enum class SheetValue {
-    /** 折叠态 - 约 15-20% 屏幕高度 */
+    /** 折叠态 - 20% 屏幕高度 */
     Collapsed,
 
     /** 半展开态 - 约 50% 屏幕高度（默认） */
@@ -84,9 +73,9 @@ fun CustomBottomSheet(
         val maxHeightDp = with(density) { maxHeightPx.toDp() }
 
         // 计算三个锚点的偏移量（从屏幕底部向上的距离，单位：像素）
-        val collapsedOffset = maxHeightPx * 0.2f   // 折叠态：20%
-        val halfExpandedOffset = maxHeightPx * 0.5f // 半展开态：50%
-        val expandedOffset = maxHeightPx * 0.95f   // 全展开态：95%
+        val collapsedOffset = maxHeightPx * 0.04f   // 折叠态：20%
+        val halfExpandedOffset = maxHeightPx * 0.35f // 半展开态：50%
+        val expandedOffset = maxHeightPx * 0.85f   // 全展开态：95%
 
         // 当前偏移量
         val initialOffsetValue = when (initialValue) {

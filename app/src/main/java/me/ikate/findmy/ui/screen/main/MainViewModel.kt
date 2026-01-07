@@ -61,6 +61,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // 底部面板状态
     private val _sheetValue = MutableStateFlow(SheetValue.HalfExpanded)
 
+    // 是否已完成首次自动定位
+    private var hasInitialCentered = false
+
     init {
         // 启动时开始监听设备列表变化
         observeDevices()
@@ -68,6 +71,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         startPeriodicLocationReport()
         // 立即上报一次位置，以便在地图上显示当前设备
         reportLocationNow()
+    }
+
+    /**
+     * 尝试首次自动定位
+     * 需在获取权限且地图加载完成后调用
+     */
+    fun attemptInitialLocationCenter() {
+        if (!hasInitialCentered && _googleMap.value != null) {
+            onLocationButtonClick()
+            hasInitialCentered = true
+        }
     }
 
     /**

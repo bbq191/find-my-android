@@ -1,6 +1,6 @@
 package me.ikate.findmy.data.repository
 
-import com.google.android.gms.maps.model.LatLng
+import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.GeoPoint
 import kotlinx.coroutines.channels.awaitClose
@@ -9,7 +9,6 @@ import kotlinx.coroutines.flow.callbackFlow
 import me.ikate.findmy.data.model.Device
 import me.ikate.findmy.data.model.DeviceType
 import me.ikate.findmy.util.CoordinateConverter
-import com.google.firebase.auth.FirebaseAuth
 
 /**
  * 设备数据仓库
@@ -107,7 +106,6 @@ class DeviceRepository {
                 id = doc.id,
                 name = doc.getString("name") ?: "未知设备",
                 location = gcjLocation,
-                avatarUrl = doc.getString("avatarUrl"),
                 battery = doc.getLong("battery")?.toInt() ?: 100,
                 lastUpdateTime = doc.getTimestamp("lastUpdateTime")?.toDate()?.time
                     ?: System.currentTimeMillis(),
@@ -115,7 +113,6 @@ class DeviceRepository {
                 deviceType = DeviceType.valueOf(
                     doc.getString("deviceType") ?: "OTHER"
                 ),
-                ownerName = doc.getString("ownerName"),
                 customName = doc.getString("customName"),
                 bearing = doc.getDouble("bearing")?.toFloat() ?: 0f,
                 sharedWith = sharedWith
@@ -144,11 +141,9 @@ class DeviceRepository {
             "location" to GeoPoint(device.location.latitude, device.location.longitude),
             "battery" to device.battery,
             "lastUpdateTime" to com.google.firebase.Timestamp.now(),
-            "avatarUrl" to device.avatarUrl,
             "isOnline" to device.isOnline,
             "deviceType" to device.deviceType.name,
             "ownerId" to currentUserId,
-            "ownerName" to device.ownerName,
             "customName" to device.customName,
             "bearing" to device.bearing,
             "sharedWith" to device.sharedWith  // 新增: 保存共享列表

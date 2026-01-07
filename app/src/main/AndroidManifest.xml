@@ -11,6 +11,9 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
+    <!-- 通讯录权限 (用于获取机主信息) -->
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+
     <!-- 存储权限 (用于地图缓存) -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="32"

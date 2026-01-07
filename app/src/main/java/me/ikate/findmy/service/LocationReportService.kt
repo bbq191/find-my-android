@@ -10,6 +10,7 @@ import com.google.android.gms.maps.model.LatLng
 import kotlinx.coroutines.tasks.await
 import me.ikate.findmy.data.model.Device
 import me.ikate.findmy.data.model.DeviceType
+import me.ikate.findmy.data.repository.ContactRepository
 import me.ikate.findmy.data.repository.DeviceRepository
 
 /**
@@ -21,6 +22,9 @@ class LocationReportService(private val context: Context) {
     private val fusedLocationClient: FusedLocationProviderClient =
         LocationServices.getFusedLocationProviderClient(context)
     private val deviceRepository = DeviceRepository()
+    
+    // 尽管我们不再同步 vCard 信息，但保留 ContactRepository 引用以备将来扩展
+    private val contactRepository = ContactRepository()
 
     /**
      * 获取当前设备ID
@@ -80,57 +84,6 @@ class LocationReportService(private val context: Context) {
     }
 
     /**
-     * 获取用户显示名称（从通讯录vCard中获取）
-     */
-    private fun getOwnerName(): String? {
-        return try {
-            // 从系统通讯录获取用户自己的名称
-            val cursor = context.contentResolver.query(
-                android.provider.ContactsContract.Profile.CONTENT_URI,
-                arrayOf(android.provider.ContactsContract.Profile.DISPLAY_NAME),
-                null, null, null
-            )
-            cursor?.use {
-                if (it.moveToFirst()) {
-                    val nameIndex = it.getColumnIndex(android.provider.ContactsContract.Profile.DISPLAY_NAME)
-                    if (nameIndex >= 0) {
-                        return it.getString(nameIndex)
-                    }
-                }
-            }
-            null
-        } catch (e: Exception) {
-            android.util.Log.w("LocationReportService", "无法获取用户名称", e)
-            null
-        }
-    }
-
-    /**
-     * 获取用户头像URL（从通讯录vCard中获取）
-     */
-    private fun getOwnerAvatarUrl(): String? {
-        return try {
-            val cursor = context.contentResolver.query(
-                android.provider.ContactsContract.Profile.CONTENT_URI,
-                arrayOf(android.provider.ContactsContract.Profile.PHOTO_URI),
-                null, null, null
-            )
-            cursor?.use {
-                if (it.moveToFirst()) {
-                    val photoIndex = it.getColumnIndex(android.provider.ContactsContract.Profile.PHOTO_URI)
-                    if (photoIndex >= 0) {
-                        return it.getString(photoIndex)
-                    }
-                }
-            }
-            null
-        } catch (e: Exception) {
-            android.util.Log.w("LocationReportService", "无法获取用户头像", e)
-            null
-        }
-    }
-
-    /**
      * 获取当前位置并上报到 Firebase
      * 注意：需要已授予定位权限
      *
@@ -180,10 +133,8 @@ class LocationReportService(private val context: Context) {
                 lastUpdateTime = System.currentTimeMillis(),
                 isOnline = true,
                 deviceType = getDeviceType(),
-                ownerName = getOwnerName(), // 机主名称
                 customName = getCustomDeviceName(), // 设备自定义名称
-                bearing = bearing,
-                avatarUrl = getOwnerAvatarUrl()
+                bearing = bearing
             )
 
             // 保存到 Firebase

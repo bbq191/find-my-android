@@ -4,13 +4,18 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.compose.viewModel
 import me.ikate.findmy.ui.screen.auth.AuthState
 import me.ikate.findmy.ui.screen.auth.AuthViewModel
-import me.ikate.findmy.ui.screen.auth.LoginScreen
 import me.ikate.findmy.ui.screen.main.MainScreen
 import me.ikate.findmy.ui.theme.FindmyTheme
 
@@ -20,45 +25,37 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             FindmyTheme {
-                AppNavigation()
+                AppContent()
             }
         }
     }
 }
 
-/**
- * 应用导航 - 根据认证状态和会话确认状态显示不同界面
- *
- * 逻辑：
- * - 匿名用户每次打开应用都需要先看到登录页，点击"匿名登录"后才能进入主界面
- * - 已注册用户（邮箱登录）直接进入主界面
- * - 使用 hasConfirmedEntry 状态跟踪用户是否在当前会话中已点击登录
- */
 @Composable
-fun AppNavigation(
+fun AppContent(
     authViewModel: AuthViewModel = viewModel()
 ) {
     val authState by authViewModel.authState.collectAsState()
-    val hasConfirmedEntry by authViewModel.hasConfirmedEntry.collectAsState()
+
+    // 自动登录逻辑：如果未认证，尝试匿名登录
+    LaunchedEffect(authState) {
+        if (authState is AuthState.Unauthenticated) {
+            authViewModel.signInAnonymously()
+        }
+    }
 
     when (authState) {
         is AuthState.Authenticated -> {
-            // 用户已通过认证（匿名或注册用户）
-            if (hasConfirmedEntry) {
-                // 已确认进入（点击过登录按钮），显示主界面
-                MainScreen()
-            } else {
-                // 未确认进入（应用刚启动），显示登录界面
-                LoginScreen(viewModel = authViewModel)
+            MainScreen()
+        }
+        else -> {
+            // 加载中或未认证时显示加载指示器
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator()
             }
-        }
-        is AuthState.Unauthenticated, is AuthState.Error -> {
-            // 未登录或错误，显示登录界面
-            LoginScreen(viewModel = authViewModel)
-        }
-        is AuthState.Loading -> {
-            // 加载中，可以显示启动画面
-            // 暂时不显示任何内容，等待认证状态确定
         }
     }
 }

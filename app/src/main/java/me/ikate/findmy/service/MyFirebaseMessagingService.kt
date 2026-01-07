@@ -14,7 +14,6 @@ import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import me.ikate.findmy.MainActivity
-import me.ikate.findmy.R
 
 class MyFirebaseMessagingService : FirebaseMessagingService() {
 

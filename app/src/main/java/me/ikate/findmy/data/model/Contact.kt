@@ -20,7 +20,8 @@ data class Contact(
     // 位置信息(仅当对方分享给我且已接受时有效)
     val location: LatLng? = null,
     val lastUpdateTime: Long? = null,
-    val isLocationAvailable: Boolean = false  // 位置是否可用
+    val isLocationAvailable: Boolean = false,  // 位置是否可用
+    val isPaused: Boolean = false // 是否已暂停共享
 )
 
 /**
