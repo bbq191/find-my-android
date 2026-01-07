@@ -67,16 +67,24 @@ import java.util.Locale
  * 底部包含仿 iOS Find My 的导航栏
  *
  * @param devices 设备列表
+ * @param contacts 联系人列表
  * @param onDeviceClick 设备点击回调
+ * @param onContactClick 联系人点击回调
+ * @param onAddContactClick 添加联系人回调
  * @param onDeviceDelete 设备删除回调
+ * @param onNavigateToAuth 导航到登录页回调
  * @param modifier 修饰符
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DeviceListPanel(
     devices: List<Device>,
+    contacts: List<me.ikate.findmy.data.model.Contact> = emptyList(),
     onDeviceClick: (Device) -> Unit,
+    onContactClick: (me.ikate.findmy.data.model.Contact) -> Unit = {},
+    onAddContactClick: () -> Unit = {},
     onDeviceDelete: (Device) -> Unit = {},
+    onNavigateToAuth: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     // 选中的 Tab 索引 (0: 联系人, 1: 设备, 2: 物品, 3: 我)
@@ -95,48 +103,72 @@ fun DeviceListPanel(
         }
 
         // 内容区域
-        if (selectedTab == 1) {
-            // 设备列表
-            LazyColumn(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f)
-            ) {
-                items(
-                    items = devices,
-                    key = { it.id }
-                ) { device ->
-                    SwipeToDeleteItem(
-                        device = device,
-                        onClick = { onDeviceClick(device) },
-                        onDelete = { onDeviceDelete(device) }
+        when (selectedTab) {
+            0 -> {
+                // 联系人列表
+                // 检查是否匿名用户
+                val isAnonymous = com.google.firebase.auth.FirebaseAuth.getInstance()
+                    .currentUser?.isAnonymous ?: true
+
+                if (isAnonymous) {
+                    // 显示匿名用户提示
+                    AnonymousUserPrompt(
+                        onSignUpClick = onNavigateToAuth,
+                        modifier = Modifier.weight(1f)
                     )
-                    HorizontalDivider(
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                        thickness = 0.5.dp,
-                        color = Color.Gray.copy(alpha = 0.2f)
+                } else {
+                    // 显示联系人列表
+                    ContactListPanel(
+                        contacts = contacts,
+                        onContactClick = onContactClick,
+                        onAddContactClick = onAddContactClick,
+                        modifier = Modifier.weight(1f)
                     )
                 }
             }
-        } else {
-            // 其他 Tab 的占位内容
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
-            ) {
-                Text(
-                    text = when (selectedTab) {
-                        0 -> "联系人功能开发中"
-                        2 -> "物品功能开发中"
-                        3 -> "个人中心开发中"
-                        else -> ""
-                    },
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = Color.Gray
-                )
+            1 -> {
+                // 设备列表
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f)
+                ) {
+                    items(
+                        items = devices,
+                        key = { it.id }
+                    ) { device ->
+                        SwipeToDeleteItem(
+                            device = device,
+                            onClick = { onDeviceClick(device) },
+                            onDelete = { onDeviceDelete(device) }
+                        )
+                        HorizontalDivider(
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                            thickness = 0.5.dp,
+                            color = Color.Gray.copy(alpha = 0.2f)
+                        )
+                    }
+                }
+            }
+            2, 3 -> {
+                // 其他 Tab 的占位内容
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Text(
+                        text = when (selectedTab) {
+                            2 -> "物品功能开发中"
+                            3 -> "个人中心开发中"
+                            else -> ""
+                        },
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = Color.Gray
+                    )
+                }
             }
         }
 

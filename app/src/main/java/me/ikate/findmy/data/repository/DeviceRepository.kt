@@ -32,9 +32,9 @@ class DeviceRepository {
     private val devicesCollection = firestore.collection("devices")
 
     /**
-     * 实时监听设备列表变化
+     * 实时监听设备列表变化(扩展版)
      * 返回 Flow，自动订阅 Firestore 快照更新
-     * 自动使用当前登录用户的 ID 进行查询
+     * 包括: 我的设备 + 共享给我的设备
      */
     fun observeDevices(): Flow<List<Device>> = callbackFlow {
         val currentUserId = FirebaseAuth.getInstance().currentUser?.uid
@@ -46,52 +46,84 @@ class DeviceRepository {
             return@callbackFlow
         }
 
-        val query = devicesCollection.whereEqualTo("ownerId", currentUserId)
+        // 由于 Firestore 不支持 OR 查询,需要两个监听器
+        var myDevices: List<Device> = emptyList()
+        var sharedDevices: List<Device> = emptyList()
 
-        val listenerRegistration = query.addSnapshotListener { snapshot, error ->
-            if (error != null) {
-                android.util.Log.e("DeviceRepository", "监听设备列表失败", error)
-                // 发送空列表而不是关闭Flow，避免应用崩溃
-                trySend(emptyList())
-                return@addSnapshotListener
-            }
-
-            snapshot?.let {
-                val devices = it.documents.mapNotNull { doc ->
-                    try {
-                        val location = doc.getGeoPoint("location")
-                        // Firebase中存储的是WGS-84坐标（GPS原始坐标）
-                        // 需要转换为GCJ-02以匹配Google Maps在中国的底图
-                        val wgsLat = location?.latitude ?: 0.0
-                        val wgsLng = location?.longitude ?: 0.0
-                        val gcjLocation = CoordinateConverter.wgs84ToGcj02(wgsLat, wgsLng)
-
-                        Device(
-                            id = doc.id,
-                            name = doc.getString("name") ?: "未知设备",
-                            location = gcjLocation,
-                            avatarUrl = doc.getString("avatarUrl"),
-                            battery = doc.getLong("battery")?.toInt() ?: 100,
-                            lastUpdateTime = doc.getTimestamp("lastUpdateTime")?.toDate()?.time
-                                ?: System.currentTimeMillis(),
-                            isOnline = doc.getBoolean("isOnline") ?: false,
-                            deviceType = DeviceType.valueOf(
-                                doc.getString("deviceType") ?: "OTHER"
-                            ),
-                            ownerName = doc.getString("ownerName"),
-                            customName = doc.getString("customName"),
-                            bearing = doc.getDouble("bearing")?.toFloat() ?: 0f
-                        )
-                    } catch (e: Exception) {
-                        android.util.Log.e("DeviceRepository", "解析设备数据失败: ${doc.id}", e)
-                        null
-                    }
+        // 监听1: 我的设备 (ownerId == currentUserId)
+        val listener1 = devicesCollection
+            .whereEqualTo("ownerId", currentUserId)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    android.util.Log.e("DeviceRepository", "监听我的设备失败", error)
+                    return@addSnapshotListener
                 }
-                trySend(devices)
-            }
-        }
 
-        awaitClose { listenerRegistration.remove() }
+                myDevices = snapshot?.documents?.mapNotNull { doc -> parseDevice(doc) } ?: emptyList()
+
+                // 合并两个列表并发送
+                val allDevices = (myDevices + sharedDevices).distinctBy { it.id }
+                trySend(allDevices)
+            }
+
+        // 监听2: 共享给我的设备 (sharedWith array-contains currentUserId)
+        val listener2 = devicesCollection
+            .whereArrayContains("sharedWith", currentUserId)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    android.util.Log.e("DeviceRepository", "监听共享设备失败", error)
+                    return@addSnapshotListener
+                }
+
+                sharedDevices = snapshot?.documents?.mapNotNull { doc -> parseDevice(doc) } ?: emptyList()
+
+                // 合并两个列表并发送
+                val allDevices = (myDevices + sharedDevices).distinctBy { it.id }
+                trySend(allDevices)
+            }
+
+        awaitClose {
+            listener1.remove()
+            listener2.remove()
+        }
+    }
+
+    /**
+     * 解析设备文档
+     */
+    private fun parseDevice(doc: com.google.firebase.firestore.DocumentSnapshot): Device? {
+        return try {
+            val location = doc.getGeoPoint("location")
+            // Firebase中存储的是WGS-84坐标（GPS原始坐标）
+            // 需要转换为GCJ-02以匹配Google Maps在中国的底图
+            val wgsLat = location?.latitude ?: 0.0
+            val wgsLng = location?.longitude ?: 0.0
+            val gcjLocation = CoordinateConverter.wgs84ToGcj02(wgsLat, wgsLng)
+
+            @Suppress("UNCHECKED_CAST")
+            val sharedWith = doc.get("sharedWith") as? List<String> ?: emptyList()
+
+            Device(
+                id = doc.id,
+                name = doc.getString("name") ?: "未知设备",
+                location = gcjLocation,
+                avatarUrl = doc.getString("avatarUrl"),
+                battery = doc.getLong("battery")?.toInt() ?: 100,
+                lastUpdateTime = doc.getTimestamp("lastUpdateTime")?.toDate()?.time
+                    ?: System.currentTimeMillis(),
+                isOnline = doc.getBoolean("isOnline") ?: false,
+                deviceType = DeviceType.valueOf(
+                    doc.getString("deviceType") ?: "OTHER"
+                ),
+                ownerName = doc.getString("ownerName"),
+                customName = doc.getString("customName"),
+                bearing = doc.getDouble("bearing")?.toFloat() ?: 0f,
+                sharedWith = sharedWith
+            )
+        } catch (e: Exception) {
+            android.util.Log.e("DeviceRepository", "解析设备数据失败: ${doc.id}", e)
+            null
+        }
     }
 
     /**
@@ -118,7 +150,8 @@ class DeviceRepository {
             "ownerId" to currentUserId,
             "ownerName" to device.ownerName,
             "customName" to device.customName,
-            "bearing" to device.bearing
+            "bearing" to device.bearing,
+            "sharedWith" to device.sharedWith  // 新增: 保存共享列表
         )
 
         devicesCollection.document(device.id)

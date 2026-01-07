@@ -75,6 +75,7 @@
 #### 3. 坐标转换
 - GPS 获取的 WGS-84 坐标自动转换为 GCJ-02
 - 确保位置在中国大陆地图上准确显示
+- **[设备接入与注册机制文档：DEVICE_REGISTRATION_LOGIC.md](DEVICE_REGISTRATION_LOGIC.md)**
 
 ### 手动触发上报
 
@@ -244,6 +245,7 @@ firebase deploy --only firestore:rules
 ### 2. 添加设备功能
 - 创建"添加设备"按钮
 - 支持手动添加其他设备（如 AirTag）
+- **[详细设计文档：ADD_DEVICE_LOGIC.md](ADD_DEVICE_LOGIC.md)**
 
 ### 3. 优化上报机制
 - 根据移动距离智能上报（节省电量）
@@ -252,6 +254,7 @@ firebase deploy --only firestore:rules
 ### 4. 增强安全性
 - 实现设备验证机制
 - 添加设备共享功能（家庭成员）
+- **[联系人位置共享机制文档：ADD_CONTACT_LOGIC.md](ADD_CONTACT_LOGIC.md)**
 
 ### 5. 用户体验优化
 - 添加启动画面（Splash Screen）

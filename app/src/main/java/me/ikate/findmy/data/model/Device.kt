@@ -13,7 +13,8 @@ data class Device(
     val deviceType: DeviceType = DeviceType.PHONE,
     val ownerName: String? = null, // 机主名称（从通讯录获取）
     val customName: String? = null, // 设备自定义名称（用户给设备起的昵称，如 "我的手机"）
-    val bearing: Float = 0f // GPS方向角度（0-360度，0为北）
+    val bearing: Float = 0f, // GPS方向角度（0-360度，0为北）
+    val sharedWith: List<String> = emptyList() // 共享给哪些用户的 UID 列表
 )
 
 /**

@@ -31,8 +31,10 @@ import kotlin.math.*
  *
  * @param modifier 修饰符
  * @param devices 设备列表（用于渲染 Marker）
+ * @param contacts 联系人列表（用于渲染联系人位置 Marker）
  * @param onMapReady 地图准备完成回调，返回 GoogleMap 实例
  * @param onMarkerClick Marker 点击回调，返回点击的设备
+ * @param onContactMarkerClick 联系人 Marker 点击回调
  * @param onMapClick 地图空白区域点击回调
  */
 @SuppressLint("HardwareIds")
@@ -41,9 +43,11 @@ import kotlin.math.*
 fun MapViewWrapper(
     modifier: Modifier = Modifier,
     devices: List<Device> = emptyList(),
+    contacts: List<me.ikate.findmy.data.model.Contact> = emptyList(),
     currentDeviceHeading: Float? = null, // 当前设备实时朝向（来自传感器）
     onMapReady: (GoogleMap) -> Unit = {},
     onMarkerClick: (Device) -> Unit = {},
+    onContactMarkerClick: (me.ikate.findmy.data.model.Contact) -> Unit = {},
     onMapClick: () -> Unit = {}
 ) {
     // 移除默认定位，使用空初始位置，等待实际设备数据加载
@@ -178,7 +182,48 @@ fun MapViewWrapper(
                 }
             }
         }
-        
+
+        // 渲染联系人位置标记
+        contacts.forEach { contact ->
+            // 只渲染有位置信息且位置可用的联系人
+            contact.location?.let { location ->
+                if (!location.latitude.isNaN() && !location.longitude.isNaN()) {
+                    androidx.compose.runtime.key(contact.id) {
+                        val markerState = com.google.maps.android.compose.rememberMarkerState(position = location)
+
+                        // 当联系人位置更新时，同步更新 Marker 状态
+                        LaunchedEffect(location) {
+                            if (!location.latitude.isNaN() && !location.longitude.isNaN()) {
+                                markerState.position = location
+                            }
+                        }
+
+                        // 缓存联系人 Marker Icon (使用绿色)
+                        val contactIcon = remember {
+                            BitmapDescriptorFactory.defaultMarker(
+                                BitmapDescriptorFactory.HUE_GREEN
+                            )
+                        }
+
+                        Marker(
+                            state = markerState,
+                            title = contact.name,
+                            snippet = "联系人位置",
+                            icon = contactIcon,
+                            rotation = 0f,
+                            flat = false,
+                            anchor = androidx.compose.ui.geometry.Offset(0.5f, 1.0f),
+                            zIndex = 2f,
+                            onClick = {
+                                onContactMarkerClick(contact)
+                                false
+                            }
+                        )
+                    }
+                }
+            }
+        }
+
         // 我们通过 MapEffect 获取原生的 GoogleMap 对象并传递出去
         // 这允许外部使用 MapCameraHelper 进行复杂的相机操作
         com.google.maps.android.compose.MapEffect(Unit) { map ->

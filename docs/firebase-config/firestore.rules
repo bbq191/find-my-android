@@ -50,6 +50,48 @@ service cloud.firestore {
     }
 
     // ====================================================================
+    // 用户集合规则
+    // ====================================================================
+    match /users/{userId} {
+      // 所有已登录用户可以读取(用于搜索)
+      allow read: if request.auth != null;
+
+      // 只能创建/更新自己的用户信息
+      allow create, update: if request.auth != null &&
+                               request.auth.uid == userId;
+
+      // 不允许删除
+      allow delete: if false;
+    }
+
+    // ====================================================================
+    // 位置共享集合规则
+    // ====================================================================
+    match /location_shares/{shareId} {
+      // 读取:分享者或接收者
+      allow read: if request.auth != null && (
+        resource.data.fromUid == request.auth.uid ||
+        resource.data.toUid == request.auth.uid ||
+        resource.data.toEmail == request.auth.token.email
+      );
+
+      // 创建:fromUid 必须是自己
+      allow create: if request.auth != null &&
+                       request.resource.data.fromUid == request.auth.uid;
+
+      // 更新:分享者或接收者
+      allow update: if request.auth != null && (
+        resource.data.fromUid == request.auth.uid ||
+        resource.data.toUid == request.auth.uid ||
+        resource.data.toEmail == request.auth.token.email
+      );
+
+      // 删除:只有分享者
+      allow delete: if request.auth != null &&
+                       resource.data.fromUid == request.auth.uid;
+    }
+
+    // ====================================================================
     // 默认拒绝所有其他集合的访问
     // ====================================================================
     match /{document=**} {

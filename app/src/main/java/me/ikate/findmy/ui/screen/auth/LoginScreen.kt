@@ -29,6 +29,7 @@ fun LoginScreen(
 
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    var confirmPassword by remember { mutableStateOf("") }
     var isPasswordVisible by remember { mutableStateOf(false) }
     var isSignUpMode by remember { mutableStateOf(false) }
 
@@ -61,47 +62,49 @@ fun LoginScreen(
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = "定位你的设备",
+                text = if (isSignUpMode) "创建新账号" else "定位你的设备",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
 
             Spacer(modifier = Modifier.height(48.dp))
 
-            // 匿名登录按钮（推荐）
-            Button(
-                onClick = { viewModel.signInAnonymously() },
-                modifier = Modifier.fillMaxWidth(),
-                enabled = authState !is AuthState.Loading
-            ) {
-                if (authState is AuthState.Loading) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(24.dp),
-                        color = MaterialTheme.colorScheme.onPrimary
-                    )
-                } else {
-                    Text("快速开始（匿名登录）")
+            if (!isSignUpMode) {
+                // 匿名登录按钮（推荐）
+                Button(
+                    onClick = { viewModel.signInAnonymously() },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = authState !is AuthState.Loading
+                ) {
+                    if (authState is AuthState.Loading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(24.dp),
+                            color = MaterialTheme.colorScheme.onPrimary
+                        )
+                    } else {
+                        Text("快速开始（匿名登录）")
+                    }
                 }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // 分割线
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    HorizontalDivider(modifier = Modifier.weight(1f))
+                    Text(
+                        text = "或",
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    HorizontalDivider(modifier = Modifier.weight(1f))
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
             }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
-            // 分割线
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                HorizontalDivider(modifier = Modifier.weight(1f))
-                Text(
-                    text = "或",
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                HorizontalDivider(modifier = Modifier.weight(1f))
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
 
             // 邮箱输入框
             OutlinedTextField(
@@ -144,22 +147,55 @@ fun LoginScreen(
                 enabled = authState !is AuthState.Loading
             )
 
+            // 注册模式下的确认密码框
+            if (isSignUpMode) {
+                Spacer(modifier = Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = confirmPassword,
+                    onValueChange = { confirmPassword = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("确认密码") },
+                    leadingIcon = {
+                        Icon(Icons.Default.Lock, contentDescription = "确认密码")
+                    },
+                    visualTransformation = PasswordVisualTransformation(),
+                    singleLine = true,
+                    enabled = authState !is AuthState.Loading,
+                    isError = confirmPassword.isNotEmpty() && confirmPassword != password,
+                    supportingText = {
+                        if (confirmPassword.isNotEmpty() && confirmPassword != password) {
+                            Text("密码不一致")
+                        }
+                    }
+                )
+            }
+
             Spacer(modifier = Modifier.height(24.dp))
 
             // 登录/注册按钮
             Button(
                 onClick = {
                     if (isSignUpMode) {
-                        viewModel.signUpWithEmail(email, password)
+                        if (password == confirmPassword) {
+                            viewModel.signUpWithEmail(email, password)
+                        }
                     } else {
                         viewModel.signInWithEmail(email, password)
                     }
                 },
                 modifier = Modifier.fillMaxWidth(),
                 enabled = authState !is AuthState.Loading &&
-                        email.isNotBlank() && password.isNotBlank()
+                        email.isNotBlank() && password.isNotBlank() &&
+                        (!isSignUpMode || (confirmPassword.isNotBlank() && password == confirmPassword))
             ) {
-                Text(if (isSignUpMode) "注册" else "登录")
+                if (authState is AuthState.Loading && isSignUpMode) {
+                     CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        color = MaterialTheme.colorScheme.onPrimary
+                    )
+                } else {
+                    Text(if (isSignUpMode) "注册" else "登录")
+                }
             }
 
             Spacer(modifier = Modifier.height(12.dp))

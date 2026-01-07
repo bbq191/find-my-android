@@ -115,4 +115,16 @@ object MapCameraHelper {
             animate = true
         )
     }
+
+    /**
+     * 平滑移动地图到指定位置 (便捷方法)
+     * 用于联系人位置导航
+     *
+     * @param map 地图实例
+     * @param latLng 目标位置
+     * @param zoom 缩放级别（默认 15）
+     */
+    fun animateToLocation(map: GoogleMap?, latLng: LatLng, zoom: Float = 15f) {
+        moveToLocation(map, latLng, zoom, animate = true)
+    }
 }
