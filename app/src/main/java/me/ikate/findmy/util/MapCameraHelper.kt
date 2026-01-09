@@ -100,23 +100,6 @@ object MapCameraHelper {
     }
 
     /**
-     * 重置地图视角到默认位置（已移除硬编码默认位置）
-     * 如果需要重置，应该根据实际设备列表或用户当前位置进行
-     *
-     * @param map 地图实例
-     * @param latLng 目标位置
-     * @param zoom 缩放级别（默认 12）
-     */
-    fun resetToPosition(map: GoogleMap?, latLng: LatLng, zoom: Float = 12f) {
-        moveToLocation(
-            map = map,
-            latLng = latLng,
-            zoom = zoom,
-            animate = true
-        )
-    }
-
-    /**
      * 平滑移动地图到指定位置 (便捷方法)
      * 用于联系人位置导航
      *

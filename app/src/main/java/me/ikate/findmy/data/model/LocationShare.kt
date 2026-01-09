@@ -12,7 +12,7 @@ data class LocationShare(
     val expireTime: Long? = null,  // 过期时间 (null 代表永久)
     val createdAt: Long = System.currentTimeMillis(),
     val acceptedAt: Long? = null,
-    
+
     // 别名信息 (接收者给发送者起的备注)
     val receiverAliasName: String? = null,
     val receiverAliasAvatar: String? = null,

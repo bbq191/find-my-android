@@ -20,13 +20,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.core.net.toUri
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.rememberMultiplePermissionsState
 import me.ikate.findmy.data.model.Contact
+import me.ikate.findmy.ui.components.PermissionGuideDialog
 import me.ikate.findmy.ui.screen.contact.ContactViewModel
-import me.ikate.findmy.ui.screen.device.DeviceManagementViewModel
-import me.ikate.findmy.ui.screen.main.components.ContactDetailPanel
 import me.ikate.findmy.ui.screen.main.components.ContactListPanel
 import me.ikate.findmy.ui.screen.main.components.CustomBottomSheet
 import me.ikate.findmy.ui.screen.main.components.LocationButton
@@ -45,9 +45,7 @@ import me.ikate.findmy.util.MapCameraHelper
 @Composable
 fun MainScreen(
     viewModel: MainViewModel = viewModel(),
-    deviceManagementViewModel: DeviceManagementViewModel = viewModel(),
-    contactViewModel: ContactViewModel = viewModel(),
-    onNavigateToAuth: () -> Unit = {}
+    contactViewModel: ContactViewModel = viewModel()
 ) {
     val context = LocalContext.current
 
@@ -63,9 +61,8 @@ fun MainScreen(
     // 收集 ViewModel 状态
     val googleMap by viewModel.googleMap.collectAsState()
     val isLocationCentered by viewModel.isLocationCentered.collectAsState()
-    // val devices by viewModel.devices.collectAsState() // 移除设备列表收集
+    /* val devices by viewModel.devices.collectAsState() // 移除设备列表收集 */
     val devices = emptyList<me.ikate.findmy.data.model.Device>() // 传递空列表
-    val selectedDevice by viewModel.selectedDevice.collectAsState()
 
     // 收集联系人 ViewModel 状态
     val contacts by contactViewModel.contacts.collectAsState()
@@ -74,11 +71,10 @@ fun MainScreen(
     val meAvatarUrl by contactViewModel.meAvatarUrl.collectAsState() // "我"的本地显示头像
     val myDevice by contactViewModel.myDevice.collectAsState() // 收集当前设备
     val myAddress by contactViewModel.myAddress.collectAsState() // 收集当前设备地址
-    val selectedContact by contactViewModel.selectedContact.collectAsState()
-    val contactAddress by contactViewModel.contactAddress.collectAsState()
     val showAddDialog by contactViewModel.showAddDialog.collectAsState()
     val isLoading by contactViewModel.isLoading.collectAsState()
     val errorMessage by contactViewModel.errorMessage.collectAsState()
+    val requestingLocationFor by contactViewModel.requestingLocationFor.collectAsState() // 正在请求位置的联系人
 
     // 获取当前设备实时朝向
     val currentHeading = CompassHelper.rememberCompassHeading()
@@ -100,7 +96,6 @@ fun MainScreen(
             if (targetContact != null) {
                 // 绑定朋友
                 contactViewModel.bindContact(targetContact.id, uri)
-                contactToBind = null
             }
         }
     }
@@ -123,6 +118,7 @@ fun MainScreen(
     // 使用自定义底部面板包裹地图和设备列表
     CustomBottomSheet(
         modifier = Modifier.fillMaxSize(),
+        initialValue = SheetValue.Expanded, // 启动时直接展开联系人页面
         backgroundContent = {
             // 背景：全屏地图视图
             MapViewWrapper(
@@ -142,7 +138,8 @@ fun MainScreen(
                 onContactMarkerClick = { contact ->
                     // 点击联系人 Marker 时，移动地图到联系人位置
                     contact.location?.let { location ->
-                        contactViewModel.selectContact(contact)
+                        // 仅移动地图，不再设置 selectedContact 触发详情页
+                        // contactViewModel.selectContact(contact)
                         viewModel.clearSelectedDevice() // 清除选中的设备
                         MapCameraHelper.animateToLocation(googleMap, location, zoom = 15f)
                         viewModel.updateSheetValue(SheetValue.HalfExpanded)
@@ -177,102 +174,76 @@ fun MainScreen(
             )
         },
         sheetContent = {
-            if (selectedContact != null) {
-                // 显示联系人详情
-                ContactDetailPanel(
-                    contact = selectedContact!!,
-                    address = contactAddress,
-                    onClose = {
-                        contactViewModel.clearSelectedContact()
-                    },
-                    onAccept = { contact ->
-                        contactViewModel.acceptShare(contact.id)
-                        contactViewModel.clearSelectedContact()
-                    },
-                    onReject = { contact ->
-                        contactViewModel.rejectShare(contact.id)
-                        contactViewModel.clearSelectedContact()
-                    },
-                    onNavigate = { contact ->
-                        // 启动 Google Maps 导航
-                        contact.location?.let { loc ->
-                            val uri = Uri.parse("google.navigation:q=${loc.latitude},${loc.longitude}")
-                            val mapIntent = Intent(Intent.ACTION_VIEW, uri)
-                            mapIntent.setPackage("com.google.android.apps.maps")
-                            if (mapIntent.resolveActivity(context.packageManager) != null) {
-                                context.startActivity(mapIntent)
-                            } else {
-                                // 如果没有安装 Google Maps，尝试使用通用 geo URI
-                                val geoUri = Uri.parse("geo:${loc.latitude},${loc.longitude}?q=${loc.latitude},${loc.longitude}(${contact.name})")
-                                val geoIntent = Intent(Intent.ACTION_VIEW, geoUri)
-                                context.startActivity(geoIntent)
-                            }
-                        }
-                    },
-                    onBindContact = { contact ->
-                        contactToBind = contact
-                        contactPickerLauncher.launch(null)
-                    },
-                    onPauseShare = { contact ->
-                        contactViewModel.pauseShare(contact)
-                    },
-                    onResumeShare = { contact, duration ->
-                        contactViewModel.resumeShare(contact, duration)
-                    },
-                    onRemoveContact = { contact ->
-                        contactViewModel.removeContact(contact)
-                    }
-                )
-            } else {
-                // 显示联系人列表
-                val isAnonymous = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.isAnonymous ?: true
-                
-                if (isAnonymous) {
-                     me.ikate.findmy.ui.screen.main.components.AnonymousUserPrompt(
-                        onSignUpClick = onNavigateToAuth,
-                         modifier = Modifier.fillMaxSize()
-                    )
-                } else {
-                    ContactListPanel(
-                        currentUser = currentUser,
-                        meName = meName,
-                        meAvatarUrl = meAvatarUrl,
-                        myDevice = myDevice,
-                        myAddress = myAddress,
-                        contacts = contacts,
-                        onContactClick = { contact ->
-                            // 点击联系人时，选中联系人
-                            contactViewModel.selectContact(contact)
-                            viewModel.clearSelectedDevice()
-                            viewModel.updateSheetValue(SheetValue.HalfExpanded)
+            // 直接显示联系人列表和当前设备
+            ContactListPanel(
+                currentUser = currentUser,
+                meName = meName,
+                meAvatarUrl = meAvatarUrl,
+                myDevice = myDevice,
+                myAddress = myAddress,
+                contacts = contacts,
+                requestingLocationFor = requestingLocationFor,
+                onContactClick = { contact ->
+                    // 点击联系人时：移动地图
+                    viewModel.clearSelectedDevice()
 
-                            // 只有当有位置时才移动地图
-                            contact.location?.let { location ->
-                                MapCameraHelper.animateToLocation(googleMap, location, zoom = 15f)
-                            }
-                        },
-                        onAddContactClick = {
-                            contactViewModel.showAddDialog()
-                        },
-                        onPauseShare = { contact ->
-                            contactViewModel.pauseShare(contact)
-                        },
-                        onResumeShare = { contact, duration ->
-                            contactViewModel.resumeShare(contact, duration)
+                    contact.location?.let { location ->
+                        MapCameraHelper.animateToLocation(googleMap, location, zoom = 15f)
+                        viewModel.updateSheetValue(SheetValue.HalfExpanded)
+                    }
+                },
+                onAddContactClick = {
+                    contactViewModel.showAddDialog()
+                },
+                onNavigate = { contact ->
+                    // 启动 Google Maps 导航
+                    contact.location?.let { loc ->
+                        val uri = "google.navigation:q=${loc.latitude},${loc.longitude}".toUri()
+                        val mapIntent = Intent(Intent.ACTION_VIEW, uri)
+                        mapIntent.setPackage("com.google.android.apps.maps")
+                        if (mapIntent.resolveActivity(context.packageManager) != null) {
+                            context.startActivity(mapIntent)
+                        } else {
+                            val geoUri =
+                                "geo:${loc.latitude},${loc.longitude}?q=${loc.latitude},${loc.longitude}(${contact.name})".toUri()
+                            val geoIntent = Intent(Intent.ACTION_VIEW, geoUri)
+                            context.startActivity(geoIntent)
                         }
-                    )
+                    }
+                },
+                onBindContact = { contact ->
+                    contactToBind = contact
+                    contactPickerLauncher.launch(null)
+                },
+                onPauseShare = { contact ->
+                    contactViewModel.pauseShare(contact)
+                },
+                onResumeShare = { contact, duration ->
+                    contactViewModel.resumeShare(contact, duration)
+                },
+                onRemoveContact = { contact ->
+                    contactViewModel.removeContact(contact)
+                },
+                onAcceptShare = { contact ->
+                    contactViewModel.acceptShare(contact.id)
+                },
+                onRejectShare = { contact ->
+                    contactViewModel.rejectShare(contact.id)
+                },
+                onRequestLocationUpdate = { targetUid ->
+                    contactViewModel.requestLocationUpdate(targetUid)
                 }
-            }
+            )
         },
         onSheetValueChange = { value ->
             viewModel.updateSheetValue(value)
         },
         onOffsetChange = { offset ->
             // 面板偏移量变化时，动态调整地图 Padding 和按钮位置
-            bottomSheetOffsetPx = offset
             MapCameraHelper.adjustMapPadding(googleMap, offset)
         }
     )
+
 
     // 权限被拒绝时显示提示对话框
     if (permissionsState.shouldShowRationale) {
@@ -313,6 +284,22 @@ fun MainScreen(
             },
             onConfirm = { email, duration ->
                 contactViewModel.shareLocation(email, duration)
+            }
+        )
+    }
+
+    // 权限引导对话框
+    val showPermissionGuide by contactViewModel.showPermissionGuide.collectAsState()
+    val missingPermissions by contactViewModel.missingPermissions.collectAsState()
+
+    if (showPermissionGuide) {
+        PermissionGuideDialog(
+            missingPermissions = missingPermissions,
+            onDismiss = {
+                contactViewModel.dismissPermissionGuide()
+            },
+            onConfirm = {
+                contactViewModel.onPermissionGranted()
             }
         )
     }

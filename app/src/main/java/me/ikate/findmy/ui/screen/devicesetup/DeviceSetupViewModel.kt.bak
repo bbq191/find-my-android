@@ -1,0 +1,126 @@
+package me.ikate.findmy.ui.screen.devicesetup
+
+import android.app.Application
+import android.content.Context
+import android.net.Uri
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import com.google.firebase.auth.FirebaseAuth
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import me.ikate.findmy.data.model.DeviceType
+import me.ikate.findmy.data.repository.DeviceRepository
+import me.ikate.findmy.service.LocationReportService
+
+/**
+ * 设备设置 UI 状态
+ */
+sealed class DeviceSetupUiState {
+    data object Idle : DeviceSetupUiState()
+    data object Loading : DeviceSetupUiState()
+    data object Success : DeviceSetupUiState()
+    data class Error(val message: String) : DeviceSetupUiState()
+}
+
+/**
+ * 设备设置 ViewModel
+ */
+class DeviceSetupViewModel(application: Application) : AndroidViewModel(application) {
+
+    companion object {
+        private const val PREFS_NAME = "device_setup_prefs"
+        private const val KEY_DEVICE_SETUP_COMPLETED = "device_setup_completed"
+    }
+
+    private val _uiState = MutableStateFlow<DeviceSetupUiState>(DeviceSetupUiState.Idle)
+    val uiState: StateFlow<DeviceSetupUiState> = _uiState.asStateFlow()
+
+    private val deviceRepository = DeviceRepository()
+    private val locationReportService = LocationReportService(application)
+
+    /**
+     * 检查设备是否已完成设置
+     */
+    fun isDeviceSetupCompleted(): Boolean {
+        val prefs = getApplication<Application>().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return prefs.getBoolean(KEY_DEVICE_SETUP_COMPLETED, false)
+    }
+
+    /**
+     * 标记设备设置已完成
+     */
+    private fun markDeviceSetupCompleted() {
+        val prefs = getApplication<Application>().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        prefs.edit().putBoolean(KEY_DEVICE_SETUP_COMPLETED, true).apply()
+    }
+
+    /**
+     * 设置设备信息
+     */
+    fun setupDevice(
+        customName: String?,
+        deviceType: DeviceType,
+        avatarUri: Uri?
+    ) {
+        viewModelScope.launch {
+            _uiState.value = DeviceSetupUiState.Loading
+
+            try {
+                // 1. 确保用户已登录（应该已经通过匿名登录完成）
+                val currentUser = FirebaseAuth.getInstance().currentUser
+                if (currentUser == null) {
+                    _uiState.value = DeviceSetupUiState.Error("用户未登录，请重试")
+                    return@launch
+                }
+
+                // 2. 上报设备位置和信息
+                val result = locationReportService.reportCurrentLocation()
+
+                result.fold(
+                    onSuccess = { device ->
+                        // 3. 如果设置了头像，上传头像（暂时跳过，使用 null）
+                        // TODO: 实现头像上传到 Firebase Storage
+                        val avatarUrl: String? = null
+
+                        // 4. 更新设备的自定义名称和类型
+                        val updatedDevice = device.copy(
+                            customName = customName,
+                            deviceType = deviceType
+                        )
+                        deviceRepository.saveDevice(updatedDevice)
+
+                        // 5. 保存头像 URL 到用户配置（如果有）
+                        if (avatarUrl != null) {
+                            saveAvatarUrl(avatarUrl)
+                        }
+
+                        // 6. 标记设备设置已完成
+                        markDeviceSetupCompleted()
+
+                        _uiState.value = DeviceSetupUiState.Success
+                    },
+                    onFailure = { error ->
+                        _uiState.value = DeviceSetupUiState.Error(
+                            error.message ?: "设备设置失败，请检查定位权限"
+                        )
+                    }
+                )
+            } catch (e: Exception) {
+                android.util.Log.e("DeviceSetupViewModel", "设备设置失败", e)
+                _uiState.value = DeviceSetupUiState.Error(
+                    e.message ?: "设备设置失败，请重试"
+                )
+            }
+        }
+    }
+
+    /**
+     * 保存头像 URL 到 SharedPreferences
+     */
+    private fun saveAvatarUrl(avatarUrl: String) {
+        val prefs = getApplication<Application>().getSharedPreferences("user_prefs", Context.MODE_PRIVATE)
+        prefs.edit().putString("avatar_url", avatarUrl).apply()
+    }
+}

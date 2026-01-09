@@ -1,11 +1,11 @@
 [versions]
 agp = "8.13.2"
-firebaseBomVersion = "34.7.0"
+#firebaseBomVersion = "34.7.0"
 kotlin = "2.0.21"
 coreKtx = "1.17.0"
 junit = "4.13.2"
-junitVersion = "1.3.0"
-espressoCore = "3.7.0"
+junitVersion = "1.2.1"
+espressoCore = "3.6.1"
 lifecycleRuntimeKtx = "2.10.0"
 activityCompose = "1.12.2"
 composeBom = "2025.12.01"
@@ -16,11 +16,11 @@ coil = "3.0.4"
 lifecycleViewmodel = "2.10.0"
 firebaseBom = "33.7.0"
 googleServices = "4.4.2"
-workRuntime = "2.10.0"
+workRuntime = "2.9.1"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
-firebase-bom-v3470 = { module = "com.google.firebase:firebase-bom", version.ref = "firebaseBomVersion" }
+#firebase-bom-v3470 = { module = "com.google.firebase:firebase-bom", version.ref = "firebaseBomVersion" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }
 androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }

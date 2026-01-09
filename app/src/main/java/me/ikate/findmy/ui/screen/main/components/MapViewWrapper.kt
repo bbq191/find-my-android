@@ -6,7 +6,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import com.google.android.gms.maps.GoogleMap
@@ -76,9 +75,6 @@ fun MapViewWrapper(
             )
         )
     }
-    
-    // 监听 MapLoaded
-    var isMapLoaded by remember { mutableStateOf(false) }
 
     GoogleMap(
         modifier = modifier,
@@ -86,7 +82,6 @@ fun MapViewWrapper(
         properties = properties,
         uiSettings = uiSettings,
         onMapLoaded = {
-            isMapLoaded = true
         },
         onMapClick = {
             onMapClick()
@@ -106,8 +101,9 @@ fun MapViewWrapper(
             // 过滤掉无效坐标，防止 Marker 渲染导致 NaN 问题
             if (!device.location.latitude.isNaN() && !device.location.longitude.isNaN()) {
                 androidx.compose.runtime.key(device.id) {
-                    val markerState = com.google.maps.android.compose.rememberMarkerState(position = device.location)
-                
+                    val markerState =
+                        com.google.maps.android.compose.rememberMarkerState(position = device.location)
+
                     // 当设备位置更新时，同步更新 Marker 状态
                     LaunchedEffect(device.location) {
                         if (!device.location.latitude.isNaN() && !device.location.longitude.isNaN()) {
@@ -127,7 +123,8 @@ fun MapViewWrapper(
                         device.bearing
                     }
                     // 严格过滤 NaN 和 Infinite，默认为 0f
-                    val displayBearing = if (rawBearing.isNaN() || rawBearing.isInfinite()) 0f else rawBearing
+                    val displayBearing =
+                        if (rawBearing.isNaN() || rawBearing.isInfinite()) 0f else rawBearing
 
                     // 绘制方向指示雷达
                     // 注意：即使 bearing 为 0 (正北) 也绘制，以便用户能看到效果
@@ -135,23 +132,23 @@ fun MapViewWrapper(
                     val showRadar = true // 强制显示雷达以响应用户反馈，实际逻辑应判断是否有方向
 
                     if (showRadar) {
-                         // 再次确保传入计算的值是安全的
-                         val safeBearing = if (displayBearing.isNaN()) 0f else displayBearing
-                         
-                         val sectorPoints = calculateSectorPoints(
-                             center = device.location,
-                             radius = 220.0, // 增大半径到220米，确保可见
-                             direction = safeBearing,
-                             fov = 30f // 增大视野角度到30度
-                         )
-                         
-                         Polygon(
-                             points = sectorPoints,
-                             fillColor = androidx.compose.ui.graphics.Color(0x55007AFF), // 加深颜色 (33%不透明度)
-                             strokeColor = androidx.compose.ui.graphics.Color(0xFF007AFF), // 添加实心边框
-                             strokeWidth = 2f,
-                             zIndex = 1f
-                         )
+                        // 再次确保传入计算的值是安全的
+                        val safeBearing = if (displayBearing.isNaN()) 0f else displayBearing
+
+                        val sectorPoints = calculateSectorPoints(
+                            center = device.location,
+                            radius = 220.0, // 增大半径到220米，确保可见
+                            direction = safeBearing,
+                            fov = 30f // 增大视野角度到30度
+                        )
+
+                        Polygon(
+                            points = sectorPoints,
+                            fillColor = androidx.compose.ui.graphics.Color(0x55007AFF), // 加深颜色 (33%不透明度)
+                            strokeColor = androidx.compose.ui.graphics.Color(0xFF007AFF), // 添加实心边框
+                            strokeWidth = 2f,
+                            zIndex = 1f
+                        )
                     }
 
                     // 缓存 Marker Icon 以避免重组时闪烁
@@ -190,7 +187,8 @@ fun MapViewWrapper(
             contact.location?.let { location ->
                 if (!location.latitude.isNaN() && !location.longitude.isNaN()) {
                     androidx.compose.runtime.key(contact.id) {
-                        val markerState = com.google.maps.android.compose.rememberMarkerState(position = location)
+                        val markerState =
+                            com.google.maps.android.compose.rememberMarkerState(position = location)
 
                         // 当联系人位置更新时，同步更新 Marker 状态
                         LaunchedEffect(location) {
@@ -247,7 +245,7 @@ private fun calculateSectorPoints(
 
     val startAngle = direction - fov / 2
     val endAngle = direction + fov / 2
-    
+
     // 每 5 度取一个点，画弧线
     var angle = startAngle
     while (angle <= endAngle) {
@@ -256,7 +254,7 @@ private fun calculateSectorPoints(
     }
     // 确保包含结束角
     points.add(computeOffset(center, radius, endAngle.toDouble()))
-    
+
     points.add(center) // 闭合
     return points
 }
@@ -270,9 +268,9 @@ private fun computeOffset(from: LatLng, distance: Double, heading: Double): LatL
     val h = Math.toRadians(heading)
     val fromLat = Math.toRadians(from.latitude)
     val fromLng = Math.toRadians(from.longitude)
-    
+
     val lat = asin(sin(fromLat) * cos(d) + cos(fromLat) * sin(d) * cos(h))
     val lng = fromLng + atan2(sin(h) * sin(d) * cos(fromLat), cos(d) - sin(fromLat) * sin(lat))
-    
+
     return LatLng(Math.toDegrees(lat), Math.toDegrees(lng))
 }

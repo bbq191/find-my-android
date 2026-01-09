@@ -69,15 +69,15 @@ object CompassHelper {
 
                                 // 使用指数移动平均 (EMA) 算法进行平滑处理，减少抖动
                                 // alpha 越小越平滑，但响应越慢；alpha 越大响应越快，但抖动越大
-                                val alpha = 0.05f 
-                                
+                                val alpha = 0.05f
+
                                 // 处理 359 -> 0 度跨越边界的问题
                                 var diff = azimuth - lastHeading
                                 if (diff > 180) diff -= 360
                                 if (diff < -180) diff += 360
-                                
+
                                 val newHeading = (lastHeading + diff * alpha + 360) % 360
-                                
+
                                 // 仅当变化超过一定阈值时才更新状态，避免微小浮动触发重绘
                                 if (abs(newHeading - heading) > 0.5f) {
                                     heading = newHeading

@@ -1,60 +1,51 @@
 package me.ikate.findmy
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.lifecycle.viewmodel.compose.viewModel
-import me.ikate.findmy.ui.screen.auth.AuthState
-import me.ikate.findmy.ui.screen.auth.AuthViewModel
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import me.ikate.findmy.ui.screen.main.MainScreen
 import me.ikate.findmy.ui.theme.FindmyTheme
+import me.ikate.findmy.util.NotificationHelper
 
 class MainActivity : ComponentActivity() {
+
+    // 通知权限请求启动器（Android 13+）
+    private val requestNotificationPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { isGranted ->
+            if (isGranted) {
+                android.util.Log.d("MainActivity", "通知权限已授予")
+            } else {
+                android.util.Log.w("MainActivity", "通知权限被拒绝")
+            }
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        setContent {
-            FindmyTheme {
-                AppContent()
+
+        // 初始化通知渠道
+        NotificationHelper.createNotificationChannels(this)
+
+        // 请求通知权限（Android 13+）
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(
+                    this,
+                    Manifest.permission.POST_NOTIFICATIONS
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                requestNotificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
             }
         }
-    }
-}
 
-@Composable
-fun AppContent(
-    authViewModel: AuthViewModel = viewModel()
-) {
-    val authState by authViewModel.authState.collectAsState()
-
-    // 自动登录逻辑：如果未认证，尝试匿名登录
-    LaunchedEffect(authState) {
-        if (authState is AuthState.Unauthenticated) {
-            authViewModel.signInAnonymously()
-        }
-    }
-
-    when (authState) {
-        is AuthState.Authenticated -> {
-            MainScreen()
-        }
-        else -> {
-            // 加载中或未认证时显示加载指示器
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
-            ) {
-                CircularProgressIndicator()
+        setContent {
+            FindmyTheme {
+                MainScreen()
             }
         }
     }

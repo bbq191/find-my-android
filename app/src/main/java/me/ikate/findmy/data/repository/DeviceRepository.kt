@@ -58,7 +58,8 @@ class DeviceRepository {
                     return@addSnapshotListener
                 }
 
-                myDevices = snapshot?.documents?.mapNotNull { doc -> parseDevice(doc) } ?: emptyList()
+                myDevices =
+                    snapshot?.documents?.mapNotNull { doc -> parseDevice(doc) } ?: emptyList()
 
                 // 合并两个列表并发送
                 val allDevices = (myDevices + sharedDevices).distinctBy { it.id }
@@ -74,7 +75,8 @@ class DeviceRepository {
                     return@addSnapshotListener
                 }
 
-                sharedDevices = snapshot?.documents?.mapNotNull { doc -> parseDevice(doc) } ?: emptyList()
+                sharedDevices =
+                    snapshot?.documents?.mapNotNull { doc -> parseDevice(doc) } ?: emptyList()
 
                 // 合并两个列表并发送
                 val allDevices = (myDevices + sharedDevices).distinctBy { it.id }
@@ -105,6 +107,7 @@ class DeviceRepository {
             Device(
                 id = doc.id,
                 name = doc.getString("name") ?: "未知设备",
+                ownerId = doc.getString("ownerId") ?: "",
                 location = gcjLocation,
                 battery = doc.getLong("battery")?.toInt() ?: 100,
                 lastUpdateTime = doc.getTimestamp("lastUpdateTime")?.toDate()?.time
@@ -129,7 +132,7 @@ class DeviceRepository {
      *
      * @param device 设备对象
      */
-    suspend fun saveDevice(device: Device) {
+    fun saveDevice(device: Device) {
         val currentUserId = FirebaseAuth.getInstance().currentUser?.uid
         if (currentUserId == null) {
             android.util.Log.e("DeviceRepository", "用户未登录，无法保存设备")
@@ -159,19 +162,4 @@ class DeviceRepository {
             }
     }
 
-    /**
-     * 删除设备
-     *
-     * @param deviceId 设备 ID
-     */
-    suspend fun deleteDevice(deviceId: String) {
-        devicesCollection.document(deviceId)
-            .delete()
-            .addOnSuccessListener {
-                android.util.Log.d("DeviceRepository", "设备删除成功: $deviceId")
-            }
-            .addOnFailureListener { e ->
-                android.util.Log.e("DeviceRepository", "设备删除失败: $deviceId", e)
-            }
-    }
 }

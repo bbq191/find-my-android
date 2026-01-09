@@ -7,9 +7,7 @@ plugins {
 
 android {
     namespace = "me.ikate.findmy"
-    compileSdk {
-        version = release(36)
-    }
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "me.ikate.findmy"
@@ -19,19 +17,30 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-
         ndk {
             abiFilters.add("arm64-v8a")
             abiFilters.add("x86_64")
         }
     }
 
+    signingConfigs {
+        create("release") {
+            // 使用 debug 密钥进行签名（自用应用）
+            storeFile = signingConfigs.getByName("debug").storeFile
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+            enableV1Signing = true
+            enableV2Signing = true
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
+                getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
             )
         }
     }

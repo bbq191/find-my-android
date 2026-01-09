@@ -71,36 +71,6 @@ object CoordinateConverter {
         return LatLng(mgLat, mgLng)
     }
 
-    /**
-     * GCJ-02 转 WGS-84（粗略逆转换）
-     * 注意：此转换为近似算法，精度约1-2米
-     *
-     * @param gcjLat GCJ-02纬度
-     * @param gcjLng GCJ-02经度
-     * @return WGS-84坐标
-     */
-    fun gcj02ToWgs84(gcjLat: Double, gcjLng: Double): LatLng {
-        if (!isInChina(gcjLat, gcjLng)) {
-            return LatLng(gcjLat, gcjLng)
-        }
-
-        val transformed = wgs84ToGcj02(gcjLat, gcjLng)
-        val deltaLat = transformed.latitude - gcjLat
-        val deltaLng = transformed.longitude - gcjLng
-
-        return LatLng(gcjLat - deltaLat, gcjLng - deltaLng)
-    }
-
-    /**
-     * 批量转换WGS-84坐标到GCJ-02
-     *
-     * @param wgsCoordinates WGS-84坐标列表
-     * @return GCJ-02坐标列表
-     */
-    fun batchWgs84ToGcj02(wgsCoordinates: List<LatLng>): List<LatLng> {
-        return wgsCoordinates.map { wgs84ToGcj02(it.latitude, it.longitude) }
-    }
-
     private fun transformLat(x: Double, y: Double): Double {
         var ret = -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y + 0.1 * x * y + 0.2 * sqrt(abs(x))
         ret += (20.0 * sin(6.0 * x * PI) + 20.0 * sin(2.0 * x * PI)) * 2.0 / 3.0

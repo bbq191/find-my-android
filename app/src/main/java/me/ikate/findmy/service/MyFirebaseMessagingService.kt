@@ -3,17 +3,22 @@ package me.ikate.findmy.service
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
-import android.content.Context
 import android.content.Intent
-import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
+import androidx.core.content.edit
+import androidx.work.ExistingWorkPolicy
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.OutOfQuotaPolicy
+import androidx.work.WorkManager
+import androidx.work.workDataOf
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import me.ikate.findmy.MainActivity
+import me.ikate.findmy.worker.LocationReportWorker
 
 class MyFirebaseMessagingService : FirebaseMessagingService() {
 
@@ -39,7 +44,18 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         // 检查消息是否包含数据有效负载
         if (remoteMessage.data.isNotEmpty()) {
             Log.d(TAG, "Message data payload: ${remoteMessage.data}")
-            // 这里可以处理数据消息，例如自动刷新联系人列表
+
+            // 处理位置请求消息
+            when (remoteMessage.data["type"]) {
+                "LOCATION_REQUEST" -> {
+                    handleLocationRequest(remoteMessage.data)
+                }
+
+                else -> {
+                    // 其他类型的数据消息，例如自动刷新联系人列表
+                    Log.d(TAG, "Received unknown data message type")
+                }
+            }
         }
 
         // 检查消息是否包含通知有效负载
@@ -47,6 +63,52 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
             Log.d(TAG, "Message Notification Body: ${it.body}")
             sendNotification(it.title ?: "新消息", it.body ?: "")
         }
+    }
+
+    /**
+     * 处理位置请求：启动加急 Worker 立即上报位置
+     */
+    private fun handleLocationRequest(data: Map<String, String>) {
+        val requesterUid = data["requesterUid"]
+        Log.d(TAG, "收到位置请求，来自: $requesterUid")
+
+        // 检查是否超过防抖动冷却时间
+        val prefs = getSharedPreferences("location_request", MODE_PRIVATE)
+        val lastRequestTime = prefs.getLong("last_request_time", 0)
+        val currentTime = System.currentTimeMillis()
+        val cooldownMillis = 60 * 1000 // 1分钟冷却时间
+
+        if (currentTime - lastRequestTime < cooldownMillis) {
+            Log.d(
+                TAG,
+                "位置请求过于频繁，忽略本次请求 (冷却时间: ${(cooldownMillis - (currentTime - lastRequestTime)) / 1000}秒)"
+            )
+            return
+        }
+
+        // 更新最后请求时间
+        prefs.edit { putLong("last_request_time", currentTime) }
+
+        // 启动加急的单次定位任务
+        val workRequest = OneTimeWorkRequestBuilder<LocationReportWorker>()
+            .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+            .setInputData(
+                workDataOf(
+                    "isOneShot" to true,
+                    "requesterUid" to requesterUid
+                )
+            )
+            .build()
+
+        // 使用唯一名称避免重复任务，使用 REPLACE 策略确保最新的请求被执行
+        WorkManager.getInstance(applicationContext)
+            .enqueueUniqueWork(
+                "location_request_oneshot",
+                ExistingWorkPolicy.REPLACE,
+                workRequest
+            )
+
+        Log.d(TAG, "已启动加急位置上报任务")
     }
 
     /**
@@ -75,17 +137,15 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
             PendingIntent.FLAG_ONE_SHOT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        val notificationManager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
 
         // Android O 以上需要 Notification Channel
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                CHANNEL_ID,
-                "位置共享通知",
-                NotificationManager.IMPORTANCE_DEFAULT
-            )
-            notificationManager.createNotificationChannel(channel)
-        }
+        val channel = NotificationChannel(
+            CHANNEL_ID,
+            "位置共享通知",
+            NotificationManager.IMPORTANCE_DEFAULT
+        )
+        notificationManager.createNotificationChannel(channel)
 
         val notificationBuilder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_dialog_map) // 临时使用系统图标，建议后续替换为 app icon

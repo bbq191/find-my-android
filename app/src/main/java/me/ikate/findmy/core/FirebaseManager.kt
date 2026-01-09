@@ -63,7 +63,11 @@ object FirebaseManager {
                 if (task.isSuccessful) {
                     android.util.Log.d("FirebaseManager", "已取消订阅主题: $topic")
                 } else {
-                    android.util.Log.e("FirebaseManager", "取消订阅主题失败: $topic", task.exception)
+                    android.util.Log.e(
+                        "FirebaseManager",
+                        "取消订阅主题失败: $topic",
+                        task.exception
+                    )
                 }
             }
     }

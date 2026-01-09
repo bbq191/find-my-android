@@ -14,11 +14,16 @@
     <!-- 通讯录权限 (用于获取机主信息) -->
     <uses-permission android:name="android.permission.READ_CONTACTS" />
 
+    <!-- 通知权限 (Android 13+) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <!-- 存储权限 (用于地图缓存) -->
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="32"
         tools:ignore="ScopedStorage" />
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
 
     <queries>
@@ -51,12 +56,6 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-
-        <service
-            android:name=".service.LocationReportService"
-            android:foregroundServiceType="location"
-            android:enabled="true"
-            android:exported="false" />
 
         <service
             android:name=".service.MyFirebaseMessagingService"

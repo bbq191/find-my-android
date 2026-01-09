@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import me.ikate.findmy.data.model.Device
+import me.ikate.findmy.data.repository.AuthRepository
 import me.ikate.findmy.data.repository.DeviceRepository
 import me.ikate.findmy.service.LocationReportService
 import me.ikate.findmy.ui.screen.main.components.SheetValue
@@ -37,6 +38,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // 定位服务客户端
     private val fusedLocationClient = LocationServices.getFusedLocationProviderClient(application)
 
+    // 认证仓库
+    private val authRepository = AuthRepository(application.applicationContext)
+
     // 设备数据仓库
     private val deviceRepository = DeviceRepository()
 
@@ -52,25 +56,47 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // 设备列表（从 Firebase 实时获取）
     private val _devices = MutableStateFlow<List<Device>>(emptyList())
-    val devices: StateFlow<List<Device>> = _devices.asStateFlow()
 
     // 选中的设备（用于显示详情）
     private val _selectedDevice = MutableStateFlow<Device?>(null)
-    val selectedDevice: StateFlow<Device?> = _selectedDevice.asStateFlow()
 
     // 底部面板状态
-    private val _sheetValue = MutableStateFlow(SheetValue.HalfExpanded)
+    private val _sheetValue = MutableStateFlow(SheetValue.Collapsed)
 
     // 是否已完成首次自动定位
     private var hasInitialCentered = false
 
     init {
+        // 确保用户已登录（自动匿名登录）
+        ensureUserAuthenticated()
         // 启动时开始监听设备列表变化
         observeDevices()
         // 启动定期位置上报（根据用户类型调整频率）
         startPeriodicLocationReport()
         // 立即上报一次位置，以便在地图上显示当前设备
         reportLocationNow()
+    }
+
+    /**
+     * 确保用户已通过 Firebase 认证
+     * 如果未登录，则使用设备 ID 自动登录（确保同设备 UID 不变）
+     */
+    private fun ensureUserAuthenticated() {
+        viewModelScope.launch {
+            if (!authRepository.isSignedIn()) {
+                android.util.Log.d("MainViewModel", "用户未登录，开始设备登录")
+                authRepository.signInWithDeviceId().fold(
+                    onSuccess = { user ->
+                        android.util.Log.d("MainViewModel", "设备登录成功: ${user.uid}")
+                    },
+                    onFailure = { error ->
+                        android.util.Log.e("MainViewModel", "设备登录失败", error)
+                    }
+                )
+            } else {
+                android.util.Log.d("MainViewModel", "用户已登录: ${authRepository.getCurrentUserId()}")
+            }
+        }
     }
 
     /**
@@ -129,7 +155,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 if (location != null) {
                     // GPS获取的是WGS-84坐标，需要转换为GCJ-02以匹配Google Maps在中国的底图
                     val wgsCoord = LatLng(location.latitude, location.longitude)
-                    val gcjCoord = CoordinateConverter.wgs84ToGcj02(wgsCoord.latitude, wgsCoord.longitude)
+                    val gcjCoord =
+                        CoordinateConverter.wgs84ToGcj02(wgsCoord.latitude, wgsCoord.longitude)
 
                     map.animateCamera(
                         CameraUpdateFactory.newLatLngZoom(gcjCoord, 15f)
@@ -143,13 +170,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
-    }
-
-    /**
-     * 选中设备
-     */
-    fun selectDevice(device: Device) {
-        _selectedDevice.value = device
     }
 
     /**
@@ -207,11 +227,4 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /**
-     * 停止定期位置上报
-     */
-    fun stopPeriodicLocationReport() {
-        workManager.cancelUniqueWork("location_report")
-        android.util.Log.d("MainViewModel", "已停止定期位置上报任务")
-    }
 }

@@ -11,7 +11,9 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.android.gms.maps.model.LatLng
+import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -19,8 +21,12 @@ import kotlinx.coroutines.launch
 import me.ikate.findmy.data.model.Contact
 import me.ikate.findmy.data.model.Device
 import me.ikate.findmy.data.model.ShareDuration
+import me.ikate.findmy.data.repository.AuthRepository
 import me.ikate.findmy.data.repository.ContactRepository
 import me.ikate.findmy.data.repository.DeviceRepository
+import me.ikate.findmy.util.AddressFormatter
+import me.ikate.findmy.util.NotificationHelper
+import me.ikate.findmy.util.PermissionGuideHelper
 import java.util.Locale
 
 /**
@@ -29,10 +35,12 @@ import java.util.Locale
  */
 class ContactViewModel(application: Application) : AndroidViewModel(application) {
 
+    private val authRepository = AuthRepository(application.applicationContext)
     private val contactRepository = ContactRepository()
     private val deviceRepository = DeviceRepository()
     private val context = application
     private val prefs = context.getSharedPreferences("user_profile", Context.MODE_PRIVATE)
+    private val firestore = FirebaseFirestore.getInstance()
 
     companion object {
         private const val TAG = "ContactViewModel"
@@ -50,11 +58,9 @@ class ContactViewModel(application: Application) : AndroidViewModel(application)
 
     // 选中的联系人
     private val _selectedContact = MutableStateFlow<Contact?>(null)
-    val selectedContact: StateFlow<Contact?> = _selectedContact.asStateFlow()
 
     // 选中联系人的地址（反向地理编码结果）
     private val _contactAddress = MutableStateFlow<String?>(null)
-    val contactAddress: StateFlow<String?> = _contactAddress.asStateFlow()
 
     // 当前用户信息 (仅包含 UID)
     private val _currentUser = MutableStateFlow<me.ikate.findmy.data.model.User?>(null)
@@ -70,7 +76,7 @@ class ContactViewModel(application: Application) : AndroidViewModel(application)
     // 当前设备信息
     private val _myDevice = MutableStateFlow<Device?>(null)
     val myDevice: StateFlow<Device?> = _myDevice.asStateFlow()
-    
+
     // 当前设备地址 (格式化后)
     private val _myAddress = MutableStateFlow<String?>(null)
     val myAddress: StateFlow<String?> = _myAddress.asStateFlow()
@@ -87,11 +93,98 @@ class ContactViewModel(application: Application) : AndroidViewModel(application)
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
+    // 正在请求位置更新的联系人 UID（用于显示"正在定位..."）
+    private val _requestingLocationFor = MutableStateFlow<String?>(null)
+    val requestingLocationFor: StateFlow<String?> = _requestingLocationFor.asStateFlow()
+
+    // 用于检测新的共享邀请
+    private var previousContactIds = setOf<String>()
+
+    // 权限引导对话框状态
+    private val _showPermissionGuide = MutableStateFlow(false)
+    val showPermissionGuide: StateFlow<Boolean> = _showPermissionGuide.asStateFlow()
+
+    private val _missingPermissions = MutableStateFlow<List<String>>(emptyList())
+    val missingPermissions: StateFlow<List<String>> = _missingPermissions.asStateFlow()
+
+    // 待执行的操作（等待权限开启后执行）
+    private var pendingAction: (() -> Unit)? = null
+
     init {
         loadLocalProfile()
         observeContacts()
-        syncCurrentUser()
         observeMyDevice()
+        // 确保用户已登录，然后监听认证状态
+        ensureUserAuthenticatedAndObserve()
+        // 启动定期清理过期共享的任务
+        startPeriodicCleanup()
+    }
+
+    /**
+     * 启动定期清理过期共享的任务
+     * 每小时检查一次并清理超时的 PENDING 共享
+     */
+    private fun startPeriodicCleanup() {
+        viewModelScope.launch {
+            while (true) {
+                delay(60 * 60 * 1000L) // 每小时执行一次
+                if (authRepository.isSignedIn()) {
+                    contactRepository.cleanupExpiredShares().fold(
+                        onSuccess = { count ->
+                            if (count > 0) {
+                                Log.d(TAG, "清理了 $count 个过期共享")
+                            }
+                        },
+                        onFailure = { error ->
+                            Log.e(TAG, "清理过期共享失败", error)
+                        }
+                    )
+                }
+            }
+        }
+    }
+
+    /**
+     * 确保用户已登录，然后开始监听认证状态
+     */
+    private fun ensureUserAuthenticatedAndObserve() {
+        viewModelScope.launch {
+            // 如果未登录，主动触发登录
+            if (!authRepository.isSignedIn()) {
+                Log.d(TAG, "ContactViewModel: 用户未登录，开始设备登录")
+                authRepository.signInWithDeviceId().fold(
+                    onSuccess = { user ->
+                        Log.d(TAG, "ContactViewModel: 设备登录成功: ${user.uid}")
+                        syncCurrentUser()
+                    },
+                    onFailure = { error ->
+                        Log.e(TAG, "ContactViewModel: 设备登录失败", error)
+                    }
+                )
+            } else {
+                // 已登录，立即同步
+                Log.d(TAG, "ContactViewModel: 用户已登录，立即同步")
+                syncCurrentUser()
+            }
+
+            // 开始监听后续的认证状态变化
+            observeAuthStateChanges()
+        }
+    }
+
+    /**
+     * 监听认证状态变化
+     */
+    private suspend fun observeAuthStateChanges() {
+        authRepository.observeAuthState().collect { user ->
+            if (user != null) {
+                Log.d(TAG, "检测到用户登录状态变化: ${user.uid}")
+                syncCurrentUser()
+            } else {
+                Log.d(TAG, "用户已登出")
+                _currentUser.value = null
+            }
+        }
     }
 
     private fun loadLocalProfile() {
@@ -117,12 +210,12 @@ class ContactViewModel(application: Application) : AndroidViewModel(application)
             deviceRepository.observeDevices().collect { devices ->
                 // 查找当前设备 ID 对应的设备
                 val device = devices.find { it.id == androidId }
-                
+
                 // 如果位置发生变化，更新地址
                 if (device?.location != _myDevice.value?.location) {
                     device?.location?.let { fetchMyAddress(it) }
                 }
-                
+
                 _myDevice.value = device
             }
         }
@@ -137,57 +230,28 @@ class ContactViewModel(application: Application) : AndroidViewModel(application)
                 if (!Geocoder.isPresent()) return@launch
 
                 val geocoder = Geocoder(context, Locale.getDefault())
-                
+
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    geocoder.getFromLocation(latLng.latitude, latLng.longitude, 1) { addresses: List<Address> ->
+                    geocoder.getFromLocation(
+                        latLng.latitude,
+                        latLng.longitude,
+                        1
+                    ) { addresses: List<Address> ->
                         if (addresses.isNotEmpty()) {
-                            _myAddress.value = formatAddress(addresses[0])
+                            _myAddress.value = AddressFormatter.formatAddress(addresses[0])
                         }
                     }
                 } else {
                     @Suppress("DEPRECATION")
                     val addresses = geocoder.getFromLocation(latLng.latitude, latLng.longitude, 1)
                     if (!addresses.isNullOrEmpty()) {
-                        _myAddress.value = formatAddress(addresses[0])
+                        _myAddress.value = AddressFormatter.formatAddress(addresses[0])
                     }
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "获取我的地址失败", e)
             }
         }
-    }
-    
-    /**
-     * 格式化地址：去除国家、省、市、区及其分割逗号和多余空格
-     */
-    private fun formatAddress(address: Address): String {
-        var fullAddress = address.getAddressLine(0) ?: return "未知位置"
-        
-        // 1. 动态移除所有已知的行政区划信息
-        val components = listOfNotNull(
-            address.countryName,
-            address.adminArea,
-            address.subAdminArea,
-            address.locality,
-            address.subLocality,
-            "中国" // 保底移除
-        )
-        
-        components.forEach { component ->
-            fullAddress = fullAddress.replace(component, "")
-        }
-        
-        // 2. 移除所有逗号和标点
-        fullAddress = fullAddress.replace(",", "")
-            .replace("，", "")
-            .replace(" ", " ") // 统一空格
-            
-        // 3. 正则处理：将多个空格缩减为一个，并去除首尾空格
-        fullAddress = fullAddress.replace("\\s+".toRegex(), " ").trim()
-        
-        // 4. 去除首部可能残留的连接符
-        return fullAddress.trimStart('-', '、', ' ')
-            .ifBlank { "未知具体位置" }
     }
 
     /**
@@ -211,9 +275,11 @@ class ContactViewModel(application: Application) : AndroidViewModel(application)
 
                 cursor?.use {
                     if (it.moveToFirst()) {
-                        val nameIndex = it.getColumnIndex(android.provider.ContactsContract.Contacts.DISPLAY_NAME)
-                        val photoIndex = it.getColumnIndex(android.provider.ContactsContract.Contacts.PHOTO_URI)
-                        
+                        val nameIndex =
+                            it.getColumnIndex(android.provider.ContactsContract.Contacts.DISPLAY_NAME)
+                        val photoIndex =
+                            it.getColumnIndex(android.provider.ContactsContract.Contacts.PHOTO_URI)
+
                         if (nameIndex >= 0) name = it.getString(nameIndex)
                         if (photoIndex >= 0) photoUrl = it.getString(photoIndex)
                     }
@@ -245,22 +311,10 @@ class ContactViewModel(application: Application) : AndroidViewModel(application)
             result.onFailure { error ->
                 Log.e(TAG, "同步用户信息失败", error)
             }
-            
+
             // 获取当前用户信息并更新状态
             val user = contactRepository.getCurrentUser()
             _currentUser.value = user
-        }
-    }
-
-    /**
-     * 选中联系人并获取地址
-     */
-    fun selectContact(contact: Contact) {
-        _selectedContact.value = contact
-        _contactAddress.value = null // 重置地址
-        
-        contact.location?.let { latLng ->
-            fetchAddress(latLng)
         }
     }
 
@@ -273,56 +327,91 @@ class ContactViewModel(application: Application) : AndroidViewModel(application)
     }
 
     /**
-     * 获取地址（反向地理编码）
-     */
-    private fun fetchAddress(latLng: LatLng) {
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                if (!Geocoder.isPresent()) {
-                    _contactAddress.value = "无法获取地址(Geocoder不可用)"
-                    return@launch
-                }
-
-                val geocoder = Geocoder(context, Locale.getDefault())
-                
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    geocoder.getFromLocation(latLng.latitude, latLng.longitude, 1) { addresses: List<Address> ->
-                        if (addresses.isNotEmpty()) {
-                            val address = addresses[0]
-                            val addressText = address.getAddressLine(0) ?: "未知位置"
-                            _contactAddress.value = addressText
-                        } else {
-                            _contactAddress.value = "未找到地址"
-                        }
-                    }
-                } else {
-                    @Suppress("DEPRECATION")
-                    val addresses = geocoder.getFromLocation(latLng.latitude, latLng.longitude, 1)
-                    if (!addresses.isNullOrEmpty()) {
-                        val address = addresses[0]
-                        val addressText = address.getAddressLine(0) ?: "未知位置"
-                        _contactAddress.value = addressText
-                    } else {
-                        _contactAddress.value = "未找到地址"
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "获取地址失败", e)
-                _contactAddress.value = "获取地址失败"
-            }
-        }
-    }
-
-    /**
      * 监听联系人列表
      */
     private fun observeContacts() {
         viewModelScope.launch {
             contactRepository.observeMyContacts().collect { contactList ->
+                // 检测新的 PENDING 邀请并显示通知
+                detectAndNotifyNewInvitations(contactList)
+
                 _contacts.value = contactList
                 Log.d(TAG, "联系人列表更新: ${contactList.size} 个联系人")
             }
         }
+    }
+
+    /**
+     * 检测新的共享邀请并显示通知
+     */
+    private fun detectAndNotifyNewInvitations(newContactList: List<Contact>) {
+        val currentContactIds = newContactList.map { it.id }.toSet()
+
+        // 查找新增的 PENDING 邀请（别人邀请我的）
+        newContactList.forEach { contact ->
+            val isNew = !previousContactIds.contains(contact.id)
+            val isPendingInvitation = contact.shareStatus == me.ikate.findmy.data.model.ShareStatus.PENDING &&
+                    contact.shareDirection == me.ikate.findmy.data.model.ShareDirection.THEY_SHARE_TO_ME
+
+            if (isNew && isPendingInvitation) {
+                Log.d(TAG, "检测到新的共享邀请: ${contact.name}")
+                NotificationHelper.showShareRequestNotification(
+                    context = context,
+                    senderName = contact.name,
+                    shareId = contact.id
+                )
+            }
+        }
+
+        previousContactIds = currentContactIds
+    }
+
+    /**
+     * 检查位置共享所需的关键权限
+     * @param action 权限满足后要执行的操作
+     * @return true 表示权限已满足，false 表示需要引导用户开启
+     */
+    private fun checkAndGuidePermissions(action: () -> Unit): Boolean {
+        val (allGranted, missing) = PermissionGuideHelper.checkLocationSharePermissions(context)
+
+        if (!allGranted) {
+            // 保存待执行的操作
+            pendingAction = action
+            _missingPermissions.value = missing
+            _showPermissionGuide.value = true
+            Log.d(TAG, "缺少权限: $missing")
+            return false
+        }
+
+        return true
+    }
+
+    /**
+     * 用户确认已开启权限
+     */
+    fun onPermissionGranted() {
+        _showPermissionGuide.value = false
+
+        // 重新检查权限
+        val (allGranted, _) = PermissionGuideHelper.checkLocationSharePermissions(context)
+
+        if (allGranted) {
+            // 执行待执行的操作
+            pendingAction?.invoke()
+            pendingAction = null
+        } else {
+            // 权限仍未满足，提示用户
+            _errorMessage.value = "权限未完全开启，请确认已按照引导设置"
+            Log.w(TAG, "用户点击确认但权限仍未满足")
+        }
+    }
+
+    /**
+     * 关闭权限引导对话框
+     */
+    fun dismissPermissionGuide() {
+        _showPermissionGuide.value = false
+        pendingAction = null
     }
 
     /**
@@ -342,15 +431,31 @@ class ContactViewModel(application: Application) : AndroidViewModel(application)
     /**
      * 发起位置共享
      */
-    fun shareLocation(targetUid: String, duration: ShareDuration) {
-        if (targetUid.isBlank()) {
+    fun shareLocation(targetInput: String, duration: ShareDuration) {
+        if (targetInput.isBlank()) {
             _errorMessage.value = "请输入对方 UID"
             return
         }
 
+        // 检查权限，如果不满足则引导用户
+        val hasPermission = checkAndGuidePermissions {
+            // 权限满足后执行的操作
+            executeShareLocation(targetInput, duration)
+        }
+
+        // 如果权限已满足，直接执行
+        if (hasPermission) {
+            executeShareLocation(targetInput, duration)
+        }
+    }
+
+    /**
+     * 执行位置共享操作（内部方法）
+     */
+    private fun executeShareLocation(targetInput: String, duration: ShareDuration) {
         viewModelScope.launch {
             _isLoading.value = true
-            val result = contactRepository.createLocationShare(targetUid, duration)
+            val result = contactRepository.createLocationShare(targetInput, duration)
             _isLoading.value = false
 
             result.fold(
@@ -371,6 +476,22 @@ class ContactViewModel(application: Application) : AndroidViewModel(application)
      * 接受位置共享
      */
     fun acceptShare(shareId: String) {
+        // 检查权限，如果不满足则引导用户
+        val hasPermission = checkAndGuidePermissions {
+            // 权限满足后执行的操作
+            executeAcceptShare(shareId)
+        }
+
+        // 如果权限已满足，直接执行
+        if (hasPermission) {
+            executeAcceptShare(shareId)
+        }
+    }
+
+    /**
+     * 执行接受共享操作（内部方法）
+     */
+    private fun executeAcceptShare(shareId: String) {
         viewModelScope.launch {
             _isLoading.value = true
             val result = contactRepository.acceptLocationShare(shareId)
@@ -416,7 +537,7 @@ class ContactViewModel(application: Application) : AndroidViewModel(application)
     fun stopSharing(shareId: String) {
         viewModelScope.launch {
             _isLoading.value = true
-            val result = contactRepository.stopSharing(shareId)
+            val result = contactRepository.stopSharing(shareId = shareId)
             _isLoading.value = false
 
             result.fold(
@@ -448,15 +569,17 @@ class ContactViewModel(application: Application) : AndroidViewModel(application)
     fun pauseShare(contact: Contact) {
         viewModelScope.launch {
             _isLoading.value = true
-            val result = contactRepository.pauseLocationShare(contact.id)
+            val result = contactRepository.pauseLocationShare(shareId = contact.id)
             _isLoading.value = false
 
             result.fold(
                 onSuccess = {
                     Log.d(TAG, "暂停共享成功: ${contact.id}")
                     // 更新选中联系人的状态 (如果需要)
-                    if (_selectedContact.value?.id == contact.id) {
-                         // 可以在这里局部更新，或者等待 repository 的 flow 更新
+                    when (_selectedContact.value?.id) {
+                        contact.id -> {
+                            // 可以在这里局部更新，或者等待 repository 的 flow 更新
+                        }
                     }
                 },
                 onFailure = { error ->
@@ -473,7 +596,8 @@ class ContactViewModel(application: Application) : AndroidViewModel(application)
     fun resumeShare(contact: Contact, duration: ShareDuration) {
         viewModelScope.launch {
             _isLoading.value = true
-            val result = contactRepository.resumeLocationShare(contact.id, duration)
+            val result =
+                contactRepository.resumeLocationShare(shareId = contact.id, duration = duration)
             _isLoading.value = false
 
             result.fold(
@@ -493,5 +617,61 @@ class ContactViewModel(application: Application) : AndroidViewModel(application)
      */
     fun clearError() {
         _errorMessage.value = null
+    }
+
+    /**
+     * 请求联系人的实时位置更新
+     * 通过 Firestore 创建位置请求，触发 Cloud Function 发送 FCM 给目标用户
+     *
+     * @param targetUid 目标用户的 UID
+     *
+     * 注意：需要配置 Cloud Function 监听 locationRequests 集合，
+     * 并发送 FCM Data Message 给目标用户的所有设备
+     */
+    fun requestLocationUpdate(targetUid: String) {
+        viewModelScope.launch {
+            try {
+                val currentUid = _currentUser.value?.uid
+                if (currentUid == null) {
+                    Log.w(TAG, "当前用户未登录，无法请求位置更新")
+                    return@launch
+                }
+
+                // 设置加载状态
+                _requestingLocationFor.value = targetUid
+                Log.d(TAG, "请求位置更新: targetUid=$targetUid")
+
+                // 创建位置请求记录
+                // Cloud Function 会监听这个集合，并发送 FCM 给目标用户
+                val requestData = hashMapOf(
+                    "requesterUid" to currentUid,
+                    "targetUid" to targetUid,
+                    "timestamp" to System.currentTimeMillis(),
+                    "status" to "pending"
+                )
+
+                firestore.collection("locationRequests")
+                    .add(requestData)
+                    .addOnSuccessListener { documentReference ->
+                        Log.d(TAG, "位置请求已创建: ${documentReference.id}")
+                        // 5秒后清除加载状态（给后端足够的时间处理）
+                        viewModelScope.launch {
+                            kotlinx.coroutines.delay(5000)
+                            if (_requestingLocationFor.value == targetUid) {
+                                _requestingLocationFor.value = null
+                            }
+                        }
+                    }
+                    .addOnFailureListener { e ->
+                        Log.e(TAG, "创建位置请求失败", e)
+                        _requestingLocationFor.value = null
+                        _errorMessage.value = "请求位置更新失败: ${e.message}"
+                    }
+            } catch (e: Exception) {
+                Log.e(TAG, "请求位置更新失败", e)
+                _requestingLocationFor.value = null
+                _errorMessage.value = "请求失败: ${e.localizedMessage}"
+            }
+        }
     }
 }

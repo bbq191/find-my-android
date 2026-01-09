@@ -72,10 +72,17 @@ fun ShareLocationDialog(
                         localError = null  // 清除错误
                     },
                     label = { Text("对方 UID") },
-                    placeholder = { Text("请输入对方的用户 ID") },
+                    placeholder = { Text("请输入对方的 UID") },
                     singleLine = true,
                     isError = localError != null,
-                    supportingText = localError?.let { { Text(it, color = MaterialTheme.colorScheme.error) } },
+                    supportingText = localError?.let {
+                        {
+                            Text(
+                                it,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
+                    },
                     enabled = !isLoading,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -86,7 +93,7 @@ fun ShareLocationDialog(
                     style = MaterialTheme.typography.bodyMedium
                 )
 
-                ShareDuration.values().forEach { duration ->
+                ShareDuration.entries.forEach { duration ->
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -118,8 +125,9 @@ fun ShareLocationDialog(
                     // UID 验证
                     when {
                         targetUid.isBlank() -> {
-                            localError = "请输入对方 UID"
+                            localError = "请输入对方的 UID"
                         }
+
                         else -> {
                             onConfirm(targetUid.trim(), selectedDuration)
                         }

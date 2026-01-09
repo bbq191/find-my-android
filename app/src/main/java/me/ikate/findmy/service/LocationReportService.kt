@@ -6,11 +6,12 @@ import android.os.BatteryManager
 import android.os.Build
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
 import com.google.android.gms.maps.model.LatLng
+import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.tasks.await
 import me.ikate.findmy.data.model.Device
 import me.ikate.findmy.data.model.DeviceType
-import me.ikate.findmy.data.repository.ContactRepository
 import me.ikate.findmy.data.repository.DeviceRepository
 
 /**
@@ -22,14 +23,13 @@ class LocationReportService(private val context: Context) {
     private val fusedLocationClient: FusedLocationProviderClient =
         LocationServices.getFusedLocationProviderClient(context)
     private val deviceRepository = DeviceRepository()
-    
-    // 尽管我们不再同步 vCard 信息，但保留 ContactRepository 引用以备将来扩展
-    private val contactRepository = ContactRepository()
+    private val auth = FirebaseAuth.getInstance()
 
     /**
      * 获取当前设备ID
      * 使用 Android ID 作为设备唯一标识
      */
+    @SuppressLint("HardwareIds")
     private fun getDeviceId(): String {
         return android.provider.Settings.Secure.getString(
             context.contentResolver,
@@ -87,10 +87,13 @@ class LocationReportService(private val context: Context) {
      * 获取当前位置并上报到 Firebase
      * 注意：需要已授予定位权限
      *
+     * @param priority 定位优先级，默认为高精度
      * @return 上报是否成功
      */
     @SuppressLint("MissingPermission")
-    suspend fun reportCurrentLocation(): Result<Device> {
+    suspend fun reportCurrentLocation(
+        priority: Int = Priority.PRIORITY_HIGH_ACCURACY
+    ): Result<Device> {
         return try {
             // 尝试获取最后已知位置
             var location = try {
@@ -100,16 +103,23 @@ class LocationReportService(private val context: Context) {
                 null
             }
 
-            // 如果没有最后已知位置，主动请求一次高精度位置
+            // 如果没有最后已知位置，主动请求一次位置
             if (location == null) {
-                android.util.Log.d("LocationReportService", "Last location is null, requesting current location...")
+                android.util.Log.d(
+                    "LocationReportService",
+                    "Last location is null, requesting current location with priority: $priority"
+                )
                 try {
                     location = fusedLocationClient.getCurrentLocation(
-                        com.google.android.gms.location.Priority.PRIORITY_HIGH_ACCURACY,
+                        priority,
                         null
                     ).await()
                 } catch (e: SecurityException) {
-                    android.util.Log.e("LocationReportService", "获取当前位置权限/安全失败: 可能是 SHA-1 指纹不匹配或包名错误", e)
+                    android.util.Log.e(
+                        "LocationReportService",
+                        "获取当前位置权限/安全失败: 可能是 SHA-1 指纹不匹配或包名错误",
+                        e
+                    )
                     return Result.failure(e)
                 } catch (e: Exception) {
                     android.util.Log.e("LocationReportService", "获取当前位置失败", e)
@@ -123,11 +133,13 @@ class LocationReportService(private val context: Context) {
 
             // 获取GPS方向（bearing）
             val bearing = if (location.hasBearing()) location.bearing else 0f
+            val currentUserId = auth.currentUser?.uid ?: ""
 
             // 创建设备对象（使用 WGS-84 坐标，DeviceRepository 会自动转换为 GCJ-02）
             val device = Device(
                 id = getDeviceId(),
                 name = getDeviceName(), // 设备型号
+                ownerId = currentUserId,
                 location = LatLng(location.latitude, location.longitude),
                 battery = getBatteryLevel(),
                 lastUpdateTime = System.currentTimeMillis(),
@@ -140,7 +152,10 @@ class LocationReportService(private val context: Context) {
             // 保存到 Firebase
             deviceRepository.saveDevice(device)
 
-            android.util.Log.d("LocationReportService", "位置上报成功: ${device.name} at (${location.latitude}, ${location.longitude})")
+            android.util.Log.d(
+                "LocationReportService",
+                "位置上报成功: ${device.name} at (${location.latitude}, ${location.longitude})"
+            )
             Result.success(device)
         } catch (e: Exception) {
             android.util.Log.e("LocationReportService", "位置上报失败", e)
@@ -148,33 +163,4 @@ class LocationReportService(private val context: Context) {
         }
     }
 
-    /**
-     * 标记设备为离线
-     */
-    suspend fun markDeviceOffline() {
-        try {
-            // 获取最后已知位置
-            val location = fusedLocationClient.lastLocation.await()
-            val lastLocation = if (location != null) {
-                LatLng(location.latitude, location.longitude)
-            } else {
-                LatLng(0.0, 0.0) // 如果没有位置信息，使用默认值
-            }
-
-            val device = Device(
-                id = getDeviceId(),
-                name = getDeviceName(),
-                location = lastLocation,
-                battery = getBatteryLevel(),
-                lastUpdateTime = System.currentTimeMillis(),
-                isOnline = false,
-                deviceType = getDeviceType()
-            )
-
-            deviceRepository.saveDevice(device)
-            android.util.Log.d("LocationReportService", "设备已标记为离线")
-        } catch (e: Exception) {
-            android.util.Log.e("LocationReportService", "标记离线失败", e)
-        }
-    }
 }

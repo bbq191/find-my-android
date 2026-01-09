@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import com.google.firebase.auth.FirebaseAuth
 import me.ikate.findmy.data.model.Device
 import me.ikate.findmy.data.model.DeviceType
 import me.ikate.findmy.data.repository.DeviceRepository
@@ -18,6 +19,7 @@ import me.ikate.findmy.data.repository.DeviceRepository
 class DeviceManagementViewModel : ViewModel() {
 
     private val deviceRepository = DeviceRepository()
+    private val auth = FirebaseAuth.getInstance()
 
     private val _operationState = MutableStateFlow<OperationState>(OperationState.Idle)
     val operationState: StateFlow<OperationState> = _operationState.asStateFlow()
@@ -35,9 +37,11 @@ class DeviceManagementViewModel : ViewModel() {
         viewModelScope.launch {
             _operationState.value = OperationState.Loading
             try {
+                val currentUserId = auth.currentUser?.uid ?: ""
                 val device = Device(
                     id = id,
                     name = name,
+                    ownerId = currentUserId,
                     location = LatLng(latitude, longitude),
                     battery = 100,
                     lastUpdateTime = System.currentTimeMillis(),

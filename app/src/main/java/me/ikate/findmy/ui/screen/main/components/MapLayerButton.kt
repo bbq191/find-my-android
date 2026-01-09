@@ -32,7 +32,6 @@ fun MapLayerButton(
     modifier: Modifier = Modifier
 ) {
     var showMenu by remember { mutableStateOf(false) }
-    var currentMapType by remember { mutableStateOf(GoogleMap.MAP_TYPE_NORMAL) }
 
     FloatingActionButton(
         onClick = { showMenu = true },
@@ -59,24 +58,18 @@ fun MapLayerButton(
             text = { Text("标准地图") },
             onClick = {
                 map?.mapType = GoogleMap.MAP_TYPE_NORMAL
-                currentMapType = GoogleMap.MAP_TYPE_NORMAL
-                showMenu = false
             }
         )
         DropdownMenuItem(
             text = { Text("卫星地图") },
             onClick = {
                 map?.mapType = GoogleMap.MAP_TYPE_SATELLITE
-                currentMapType = GoogleMap.MAP_TYPE_SATELLITE
-                showMenu = false
             }
         )
         DropdownMenuItem(
             text = { Text("混合地图") },
             onClick = {
                 map?.mapType = GoogleMap.MAP_TYPE_HYBRID
-                currentMapType = GoogleMap.MAP_TYPE_HYBRID
-                showMenu = false
             }
         )
     }

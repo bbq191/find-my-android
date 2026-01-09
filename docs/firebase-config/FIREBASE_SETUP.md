@@ -22,8 +22,8 @@
    ```bash
    firebase init firestore
    ```
-   - 选择现有项目
-   - 使用默认的 `firestore.rules` 文件（已创建）
+    - 选择现有项目
+    - 使用默认的 `firestore.rules` 文件（已创建）
 
 4. **部署安全规则**
    ```bash
@@ -33,12 +33,12 @@
 ### 方法二：通过 Firebase Console 手动配置
 
 1. **打开 Firebase Console**
-   - 访问：https://console.firebase.google.com/
-   - 选择你的项目
+    - 访问：https://console.firebase.google.com/
+    - 选择你的项目
 
 2. **进入 Firestore Database**
-   - 左侧菜单 → Firestore Database
-   - 点击 "规则" 标签页
+    - 左侧菜单 → Firestore Database
+    - 点击 "规则" 标签页
 
 3. **复制以下规则并发布**
 
@@ -141,14 +141,17 @@ service cloud.firestore {
 ## 常见问题
 
 **Q: 部署后仍然报权限错误？**
+
 - 等待1-2分钟，规则部署需要时间生效
 - 清除应用数据重新安装
 - 检查规则是否正确发布
 
 **Q: 如何查看当前生效的规则？**
+
 - Firebase Console → Firestore Database → 规则标签页
 
 **Q: 我应该使用哪种方法？**
+
 - 快速测试：方法三
 - 开发阶段：方法一或方法二（测试模式规则）
 - 生产环境：必须使用认证规则
@@ -156,6 +159,7 @@ service cloud.firestore {
 ## 下一步
 
 完成 Firestore 配置后，建议：
+
 1. 实现 Firebase Authentication
 2. 创建设备数据上报功能
 3. 添加设备管理功能（添加、编辑、删除设备）

@@ -1,6 +1,7 @@
 # 推送通知与未注册用户处理指南 (PUSH_NOTIFICATION_GUIDE.md)
 
-本文档详细介绍了如何使用 Firebase Cloud Messaging (FCM) 和 Cloud Functions 实现位置共享邀请的通知功能，并专门解决了**未注册用户接收通知**的问题。
+本文档详细介绍了如何使用 Firebase Cloud Messaging (FCM) 和 Cloud Functions 实现位置共享邀请的通知功能，并专门解决了
+**未注册用户接收通知**的问题。
 
 ## 1. 核心逻辑流程
 
@@ -25,31 +26,31 @@ graph TD
 
 如果 `location_shares` 文档中 `toUid` 字段不为空，说明用户已经注册。
 
-*   **机制**: Cloud Function 查询 `users/{toUid}` 文档，获取 `fcmTokens` 数组。
-*   **动作**: 向这些 Token 发送 FCM 消息。
-*   **客户端**: Android 端 `MyFirebaseMessagingService` 接收消息并弹出通知。
+* **机制**: Cloud Function 查询 `users/{toUid}` 文档，获取 `fcmTokens` 数组。
+* **动作**: 向这些 Token 发送 FCM 消息。
+* **客户端**: Android 端 `MyFirebaseMessagingService` 接收消息并弹出通知。
 
 ### 场景二：目标用户未注册 (使用邮件)
 
 如果 `toUid` 为空，说明该邮箱尚未在平台注册。**FCM 无法推送到未知设备**。
 
-*   **机制**: 必须依赖 **Email** 作为通知渠道。
-*   **推荐方案**: 使用 Firebase Extensions —— **Trigger Email** (由 SendGrid 或 SMTP 支持)。
-*   **实现步骤**:
-    1.  在 Firebase Console 安装 "Trigger Email" 扩展。
-    2.  配置扩展监听一个特定的集合（例如 `mail`）。
-    3.  Cloud Function 检测到未注册用户时，向 `mail` 集合写入一条数据：
-        ```json
-        {
-          "to": "target@email.com",
-          "message": {
-            "subject": "Find My - 位置共享邀请",
-            "text": "用户 A 想要与您共享位置。请下载 App 并使用此邮箱注册以查看。",
-            "html": "<strong>用户 A</strong> 想要与您共享位置。<br>请 <a href='https://your-app-link'>下载 App</a> 并注册。"
-          }
-        }
-        ```
-    4.  扩展会自动发送邮件。
+* **机制**: 必须依赖 **Email** 作为通知渠道。
+* **推荐方案**: 使用 Firebase Extensions —— **Trigger Email** (由 SendGrid 或 SMTP 支持)。
+* **实现步骤**:
+    1. 在 Firebase Console 安装 "Trigger Email" 扩展。
+    2. 配置扩展监听一个特定的集合（例如 `mail`）。
+    3. Cloud Function 检测到未注册用户时，向 `mail` 集合写入一条数据：
+       ```json
+       {
+         "to": "target@email.com",
+         "message": {
+           "subject": "Find My - 位置共享邀请",
+           "text": "用户 A 想要与您共享位置。请下载 App 并使用此邮箱注册以查看。",
+           "html": "<strong>用户 A</strong> 想要与您共享位置。<br>请 <a href='https://your-app-link'>下载 App</a> 并注册。"
+         }
+       }
+       ```
+    4. 扩展会自动发送邮件。
 
 ---
 
@@ -139,8 +140,9 @@ exports.sendShareNotification = functions.firestore
 ## 4. 客户端后续处理
 
 当未注册用户收到邮件并完成注册后：
-1.  用户使用 `toEmail` 登录。
-2.  App 启动时调用 `ContactRepository.observeMyContacts()`。
-3.  该函数会查询 `location_shares` 中 `toEmail == currentEmail` 的记录。
-4.  用户将立即在“联系人”列表中看到待处理的邀请。
-5.  **无需额外的逻辑**，现有的邮箱匹配机制会自动关联。
+
+1. 用户使用 `toEmail` 登录。
+2. App 启动时调用 `ContactRepository.observeMyContacts()`。
+3. 该函数会查询 `location_shares` 中 `toEmail == currentEmail` 的记录。
+4. 用户将立即在“联系人”列表中看到待处理的邀请。
+5. **无需额外的逻辑**，现有的邮箱匹配机制会自动关联。

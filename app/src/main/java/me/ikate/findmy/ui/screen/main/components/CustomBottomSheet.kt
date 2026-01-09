@@ -70,10 +70,9 @@ fun CustomBottomSheet(
     BoxWithConstraints(modifier = modifier) {
         // 获取父容器最大高度 (px)
         val maxHeightPx = constraints.maxHeight.toFloat()
-        val maxHeightDp = with(density) { maxHeightPx.toDp() }
 
         // 计算三个锚点的偏移量（从屏幕底部向上的距离，单位：像素）
-        val collapsedOffset = maxHeightPx * 0.04f   // 折叠态：20%
+        val collapsedOffset = maxHeightPx * 0.12f   // 折叠态：20%
         val halfExpandedOffset = maxHeightPx * 0.35f // 半展开态：50%
         val expandedOffset = maxHeightPx * 0.85f   // 全展开态：95%
 
@@ -83,7 +82,7 @@ fun CustomBottomSheet(
             SheetValue.HalfExpanded -> halfExpandedOffset
             SheetValue.Expanded -> expandedOffset
         }
-        
+
         // 防御性检查：确保初始值不是 NaN
         val safeInitialOffset = if (initialOffsetValue.isNaN()) 0f else initialOffsetValue
 
@@ -102,9 +101,10 @@ fun CustomBottomSheet(
         Box(modifier = Modifier.fillMaxSize()) {
             backgroundContent()
         }
-        
+
         // 确保传递给 height 的值有效且不为 0，避免除零错误
-        val sheetHeightDp = if (currentOffset.isNaN() || currentOffset <= 1f) 1.dp else with(density) { currentOffset.toDp() }
+        val sheetHeightDp =
+            if (currentOffset.isNaN() || currentOffset <= 1f) 1.dp else with(density) { currentOffset.toDp() }
 
         // 底部面板
         Surface(
@@ -138,8 +138,9 @@ fun CustomBottomSheet(
 
                                 else -> expandedOffset
                             }
-                            
-                            val finalOffset = if (targetOffset.isNaN()) safeInitialOffset else targetOffset
+
+                            val finalOffset =
+                                if (targetOffset.isNaN()) safeInitialOffset else targetOffset
                             currentOffset = finalOffset
 
                             // 回调状态变化
@@ -158,10 +159,10 @@ fun CustomBottomSheet(
                             // newOffset = currentOffset - dragAmount
                             // 向上拖动 (dragAmount < 0) -> offset 增加
                             // 向下拖动 (dragAmount > 0) -> offset 减少
-                            
+
                             // 这里的 dragAmount 也有可能是 NaN? 极低概率，但防一下
                             val safeDragAmount = if (dragAmount.isNaN()) 0f else dragAmount
-                            
+
                             var newOffset = currentOffset - safeDragAmount
                             if (newOffset.isNaN()) {
                                 newOffset = safeInitialOffset
@@ -183,12 +184,12 @@ fun CustomBottomSheet(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(top = 8.dp)
-                    // 内容区域避开系统导航栏
-                    // 这里不需要 navigationBarsPadding，因为 Surface 高度包含了导航栏区域。
-                    // 但是如果内容也是到底部的，会被遮挡。
-                    // 更好的做法是：Surface 延伸到底部，但 Column 底部留出空间。
-                    // 或者给 Column 加 .windowInsetsPadding(WindowInsets.navigationBars)
-                    // 但是注意，CustomBottomSheet 的 offset 是从物理底部算的。
+                // 内容区域避开系统导航栏
+                // 这里不需要 navigationBarsPadding，因为 Surface 高度包含了导航栏区域。
+                // 但是如果内容也是到底部的，会被遮挡。
+                // 更好的做法是：Surface 延伸到底部，但 Column 底部留出空间。
+                // 或者给 Column 加 .windowInsetsPadding(WindowInsets.navigationBars)
+                // 但是注意，CustomBottomSheet 的 offset 是从物理底部算的。
             ) {
                 // 拖拽手柄
                 Row(

@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import me.ikate.findmy.data.repository.AuthRepository
+import androidx.core.content.edit
 
 /**
  * 认证状态
@@ -82,7 +83,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
      */
     private fun updateLastActiveTime() {
         val prefs = getApplication<Application>().getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        prefs.edit().putLong(KEY_LAST_ACTIVE, System.currentTimeMillis()).apply()
+        prefs.edit { putLong(KEY_LAST_ACTIVE, System.currentTimeMillis()) }
     }
 
     /**

@@ -50,6 +50,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import me.ikate.findmy.data.model.Device
 import me.ikate.findmy.data.model.DeviceType
+import me.ikate.findmy.util.AddressFormatter
+import android.location.Geocoder
+import android.os.Build
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -133,6 +140,7 @@ fun DeviceListPanel(
                     ) { device ->
                         SwipeToDeleteItem(
                             device = device,
+                            contacts = contacts,
                             onClick = { onDeviceClick(device) },
                             onDelete = { onDeviceDelete(device) }
                         )
@@ -207,20 +215,18 @@ fun DeviceListPanel(
 @OptIn(ExperimentalMaterial3Api::class)
 private fun SwipeToDeleteItem(
     device: Device,
+    contacts: List<me.ikate.findmy.data.model.Contact>,
     onClick: () -> Unit,
     onDelete: () -> Unit
 ) {
-    val dismissState = rememberSwipeToDismissBoxState(
-        confirmValueChange = { dismissValue ->
-            when (dismissValue) {
-                SwipeToDismissBoxValue.EndToStart -> {
-                    onDelete()
-                    true
-                }
-                else -> false
-            }
+    val dismissState = rememberSwipeToDismissBoxState()
+
+    LaunchedEffect(dismissState.currentValue) {
+        if (dismissState.currentValue == SwipeToDismissBoxValue.EndToStart) {
+            onDelete()
+            dismissState.reset()
         }
-    )
+    }
 
     SwipeToDismissBox(
         state = dismissState,
@@ -255,6 +261,7 @@ private fun SwipeToDeleteItem(
             ) {
                 DeviceListItem(
                     device = device,
+                    contacts = contacts,
                     onClick = onClick
                 )
             }
@@ -268,16 +275,51 @@ private fun SwipeToDeleteItem(
 @Composable
 private fun DeviceListItem(
     device: Device,
+    contacts: List<me.ikate.findmy.data.model.Contact>,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     // 自动刷新时间显示（每分钟更新一次）
     var refreshTrigger by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    val context = LocalContext.current
+    var addressText by remember { mutableStateOf("正在获取位置...") }
 
     LaunchedEffect(device.id) {
         while (true) {
             kotlinx.coroutines.delay(60_000) // 每60秒刷新一次
             refreshTrigger = System.currentTimeMillis()
+        }
+    }
+
+    // 获取地址
+    LaunchedEffect(device.location) {
+        withContext(Dispatchers.IO) {
+            try {
+                if (Geocoder.isPresent()) {
+                    val geocoder = Geocoder(context, Locale.getDefault())
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                        geocoder.getFromLocation(device.location.latitude, device.location.longitude, 1) { addresses ->
+                            if (addresses.isNotEmpty()) {
+                                addressText = AddressFormatter.formatAddress(addresses[0])
+                            } else {
+                                addressText = "未知位置"
+                            }
+                        }
+                    } else {
+                        @Suppress("DEPRECATION")
+                        val addresses = geocoder.getFromLocation(device.location.latitude, device.location.longitude, 1)
+                        if (!addresses.isNullOrEmpty()) {
+                            addressText = AddressFormatter.formatAddress(addresses[0])
+                        } else {
+                            addressText = "未知位置"
+                        }
+                    }
+                } else {
+                    addressText = "无法获取地址"
+                }
+            } catch (e: Exception) {
+                addressText = "获取地址失败"
+            }
         }
     }
 
@@ -290,7 +332,7 @@ private fun DeviceListItem(
     ) {
         // 设备图标（圆形）
         Surface(
-            modifier = Modifier.size(48.dp),
+            modifier = Modifier.size(56.dp),
             shape = CircleShape,
             color = MaterialTheme.colorScheme.primaryContainer
         ) {
@@ -302,7 +344,7 @@ private fun DeviceListItem(
                     else -> Icons.Default.Phone
                 },
                 contentDescription = device.name,
-                modifier = Modifier.padding(12.dp),
+                modifier = Modifier.padding(14.dp),
                 tint = MaterialTheme.colorScheme.onPrimaryContainer
             )
         }
@@ -312,25 +354,38 @@ private fun DeviceListItem(
         // 设备信息
         Column(
             modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
+            verticalArrangement = Arrangement.spacedBy(2.dp)
         ) {
-            // 设备名称：设备自定义名称 + "的" + 设备名称（型号）
-            val displayName = if (device.customName != null && device.customName.isNotBlank()) {
-                "${device.customName}的${device.name}"
-            } else {
-                device.name
-            }
+            // 第一行：显示绑定联系人的姓名，未绑定显示未绑定联系人（加粗）
+            val ownerContact = contacts.find { it.id == device.ownerId }
+            val contactName = ownerContact?.name ?: "未绑定联系人"
+            
             Text(
-                text = displayName,
+                text = contactName,
                 style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.Medium
+                fontWeight = FontWeight.Bold
             )
 
-            // 最后更新时间（使用refreshTrigger触发重新计算）
+            // 第二行：显示“设备型号 • 在线状态• 更新时间”。
+            // 判断在线状态 (5分钟内更新视为在线)
+            val isOnline = (System.currentTimeMillis() - device.lastUpdateTime) < 5 * 60 * 1000
+            val onlineStatusText = if (isOnline) "在线" else "离线"
+            val onlineColor = if (isOnline) MaterialTheme.colorScheme.primary else Color.Gray
             val timeText = formatUpdateTime(device.lastUpdateTime, refreshTrigger)
+            
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = timeText,
+                    text = "${device.name} • ",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.Gray
+                )
+                Text(
+                    text = onlineStatusText,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = onlineColor
+                )
+                Text(
+                    text = " • $timeText",
                     style = MaterialTheme.typography.bodySmall,
                     color = Color.Gray
                 )
@@ -341,7 +396,7 @@ private fun DeviceListItem(
                     Icon(
                         imageVector = Icons.Default.BatteryFull,
                         contentDescription = "电量",
-                        modifier = Modifier.size(16.dp),
+                        modifier = Modifier.size(14.dp),
                         tint = if (device.battery < 20) Color.Red else Color.Gray
                     )
                     Text(
@@ -351,14 +406,16 @@ private fun DeviceListItem(
                     )
                 }
             }
+            
+            // 第三行：显示“去除国家省市及其分割逗号后的精简地址”
+            Text(
+                text = addressText,
+                style = MaterialTheme.typography.bodySmall,
+                color = Color.Gray,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+            )
         }
-
-        // 在线状态指示器
-        Surface(
-            modifier = Modifier.size(8.dp),
-            shape = CircleShape,
-            color = if (device.isOnline) Color.Green else Color.Gray
-        ) {}
     }
 }
 

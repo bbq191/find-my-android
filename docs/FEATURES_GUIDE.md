@@ -3,7 +3,9 @@
 ## 已实现功能概览
 
 ### 1. ✅ Firebase Authentication（用户认证）
+
 ### 2. ✅ 设备数据上报功能
+
 ### 3. ✅ 设备管理功能（添加、编辑、删除）
 
 ---
@@ -11,12 +13,14 @@
 ## 1. Firebase Authentication（用户认证）
 
 ### 功能说明
+
 - 支持**匿名登录**（快速开始，无需注册）
 - 支持**邮箱密码登录/注册**
 - 自动持久化登录状态
 - 未登录时自动跳转到登录界面
 
 ### 相关文件
+
 - `AuthRepository.kt` - 认证数据仓库
 - `AuthViewModel.kt` - 认证状态管理
 - `LoginScreen.kt` - 登录界面
@@ -25,11 +29,13 @@
 ### 使用方式
 
 #### 快速开始（匿名登录）
+
 1. 打开应用
 2. 点击 **"快速开始（匿名登录）"** 按钮
 3. 自动登录并进入主界面
 
 #### 邮箱登录
+
 1. 输入邮箱和密码
 2. 点击 **"登录"** 按钮
 3. 或点击 **"没有账号？点击注册"** 进行注册
@@ -47,16 +53,18 @@
 ## 2. 设备数据上报功能
 
 ### 功能说明
+
 - **自动上报当前设备位置**到 Firebase Firestore
 - 支持**后台定期上报**（每15分钟）
 - 上报设备信息包括：
-  - 设备名称（型号）
-  - 当前位置（GPS坐标，自动转换为 GCJ-02）
-  - 电池电量
-  - 在线状态
-  - 设备类型（手机/平板/手表）
+    - 设备名称（型号）
+    - 当前位置（GPS坐标，自动转换为 GCJ-02）
+    - 电池电量
+    - 在线状态
+    - 设备类型（手机/平板/手表）
 
 ### 相关文件
+
 - `LocationReportService.kt` - 位置上报服务
 - `LocationReportWorker.kt` - 定期上报任务
 - `MainViewModel.kt` - 集成位置上报逻辑
@@ -64,15 +72,18 @@
 ### 工作原理
 
 #### 1. 应用启动时
+
 - 立即上报一次当前位置
 - 启动后台定期上报任务（每15分钟）
 
 #### 2. 定期上报
+
 - 使用 WorkManager 实现后台任务
 - 即使应用在后台，也会定期上报位置
 - 上报失败会自动重试
 
 #### 3. 坐标转换
+
 - GPS 获取的 WGS-84 坐标自动转换为 GCJ-02
 - 确保位置在中国大陆地图上准确显示
 - **[设备接入与注册机制文档：DEVICE_REGISTRATION_LOGIC.md](DEVICE_REGISTRATION_LOGIC.md)**
@@ -104,12 +115,14 @@ adb logcat -s LocationReportService LocationReportWorker MainViewModel
 ## 3. 设备管理功能
 
 ### 功能说明
+
 - **查看设备详情**（位置、电量、最后更新时间）
 - **编辑设备信息**（待实现界面）
 - **删除设备**（带确认对话框）
 - 自动过滤当前用户的设备（基于 `ownerId`）
 
 ### 相关文件
+
 - `DeviceManagementViewModel.kt` - 设备管理逻辑
 - `DeviceDetailPanel.kt` - 设备详情面板（带编辑/删除按钮）
 - `DeviceRepository.kt` - 设备数据操作
@@ -117,17 +130,20 @@ adb logcat -s LocationReportService LocationReportWorker MainViewModel
 ### 使用方式
 
 #### 查看设备详情
+
 1. 在地图上点击设备标记
 2. 或在底部设备列表中点击设备
 3. 查看设备详细信息
 
 #### 删除设备
+
 1. 打开设备详情面板
 2. 点击 **"删除"** 按钮（红色）
 3. 确认删除操作
 4. 设备将从 Firebase 中删除
 
 #### 编辑设备（TODO）
+
 1. 打开设备详情面板
 2. 点击 **"编辑"** 按钮
 3. 修改设备名称、类型等信息
@@ -158,6 +174,7 @@ adb logcat -s LocationReportService LocationReportWorker MainViewModel
 ```
 
 #### 字段说明
+
 - `name` - 设备名称
 - `ownerId` - 设备所有者的用户 ID
 - `location` - 设备位置（GeoPoint 类型，WGS-84 坐标）
@@ -239,24 +256,29 @@ firebase deploy --only firestore:rules
 ## 下一步优化建议
 
 ### 1. 完善编辑功能
+
 - 创建设备编辑对话框
 - 支持修改设备名称、类型等
 
 ### 2. 添加设备功能
+
 - 创建"添加设备"按钮
 - 支持手动添加其他设备（如 AirTag）
 - **[详细设计文档：ADD_DEVICE_LOGIC.md](ADD_DEVICE_LOGIC.md)**
 
 ### 3. 优化上报机制
+
 - 根据移动距离智能上报（节省电量）
 - 支持用户自定义上报频率
 
 ### 4. 增强安全性
+
 - 实现设备验证机制
 - 添加设备共享功能（家庭成员）
 - **[联系人位置共享机制文档：ADD_CONTACT_LOGIC.md](ADD_CONTACT_LOGIC.md)**
 
 ### 5. 用户体验优化
+
 - 添加启动画面（Splash Screen）
 - 添加设置页面（上报频率、隐私设置等）
 - 支持退出登录功能
@@ -266,24 +288,32 @@ firebase deploy --only firestore:rules
 ## 常见问题
 
 ### Q: 位置上报失败？
+
 **A:** 检查以下几点：
+
 1. 是否已授予定位权限
 2. 是否已开启 GPS 定位服务
 3. 是否已登录（需要用户认证）
 4. Firestore 安全规则是否正确配置
 
 ### Q: 看不到其他设备？
+
 **A:**
+
 - 确保设备数据的 `ownerId` 与当前登录用户的 `uid` 相同
 - 检查 Firestore 查询规则
 
 ### Q: 坐标偏移问题？
+
 **A:**
+
 - 已实现 WGS-84 → GCJ-02 坐标转换
 - 确保使用 `CoordinateConverter` 进行转换
 
 ### Q: 如何测试多设备？
+
 **A:**
+
 - 在 Firebase Console 手动添加测试设备数据
 - 或在多个设备上安装应用并登录同一账号
 
@@ -324,6 +354,7 @@ firebase deploy --only firestore:rules
 ## 总结
 
 所有三个核心功能已完整实现：
+
 1. ✅ Firebase Authentication - 用户认证系统
 2. ✅ 设备数据上报功能 - 自动后台上报
 3. ✅ 设备管理功能 - 查看、编辑、删除
