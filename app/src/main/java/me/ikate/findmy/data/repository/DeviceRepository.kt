@@ -130,6 +130,8 @@ class DeviceRepository {
      * 添加或更新设备
      * 自动添加当前用户 ID 作为 ownerId
      *
+     * 🔧 重要：使用 merge 模式，避免覆盖 sharedWith 字段
+     *
      * @param device 设备对象
      */
     fun saveDevice(device: Device) {
@@ -139,6 +141,7 @@ class DeviceRepository {
             return
         }
 
+        // 🔧 关键修复：只更新位置相关字段，不覆盖 sharedWith
         val deviceData = hashMapOf(
             "name" to device.name,
             "location" to GeoPoint(device.location.latitude, device.location.longitude),
@@ -148,12 +151,14 @@ class DeviceRepository {
             "deviceType" to device.deviceType.name,
             "ownerId" to currentUserId,
             "customName" to device.customName,
-            "bearing" to device.bearing,
-            "sharedWith" to device.sharedWith  // 新增: 保存共享列表
+            "bearing" to device.bearing
+            // ❌ 移除: "sharedWith" to device.sharedWith
+            // sharedWith 应该只由 ContactRepository 通过 FieldValue.arrayUnion/arrayRemove 管理
         )
 
+        // 🔧 使用 merge 模式，保留文档中的其他字段（如 sharedWith）
         devicesCollection.document(device.id)
-            .set(deviceData)
+            .set(deviceData, com.google.firebase.firestore.SetOptions.merge())
             .addOnSuccessListener {
                 android.util.Log.d("DeviceRepository", "设备保存成功: ${device.id}")
             }

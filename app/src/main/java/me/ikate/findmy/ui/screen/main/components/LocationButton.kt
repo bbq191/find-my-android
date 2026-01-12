@@ -10,7 +10,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 
 /**
@@ -29,11 +28,13 @@ fun LocationButton(
 ) {
     FloatingActionButton(
         onClick = onClick,
-        modifier = modifier.size(48.dp),
-        containerColor = Color.White,
+        modifier = modifier.size(56.dp),
+        containerColor = MaterialTheme.colorScheme.surface,
+        contentColor = MaterialTheme.colorScheme.primary,
         elevation = FloatingActionButtonDefaults.elevation(
-            defaultElevation = 4.dp,
-            pressedElevation = 8.dp
+            defaultElevation = 6.dp,
+            pressedElevation = 12.dp,
+            hoveredElevation = 8.dp
         )
     ) {
         Icon(
@@ -49,7 +50,12 @@ fun LocationButton(
             } else {
                 "定位到当前位置"
             },
-            tint = MaterialTheme.colorScheme.primary
+            tint = if (isLocationCentered) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+            modifier = Modifier.size(24.dp)
         )
     }
 }

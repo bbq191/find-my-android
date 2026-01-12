@@ -72,7 +72,7 @@ fun CustomBottomSheet(
         val maxHeightPx = constraints.maxHeight.toFloat()
 
         // 计算三个锚点的偏移量（从屏幕底部向上的距离，单位：像素）
-        val collapsedOffset = maxHeightPx * 0.12f   // 折叠态：20%
+        val collapsedOffset = maxHeightPx * 0.06f   // 折叠态：20%
         val halfExpandedOffset = maxHeightPx * 0.35f // 半展开态：50%
         val expandedOffset = maxHeightPx * 0.85f   // 全展开态：95%
 

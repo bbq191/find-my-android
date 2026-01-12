@@ -12,7 +12,6 @@ import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import me.ikate.findmy.MainActivity
-import me.ikate.findmy.R
 
 /**
  * 通知帮助类

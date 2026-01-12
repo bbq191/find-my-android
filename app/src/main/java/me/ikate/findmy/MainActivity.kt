@@ -9,8 +9,11 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import me.ikate.findmy.ui.screen.main.MainScreen
 import me.ikate.findmy.ui.theme.FindmyTheme
+import me.ikate.findmy.util.MigrationHelper
 import me.ikate.findmy.util.NotificationHelper
 
 class MainActivity : ComponentActivity() {
@@ -43,9 +46,44 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        // 🔧 自动修复 sharedWith 字段（仅执行一次）
+        runMigrationIfNeeded()
+
         setContent {
             FindmyTheme {
                 MainScreen()
+            }
+        }
+    }
+
+    /**
+     * 运行数据迁移（仅在首次启动或版本升级时执行）
+     */
+    private fun runMigrationIfNeeded() {
+        val prefs = getSharedPreferences("migration", MODE_PRIVATE)
+        val migrationVersion = prefs.getInt("migration_version", 0)
+        val currentMigrationVersion = 1 // 每次有新迁移时递增
+
+        if (migrationVersion < currentMigrationVersion) {
+            lifecycleScope.launch {
+                try {
+                    android.util.Log.d("MainActivity", "开始执行数据迁移...")
+
+                    // 执行修复
+                    val result = MigrationHelper.fixSharedWithFields()
+                    result.fold(
+                        onSuccess = { count ->
+                            android.util.Log.d("MainActivity", "✅ 数据迁移完成: 修复了 $count 个设备")
+                            // 标记迁移完成
+                            prefs.edit().putInt("migration_version", currentMigrationVersion).apply()
+                        },
+                        onFailure = { e ->
+                            android.util.Log.e("MainActivity", "❌ 数据迁移失败", e)
+                        }
+                    )
+                } catch (e: Exception) {
+                    android.util.Log.e("MainActivity", "数据迁移异常", e)
+                }
             }
         }
     }

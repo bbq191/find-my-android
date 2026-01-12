@@ -75,6 +75,7 @@ fun MainScreen(
     val isLoading by contactViewModel.isLoading.collectAsState()
     val errorMessage by contactViewModel.errorMessage.collectAsState()
     val requestingLocationFor by contactViewModel.requestingLocationFor.collectAsState() // 正在请求位置的联系人
+    val trackingContactUid by contactViewModel.trackingContactUid.collectAsState() // 正在实时追踪的联系人
 
     // 获取当前设备实时朝向
     val currentHeading = CompassHelper.rememberCompassHeading()
@@ -115,64 +116,47 @@ fun MainScreen(
         }
     }
 
-    // 使用自定义底部面板包裹地图和设备列表
-    CustomBottomSheet(
-        modifier = Modifier.fillMaxSize(),
-        initialValue = SheetValue.Expanded, // 启动时直接展开联系人页面
-        backgroundContent = {
-            // 背景：全屏地图视图
-            MapViewWrapper(
-                modifier = Modifier.fillMaxSize(),
-                devices = devices, // 传递空列表，不显示设备
-                contacts = contacts, // 传递联系人列表用于渲染联系人位置 Marker
-                currentDeviceHeading = currentHeading, // 传递实时朝向
-                onMapReady = { map ->
-                    viewModel.setGoogleMap(map)
-                    if (permissionsState.allPermissionsGranted) {
-                        viewModel.attemptInitialLocationCenter()
+    // 使用 Box 包裹所有内容，确保按钮在最上层
+    androidx.compose.foundation.layout.Box(
+        modifier = Modifier.fillMaxSize()
+    ) {
+        // 使用自定义底部面板包裹地图和设备列表
+        CustomBottomSheet(
+            modifier = Modifier.fillMaxSize(),
+            initialValue = SheetValue.Expanded, // 启动时直接展开联系人页面
+            backgroundContent = {
+                // 背景：全屏地图视图
+                MapViewWrapper(
+                    modifier = Modifier.fillMaxSize(),
+                    devices = devices, // 传递空列表，不显示设备
+                    contacts = contacts, // 传递联系人列表用于渲染联系人位置 Marker
+                    currentDeviceHeading = currentHeading, // 传递实时朝向
+                    onMapReady = { map ->
+                        viewModel.setGoogleMap(map)
+                        if (permissionsState.allPermissionsGranted) {
+                            viewModel.attemptInitialLocationCenter()
+                        }
+                    },
+                    onMarkerClick = { device ->
+                        // 理论上不会触发，因为没有设备 Marker
+                    },
+                    onContactMarkerClick = { contact ->
+                        // 点击联系人 Marker 时，移动地图到联系人位置
+                        contact.location?.let { location ->
+                            // 仅移动地图，不再设置 selectedContact 触发详情页
+                            // contactViewModel.selectContact(contact)
+                            viewModel.clearSelectedDevice() // 清除选中的设备
+                            MapCameraHelper.animateToLocation(googleMap, location, zoom = 15f)
+                            viewModel.updateSheetValue(SheetValue.HalfExpanded)
+                        }
+                    },
+                    onMapClick = {
+                        // 点击地图空白区域，取消选中设备和联系人
+                        viewModel.clearSelectedDevice()
+                        contactViewModel.clearSelectedContact()
                     }
-                },
-                onMarkerClick = { device ->
-                    // 理论上不会触发，因为没有设备 Marker
-                },
-                onContactMarkerClick = { contact ->
-                    // 点击联系人 Marker 时，移动地图到联系人位置
-                    contact.location?.let { location ->
-                        // 仅移动地图，不再设置 selectedContact 触发详情页
-                        // contactViewModel.selectContact(contact)
-                        viewModel.clearSelectedDevice() // 清除选中的设备
-                        MapCameraHelper.animateToLocation(googleMap, location, zoom = 15f)
-                        viewModel.updateSheetValue(SheetValue.HalfExpanded)
-                    }
-                },
-                onMapClick = {
-                    // 点击地图空白区域，取消选中设备和联系人
-                    viewModel.clearSelectedDevice()
-                    contactViewModel.clearSelectedContact()
-                }
-            )
-
-            // 定位按钮（右下角）
-            if (permissionsState.allPermissionsGranted) {
-                LocationButton(
-                    isLocationCentered = isLocationCentered,
-                    onClick = { viewModel.onLocationButtonClick() },
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(16.dp)
-                        .padding(bottom = bottomSheetOffsetDp + 16.dp) // 动态避开底部面板
                 )
-            }
-
-            // 地图图层切换按钮（右上角）
-            MapLayerButton(
-                map = googleMap,
-                modifier = Modifier
-                    .align(Alignment.TopEnd)
-                    .padding(16.dp)
-                    .padding(top = 40.dp) // 避免与状态栏重叠
-            )
-        },
+            },
         sheetContent = {
             // 直接显示联系人列表和当前设备
             ContactListPanel(
@@ -183,6 +167,7 @@ fun MainScreen(
                 myAddress = myAddress,
                 contacts = contacts,
                 requestingLocationFor = requestingLocationFor,
+                trackingContactUid = trackingContactUid,
                 onContactClick = { contact ->
                     // 点击联系人时：移动地图
                     viewModel.clearSelectedDevice()
@@ -232,6 +217,12 @@ fun MainScreen(
                 },
                 onRequestLocationUpdate = { targetUid ->
                     contactViewModel.requestLocationUpdate(targetUid)
+                },
+                onStartContinuousTracking = { targetUid ->
+                    contactViewModel.startContinuousTracking(targetUid)
+                },
+                onStopContinuousTracking = { targetUid ->
+                    contactViewModel.stopContinuousTracking(targetUid)
                 }
             )
         },
@@ -241,9 +232,31 @@ fun MainScreen(
         onOffsetChange = { offset ->
             // 面板偏移量变化时，动态调整地图 Padding 和按钮位置
             MapCameraHelper.adjustMapPadding(googleMap, offset)
+            bottomSheetOffsetPx = offset
         }
     )
 
+        // 定位按钮（右下角）- 移到最上层确保可见
+        if (permissionsState.allPermissionsGranted) {
+            LocationButton(
+                isLocationCentered = isLocationCentered,
+                onClick = { viewModel.onLocationButtonClick() },
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(16.dp)
+                    .padding(bottom = bottomSheetOffsetDp + 16.dp) // 动态避开底部面板
+            )
+        }
+
+        // 地图图层切换按钮（右上角）- 移到最上层确保可见
+        MapLayerButton(
+            map = googleMap,
+            modifier = Modifier
+                .align(Alignment.TopEnd)
+                .padding(16.dp)
+                .padding(top = 40.dp) // 避免与状态栏重叠
+        )
+    }
 
     // 权限被拒绝时显示提示对话框
     if (permissionsState.shouldShowRationale) {

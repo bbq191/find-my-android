@@ -38,6 +38,7 @@ class ContactViewModel(application: Application) : AndroidViewModel(application)
     private val authRepository = AuthRepository(application.applicationContext)
     private val contactRepository = ContactRepository()
     private val deviceRepository = DeviceRepository()
+    private val locationReportService = me.ikate.findmy.service.LocationReportService(application.applicationContext)
     private val context = application
     private val prefs = context.getSharedPreferences("user_profile", Context.MODE_PRIVATE)
     private val firestore = FirebaseFirestore.getInstance()
@@ -96,6 +97,10 @@ class ContactViewModel(application: Application) : AndroidViewModel(application)
     // 正在请求位置更新的联系人 UID（用于显示"正在定位..."）
     private val _requestingLocationFor = MutableStateFlow<String?>(null)
     val requestingLocationFor: StateFlow<String?> = _requestingLocationFor.asStateFlow()
+
+    // 正在连续追踪的联系人 UID（用于显示"实时追踪中..."）
+    private val _trackingContactUid = MutableStateFlow<String?>(null)
+    val trackingContactUid: StateFlow<String?> = _trackingContactUid.asStateFlow()
 
     // 用于检测新的共享邀请
     private var previousContactIds = setOf<String>()
@@ -229,7 +234,8 @@ class ContactViewModel(application: Application) : AndroidViewModel(application)
             try {
                 if (!Geocoder.isPresent()) return@launch
 
-                val geocoder = Geocoder(context, Locale.getDefault())
+                // 🌏 强制使用简体中文，确保地址始终显示中文
+                val geocoder = Geocoder(context, java.util.Locale.SIMPLIFIED_CHINESE)
 
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     geocoder.getFromLocation(
@@ -238,14 +244,28 @@ class ContactViewModel(application: Application) : AndroidViewModel(application)
                         1
                     ) { addresses: List<Address> ->
                         if (addresses.isNotEmpty()) {
-                            _myAddress.value = AddressFormatter.formatAddress(addresses[0])
+                            val formatted = AddressFormatter.formatAddress(addresses[0])
+                            // 如果是Plus Code，说明没有详细地址，显示经纬度
+                            _myAddress.value = if (AddressFormatter.isPlusCode(formatted)) {
+                                "纬度 ${String.format("%.4f", latLng.latitude)}, " +
+                                "经度 ${String.format("%.4f", latLng.longitude)}"
+                            } else {
+                                formatted
+                            }
                         }
                     }
                 } else {
                     @Suppress("DEPRECATION")
                     val addresses = geocoder.getFromLocation(latLng.latitude, latLng.longitude, 1)
                     if (!addresses.isNullOrEmpty()) {
-                        _myAddress.value = AddressFormatter.formatAddress(addresses[0])
+                        val formatted = AddressFormatter.formatAddress(addresses[0])
+                        // 如果是Plus Code，说明没有详细地址，显示经纬度
+                        _myAddress.value = if (AddressFormatter.isPlusCode(formatted)) {
+                            "纬度 ${String.format("%.4f", latLng.latitude)}, " +
+                            "经度 ${String.format("%.4f", latLng.longitude)}"
+                        } else {
+                            formatted
+                        }
                     }
                 }
             } catch (e: Exception) {
@@ -603,6 +623,13 @@ class ContactViewModel(application: Application) : AndroidViewModel(application)
             result.fold(
                 onSuccess = {
                     Log.d(TAG, "恢复共享成功: ${contact.id}")
+
+                    // 🔔 恢复成功后，通知对端以发起方恢复时间为准继续分享
+                    // 通过 FCM 触发对端立即上报最新位置
+                    contact.targetUserId?.let { targetUid ->
+                        Log.d(TAG, "恢复共享后通知对端: targetUid=$targetUid")
+                        requestLocationUpdate(targetUid)
+                    } ?: Log.w(TAG, "无法通知对端: targetUserId 为空")
                 },
                 onFailure = { error ->
                     _errorMessage.value = error.message ?: "恢复共享失败，请重试"
@@ -617,6 +644,127 @@ class ContactViewModel(application: Application) : AndroidViewModel(application)
      */
     fun clearError() {
         _errorMessage.value = null
+    }
+
+    /**
+     * 开始短时实时追踪（60秒高频位置更新）
+     *
+     * 流程：
+     * 1. 先上报自己的最新位置（互惠原则）
+     * 2. 创建 trackingRequests 记录，指定 type 为 "continuous"
+     * 3. Cloud Function 监听后发送 FCM 消息类型为 LOCATION_TRACK_START
+     * 4. 目标设备启动 ContinuousLocationWorker，在60秒内每7秒上报一次
+     * 5. 60秒后自动停止，或者调用 stopContinuousTracking() 手动停止
+     *
+     * @param targetUid 目标联系人的 UID
+     */
+    fun startContinuousTracking(targetUid: String) {
+        viewModelScope.launch {
+            try {
+                val currentUid = _currentUser.value?.uid
+                if (currentUid == null) {
+                    Log.w(TAG, "当前用户未登录，无法开始追踪")
+                    return@launch
+                }
+
+                // 设置追踪状态
+                _trackingContactUid.value = targetUid
+                Log.d(TAG, "开始连续追踪: targetUid=$targetUid")
+
+                // 先上报自己的位置
+                val myLocationReport = locationReportService.reportCurrentLocation()
+                myLocationReport.fold(
+                    onSuccess = { device ->
+                        Log.d(TAG, "我的位置已上报成功，现在启动对方的连续追踪")
+                    },
+                    onFailure = { e ->
+                        Log.w(TAG, "上报我的位置失败: ${e.message}")
+                    }
+                )
+
+                // 创建连续追踪请求
+                val trackingData = hashMapOf(
+                    "requesterUid" to currentUid,
+                    "targetUid" to targetUid,
+                    "type" to "continuous",
+                    "timestamp" to System.currentTimeMillis(),
+                    "status" to "pending"
+                )
+
+                firestore.collection("locationRequests")
+                    .add(trackingData)
+                    .addOnSuccessListener { documentReference ->
+                        Log.d(TAG, "连续追踪请求已创建: ${documentReference.id}")
+                        // 60秒后自动清除追踪状态
+                        viewModelScope.launch {
+                            delay(60000)
+                            if (_trackingContactUid.value == targetUid) {
+                                _trackingContactUid.value = null
+                                Log.d(TAG, "连续追踪已自动结束（60秒超时）")
+                            }
+                        }
+                    }
+                    .addOnFailureListener { e ->
+                        Log.e(TAG, "创建连续追踪请求失败", e)
+                        _trackingContactUid.value = null
+                        _errorMessage.value = "启动实时追踪失败: ${e.message}"
+                    }
+            } catch (e: Exception) {
+                Log.e(TAG, "开始连续追踪失败", e)
+                _trackingContactUid.value = null
+                _errorMessage.value = "启动追踪失败: ${e.localizedMessage}"
+            }
+        }
+    }
+
+    /**
+     * 停止连续追踪
+     *
+     * 流程：
+     * 1. 创建停止请求记录
+     * 2. Cloud Function 发送 FCM 消息类型为 LOCATION_TRACK_STOP
+     * 3. 目标设备取消正在运行的 ContinuousLocationWorker
+     *
+     * @param targetUid 目标联系人的 UID
+     */
+    fun stopContinuousTracking(targetUid: String) {
+        viewModelScope.launch {
+            try {
+                val currentUid = _currentUser.value?.uid
+                if (currentUid == null) {
+                    Log.w(TAG, "当前用户未登录")
+                    return@launch
+                }
+
+                Log.d(TAG, "停止连续追踪: targetUid=$targetUid")
+
+                // 创建停止请求
+                val stopData = hashMapOf(
+                    "requesterUid" to currentUid,
+                    "targetUid" to targetUid,
+                    "type" to "stop_continuous",
+                    "timestamp" to System.currentTimeMillis(),
+                    "status" to "pending"
+                )
+
+                firestore.collection("locationRequests")
+                    .add(stopData)
+                    .addOnSuccessListener { documentReference ->
+                        Log.d(TAG, "停止追踪请求已创建: ${documentReference.id}")
+                        _trackingContactUid.value = null
+                    }
+                    .addOnFailureListener { e ->
+                        Log.e(TAG, "创建停止追踪请求失败", e)
+                        // 即使失败也清除状态
+                        _trackingContactUid.value = null
+                        _errorMessage.value = "停止追踪失败: ${e.message}"
+                    }
+            } catch (e: Exception) {
+                Log.e(TAG, "停止连续追踪失败", e)
+                _trackingContactUid.value = null
+                _errorMessage.value = "停止失败: ${e.localizedMessage}"
+            }
+        }
     }
 
     /**
@@ -641,11 +789,24 @@ class ContactViewModel(application: Application) : AndroidViewModel(application)
                 _requestingLocationFor.value = targetUid
                 Log.d(TAG, "请求位置更新: targetUid=$targetUid")
 
+                // 🔄 重要：先上报我自己的最新位置，确保对方能看到最新的我的位置
+                val myLocationReport = locationReportService.reportCurrentLocation()
+                myLocationReport.fold(
+                    onSuccess = { device ->
+                        Log.d(TAG, "我的位置已上报成功，现在请求对方位置")
+                    },
+                    onFailure = { e ->
+                        Log.w(TAG, "上报我的位置失败: ${e.message}")
+                        // 即使失败也继续请求对方位置
+                    }
+                )
+
                 // 创建位置请求记录
                 // Cloud Function 会监听这个集合，并发送 FCM 给目标用户
                 val requestData = hashMapOf(
                     "requesterUid" to currentUid,
                     "targetUid" to targetUid,
+                    "type" to "single",
                     "timestamp" to System.currentTimeMillis(),
                     "status" to "pending"
                 )
@@ -654,9 +815,9 @@ class ContactViewModel(application: Application) : AndroidViewModel(application)
                     .add(requestData)
                     .addOnSuccessListener { documentReference ->
                         Log.d(TAG, "位置请求已创建: ${documentReference.id}")
-                        // 5秒后清除加载状态（给后端足够的时间处理）
+                        // 10秒后清除加载状态（给双方设备足够的时间上报位置）
                         viewModelScope.launch {
-                            kotlinx.coroutines.delay(5000)
+                            delay(10000)
                             if (_requestingLocationFor.value == targetUid) {
                                 _requestingLocationFor.value = null
                             }

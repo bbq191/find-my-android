@@ -410,6 +410,7 @@ class ContactRepository {
         return try {
             val shareDoc = sharesCollection.document(shareId).get().await()
             val fromUid = shareDoc.getString("fromUid")
+            val toUid = shareDoc.getString("toUid")
 
             // 只有发送者可以恢复
             if (fromUid != currentUid) {
@@ -423,13 +424,34 @@ class ContactRepository {
                 ShareDuration.INDEFINITELY -> null
             }
 
-            sharesCollection.document(shareId).update(
-                mapOf(
-                    "isPaused" to false,
-                    "expireTime" to expireTime
-                )
-            ).await()
+            val updateData = mapOf(
+                "isPaused" to false,
+                "expireTime" to expireTime,
+                "status" to ShareStatus.ACCEPTED.name  // 恢复时将状态从 EXPIRED 改回 ACCEPTED
+            )
+
+            // 1. 更新当前共享记录 (A → B)
+            sharesCollection.document(shareId).update(updateData).await()
             Log.d(TAG, "恢复共享成功: $shareId")
+
+            // 2. 同时更新反向共享记录 (B → A)，确保双方状态一致
+            if (toUid != null) {
+                val reverseShareSnapshot = sharesCollection
+                    .whereEqualTo("fromUid", toUid)
+                    .whereEqualTo("toUid", fromUid)
+                    .limit(1)
+                    .get()
+                    .await()
+
+                if (!reverseShareSnapshot.isEmpty) {
+                    val reverseShareId = reverseShareSnapshot.documents[0].id
+                    sharesCollection.document(reverseShareId).update(updateData).await()
+                    Log.d(TAG, "同时恢复反向共享: $reverseShareId")
+                } else {
+                    Log.w(TAG, "未找到反向共享记录，可能是单向共享")
+                }
+            }
+
             Result.success(Unit)
         } catch (e: Exception) {
             Log.e(TAG, "恢复共享失败: $shareId", e)
@@ -531,6 +553,7 @@ class ContactRepository {
 
     /**
      * 实时监听我的联系人列表
+     * 🔄 优化：同时监听 shares 和 devices 集合，确保位置实时更新
      */
     fun observeMyContacts(): Flow<List<Contact>> = callbackFlow {
         val currentUid = auth.currentUser?.uid
@@ -586,9 +609,29 @@ class ContactRepository {
                 }
             }
 
+        // 🔄 监听3: 监听所有与我共享的设备位置更新
+        // 当任何共享联系人的设备位置更新时，触发联系人列表刷新
+        val listener3 = devicesCollection
+            .whereArrayContains("sharedWith", currentUid)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    Log.e(TAG, "监听共享设备失败", error)
+                    return@addSnapshotListener
+                }
+
+                // 设备位置更新，触发重新合并
+                Log.d(TAG, "检测到 ${snapshot?.size() ?: 0} 个共享设备更新，触发联系人列表刷新")
+
+                kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                    val contacts = mergeContactLists(iShareList, theyShareList)
+                    trySend(contacts)
+                }
+            }
+
         awaitClose {
             listener1.remove()
             listener2.remove()
+            listener3.remove()
         }
     }
 

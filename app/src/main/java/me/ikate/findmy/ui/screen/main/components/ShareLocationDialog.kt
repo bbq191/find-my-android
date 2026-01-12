@@ -5,12 +5,18 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
@@ -24,6 +30,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import me.ikate.findmy.data.model.ShareDuration
 
@@ -58,7 +65,21 @@ fun ShareLocationDialog(
 
     AlertDialog(
         onDismissRequest = { if (!isLoading) onDismiss() },
-        title = { Text("共享我的位置") },
+        icon = {
+            Icon(
+                imageVector = Icons.Default.LocationOn,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(32.dp)
+            )
+        },
+        title = {
+            Text(
+                "共享我的位置",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold
+            )
+        },
         text = {
             Column(
                 modifier = Modifier.fillMaxWidth(),
@@ -79,18 +100,22 @@ fun ShareLocationDialog(
                         {
                             Text(
                                 it,
-                                color = MaterialTheme.colorScheme.error
+                                color = MaterialTheme.colorScheme.error,
+                                style = MaterialTheme.typography.bodySmall
                             )
                         }
                     },
                     enabled = !isLoading,
+                    shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth()
                 )
 
                 // 时长选择
                 Text(
                     text = "共享时长",
-                    style = MaterialTheme.typography.bodyMedium
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface
                 )
 
                 ShareDuration.entries.forEach { duration ->
@@ -102,7 +127,7 @@ fun ShareLocationDialog(
                                 onClick = { if (!isLoading) selectedDuration = duration },
                                 enabled = !isLoading
                             )
-                            .padding(vertical = 8.dp),
+                            .padding(vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         RadioButton(
@@ -110,17 +135,18 @@ fun ShareLocationDialog(
                             onClick = { if (!isLoading) selectedDuration = duration },
                             enabled = !isLoading
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
+                        Spacer(modifier = Modifier.width(12.dp))
                         Text(
                             text = duration.displayName,
-                            style = MaterialTheme.typography.bodyMedium
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = if (selectedDuration == duration) FontWeight.Medium else FontWeight.Normal
                         )
                     }
                 }
             }
         },
         confirmButton = {
-            TextButton(
+            FilledTonalButton(
                 onClick = {
                     // UID 验证
                     when {
@@ -133,26 +159,33 @@ fun ShareLocationDialog(
                         }
                     }
                 },
-                enabled = !isLoading
+                enabled = !isLoading,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.height(40.dp)
             ) {
                 if (isLoading) {
                     CircularProgressIndicator(
                         modifier = Modifier.size(20.dp),
-                        strokeWidth = 2.dp
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
                     )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("发送中...")
                 } else {
-                    Text("发送")
+                    Text("发送", fontWeight = FontWeight.SemiBold)
                 }
             }
         },
         dismissButton = {
             TextButton(
                 onClick = onDismiss,
-                enabled = !isLoading
+                enabled = !isLoading,
+                shape = RoundedCornerShape(12.dp)
             ) {
                 Text("取消")
             }
         },
+        shape = RoundedCornerShape(24.dp),
         modifier = modifier
     )
 }

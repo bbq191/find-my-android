@@ -36,12 +36,15 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Radar
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Tablet
 import androidx.compose.material.icons.filled.Watch
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -91,6 +94,7 @@ fun ContactListPanel(
     myAddress: String? = null,
     contacts: List<Contact>,
     requestingLocationFor: String? = null,
+    trackingContactUid: String? = null,
     onContactClick: (Contact) -> Unit,
     onAddContactClick: () -> Unit,
     onNavigate: (Contact) -> Unit = {},
@@ -101,6 +105,8 @@ fun ContactListPanel(
     onAcceptShare: (Contact) -> Unit = {},
     onRejectShare: (Contact) -> Unit = {},
     onRequestLocationUpdate: (String) -> Unit = {},
+    onStartContinuousTracking: (String) -> Unit = {},
+    onStopContinuousTracking: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var showUidDialog by remember { mutableStateOf(false) }
@@ -140,27 +146,46 @@ fun ContactListPanel(
     Column(modifier = modifier
         .fillMaxSize()
         .background(MaterialTheme.colorScheme.surface)) {
-        // ... existing header ...
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+        // 优化的标题栏
+        Surface(
+            tonalElevation = 2.dp,
+            shadowElevation = 1.dp
         ) {
-            Text(
-                text = "联系人",
-                style = MaterialTheme.typography.headlineLarge,
-                fontWeight = FontWeight.Bold
-            )
-
-            FloatingActionButton(
-                onClick = onAddContactClick,
-                modifier = Modifier.size(40.dp),
-                containerColor = MaterialTheme.colorScheme.primaryContainer,
-                contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 20.dp, vertical = 20.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(Icons.Default.Add, contentDescription = "添加联系人")
+                Column {
+                    Text(
+                        text = "联系人",
+                        style = MaterialTheme.typography.headlineLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = if (contacts.isEmpty()) "暂无联系人" else "${contacts.size} 位联系人",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                FloatingActionButton(
+                    onClick = onAddContactClick,
+                    modifier = Modifier.size(56.dp),
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    elevation = FloatingActionButtonDefaults.elevation(
+                        defaultElevation = 3.dp
+                    )
+                ) {
+                    Icon(
+                        Icons.Default.Add,
+                        contentDescription = "添加联系人",
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
             }
         }
 
@@ -189,11 +214,14 @@ fun ContactListPanel(
                 items(contacts, key = { it.id }) { contact ->
                     val isExpanded = expandedContactId == contact.id
                     val isRequesting = requestingLocationFor == contact.targetUserId
+                    val isTracking = trackingContactUid == contact.targetUserId
 
                     ContactListItem(
                         contact = contact,
+                        myDevice = myDevice,
                         isExpanded = isExpanded,
                         isRequestingLocation = isRequesting,
+                        isTracking = isTracking,
                         onClick = {
                             onContactClick(contact)
                             // 切换展开状态
@@ -211,6 +239,16 @@ fun ContactListPanel(
                                 onRequestLocationUpdate(
                                     it
                                 )
+                            }
+                        },
+                        onStartContinuousTracking = {
+                            contact.targetUserId?.let {
+                                onStartContinuousTracking(it)
+                            }
+                        },
+                        onStopContinuousTracking = {
+                            contact.targetUserId?.let {
+                                onStopContinuousTracking(it)
                             }
                         }
                     )
@@ -251,7 +289,7 @@ fun ContactListPanel(
 }
 
 /**
- * 移除联系人确认对话框
+ * 移除联系人确认对话框 - 优化版
  */
 @Composable
 private fun RemoveContactDialog(
@@ -261,28 +299,61 @@ private fun RemoveContactDialog(
 ) {
     androidx.compose.material3.AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("移除联系人") },
+        icon = {
+            Icon(
+                imageVector = Icons.Default.Delete,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.error,
+                modifier = Modifier.size(32.dp)
+            )
+        },
+        title = {
+            Text(
+                "移除联系人",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold
+            )
+        },
         text = {
-            Text("确定要移除 ${contact.name} 吗？\n这将停止与对方的所有位置共享。")
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "确定要移除 ${contact.name} 吗？",
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    "这将停止与对方的所有位置共享。",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         },
         confirmButton = {
-            androidx.compose.material3.TextButton(
+            androidx.compose.material3.FilledTonalButton(
                 onClick = onConfirm,
-                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                colors = ButtonDefaults.filledTonalButtonColors(
+                    containerColor = MaterialTheme.colorScheme.errorContainer,
+                    contentColor = MaterialTheme.colorScheme.onErrorContainer
+                ),
+                shape = RoundedCornerShape(12.dp)
             ) {
-                Text("移除")
+                Text("移除", fontWeight = FontWeight.SemiBold)
             }
         },
         dismissButton = {
-            androidx.compose.material3.TextButton(onClick = onDismiss) {
+            androidx.compose.material3.TextButton(
+                onClick = onDismiss,
+                shape = RoundedCornerShape(12.dp)
+            ) {
                 Text("取消")
             }
-        }
+        },
+        shape = RoundedCornerShape(24.dp)
     )
 }
 
 /**
- * 恢复共享时长选择对话框
+ * 恢复共享时长选择对话框 - 优化版
  */
 @Composable
 private fun ResumeShareDialog(
@@ -291,38 +362,59 @@ private fun ResumeShareDialog(
 ) {
     Dialog(onDismissRequest = onDismiss) {
         Surface(
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(28.dp),
             color = MaterialTheme.colorScheme.surface,
             tonalElevation = 6.dp,
-            modifier = Modifier.padding(16.dp)
+            shadowElevation = 8.dp
         ) {
             Column(
                 modifier = Modifier.padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                Icon(
+                    imageVector = Icons.Default.PlayArrow,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(40.dp)
+                )
+
                 Text(
                     text = "恢复共享",
-                    style = MaterialTheme.typography.headlineSmall,
+                    style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Bold
                 )
 
-                Spacer(modifier = Modifier.height(24.dp))
+                Text(
+                    text = "选择共享时长",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
 
                 ShareDuration.entries.forEach { duration ->
-                    androidx.compose.material3.OutlinedButton(
+                    androidx.compose.material3.FilledTonalButton(
                         onClick = { onConfirm(duration) },
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(vertical = 4.dp)
+                            .height(48.dp),
+                        shape = RoundedCornerShape(14.dp)
                     ) {
-                        Text(duration.displayName)
+                        Text(
+                            duration.displayName,
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Medium
+                        )
                     }
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(8.dp))
 
                 androidx.compose.material3.TextButton(
-                    onClick = onDismiss
+                    onClick = onDismiss,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp)
                 ) {
                     Text("取消")
                 }
@@ -332,7 +424,7 @@ private fun ResumeShareDialog(
 }
 
 /**
- * 显示我的 UID 对话框
+ * 显示我的 UID 对话框 - 优化版
  */
 @Composable
 private fun MyUidDialog(
@@ -341,76 +433,106 @@ private fun MyUidDialog(
 ) {
     val clipboardManager: ClipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
+    var copied by remember { mutableStateOf(false) }
 
     androidx.compose.material3.AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("我的 UID") },
+        icon = {
+            Icon(
+                imageVector = Icons.Default.Person,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(32.dp)
+            )
+        },
+        title = {
+            Text(
+                "我的 UID",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold
+            )
+        },
         text = {
-            Column {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
                     text = "分享此 ID 给好友，让他们添加您。",
                     style = MaterialTheme.typography.bodyMedium,
-                    color = Color.Gray
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Spacer(modifier = Modifier.size(16.dp))
+
                 Surface(
-                    shape = androidx.compose.foundation.shape.RoundedCornerShape(8.dp),
-                    color = MaterialTheme.colorScheme.secondaryContainer,
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    tonalElevation = 3.dp,
                     modifier = Modifier
                         .fillMaxWidth()
                         .clickable {
-                            // 复制到剪贴板
                             clipboardManager.setText(AnnotatedString(uid))
+                            copied = true
                         }
                 ) {
-                    Text(
-                        text = uid,
+                    Column(
                         modifier = Modifier.padding(16.dp),
-                        style = MaterialTheme.typography.bodyLarge.copy(
-                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
-                        ),
-                        textAlign = TextAlign.Center
-                    )
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = uid,
+                            style = MaterialTheme.typography.bodyLarge.copy(
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                            ),
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            textAlign = TextAlign.Center
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = if (copied) "✓ 已复制" else "点击复制",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
                 }
-                Spacer(modifier = Modifier.size(8.dp))
-                Text(
-                    text = "点击 ID 复制",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.align(Alignment.CenterHorizontally)
-                )
             }
         },
         confirmButton = {
-            androidx.compose.material3.TextButton(
+            androidx.compose.material3.FilledTonalButton(
                 onClick = {
-                    // 使用通用分享工具分享 UID
                     ShareHelper.shareUid(context, uid)
-                }
+                },
+                shape = RoundedCornerShape(12.dp)
             ) {
-                Text("分享")
+                Text("分享", fontWeight = FontWeight.SemiBold)
             }
         },
         dismissButton = {
-            androidx.compose.material3.TextButton(onClick = onDismiss) {
+            androidx.compose.material3.TextButton(
+                onClick = onDismiss,
+                shape = RoundedCornerShape(12.dp)
+            ) {
                 Text("关闭")
             }
-        }
+        },
+        shape = RoundedCornerShape(24.dp)
     )
 }
 
 @Composable
 private fun SectionHeader(title: String) {
-    Text(
-        text = title,
-        style = MaterialTheme.typography.titleSmall,
-        color = MaterialTheme.colorScheme.secondary,
-        fontWeight = FontWeight.Bold,
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 8.dp)
-            .padding(top = 8.dp)
-    )
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surface,
+        tonalElevation = 1.dp
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.primary,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 12.dp)
+        )
+    }
 }
 
 /**
@@ -433,21 +555,30 @@ private fun MyProfileItem(
         }
     }
 
-    Row(
+    Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(horizontal = 20.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        shape = RoundedCornerShape(20.dp),
+        tonalElevation = 2.dp,
+        shadowElevation = 1.dp
     ) {
-        // 头像部分保持不变
-        val avatarUrl = meAvatarUrl
-
-        Surface(
-            modifier = Modifier.size(56.dp),
-            shape = CircleShape,
-            color = MaterialTheme.colorScheme.secondaryContainer
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick)
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
+            // 头像部分保持不变
+            val avatarUrl = meAvatarUrl
+
+            Surface(
+                modifier = Modifier.size(64.dp),
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.secondaryContainer,
+                tonalElevation = 3.dp
+            ) {
             Box(contentAlignment = Alignment.Center) {
                 if (!avatarUrl.isNullOrBlank()) {
                     AsyncImage(
@@ -564,6 +695,7 @@ private fun MyProfileItem(
                 )
             }
         }
+        }
     }
 }
 
@@ -573,8 +705,10 @@ private fun MyProfileItem(
 @Composable
 private fun ContactListItem(
     contact: Contact,
+    myDevice: Device? = null,
     isExpanded: Boolean,
     isRequestingLocation: Boolean = false,
+    isTracking: Boolean = false,
     onClick: () -> Unit,
     onNavigate: () -> Unit,
     onPauseClick: () -> Unit,
@@ -584,6 +718,8 @@ private fun ContactListItem(
     onAcceptClick: () -> Unit,
     onRejectClick: () -> Unit,
     onRequestLocationUpdate: () -> Unit = {},
+    onStartContinuousTracking: () -> Unit = {},
+    onStopContinuousTracking: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     // ... existing time and address logic ...
@@ -607,14 +743,23 @@ private fun ContactListItem(
         withContext(Dispatchers.IO) {
             try {
                 if (Geocoder.isPresent()) {
-                    val geocoder = Geocoder(context, java.util.Locale.getDefault())
+                    // 🌏 强制使用简体中文，确保地址始终显示中文
+                    val geocoder = Geocoder(context, java.util.Locale.SIMPLIFIED_CHINESE)
                     geocoder.getFromLocation(
                         contact.location.latitude,
                         contact.location.longitude,
                         1
                     ) { addresses ->
                         if (addresses.isNotEmpty()) {
-                            addressText = AddressFormatter.formatAddress(addresses[0])
+                            val formatted = AddressFormatter.formatAddress(addresses[0])
+                            // 🔍 检测Plus Code（如"2PP7+FV5"）并过滤
+                            addressText = if (AddressFormatter.isPlusCode(formatted)) {
+                                // Plus Code说明该位置没有详细地址，显示经纬度
+                                "纬度 ${String.format("%.4f", contact.location.latitude)}, " +
+                                "经度 ${String.format("%.4f", contact.location.longitude)}"
+                            } else {
+                                formatted
+                            }
                         } else {
                             addressText = "位置未知"
                         }
@@ -628,24 +773,32 @@ private fun ContactListItem(
         }
     }
 
-    Column(
+    Surface(
         modifier = modifier
             .fillMaxWidth()
-            .background(if (isExpanded) MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f) else Color.Transparent)
-            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 6.dp),
+        shape = RoundedCornerShape(20.dp),
+        tonalElevation = if (isExpanded) 4.dp else 1.dp,
+        shadowElevation = if (isExpanded) 2.dp else 0.dp
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
+                .clickable(onClick = onClick)
         ) {
-            // 头像
-            Surface(
-                modifier = Modifier.size(56.dp),
-                shape = CircleShape,
-                color = MaterialTheme.colorScheme.surfaceVariant
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
+                // 头像
+                Surface(
+                    modifier = Modifier.size(60.dp),
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    tonalElevation = 2.dp
+                ) {
                 Box(contentAlignment = Alignment.Center) {
                     if (!contact.avatarUrl.isNullOrBlank()) {
                         AsyncImage(
@@ -686,8 +839,25 @@ private fun ContactListItem(
 
                 // 状态逻辑处理
                 if (contact.shareStatus == ShareStatus.ACCEPTED && !contact.isPaused && contact.isLocationAvailable) {
+                    // 如果正在实时追踪，显示"实时追踪中..."
+                    if (isTracking) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(12.dp),
+                                strokeWidth = 1.5.dp,
+                                color = Color(0xFF4CAF50) // 绿色，表示实时
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "实时追踪中...",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color(0xFF4CAF50),
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
                     // 如果正在请求位置更新，显示"正在定位..."
-                    if (isRequestingLocation) {
+                    else if (isRequestingLocation) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(12.dp),
@@ -746,14 +916,45 @@ private fun ContactListItem(
                         }
                     }
 
-                    // 第三行：精简地址
-                    Text(
-                        text = addressText ?: "正在获取位置...",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.secondary,
-                        maxLines = 1,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                    )
+                    // 第三行：距离 + 精简地址
+                    val myLocation = myDevice?.location
+                    val contactLocation = contact.location
+                    val distanceText = if (myLocation != null && contactLocation != null) {
+                        me.ikate.findmy.util.DistanceCalculator.calculateAndFormatDistance(
+                            myLocation,
+                            contactLocation
+                        )
+                    } else null
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        // 显示距离（如果有）
+                        if (distanceText != null) {
+                            Text(
+                                text = distanceText,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                text = "•",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.secondary
+                            )
+                        }
+
+                        // 显示地址
+                        Text(
+                            text = addressText ?: "正在获取位置...",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.secondary,
+                            maxLines = 1,
+                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                    }
                 } else {
                     // 如果是 PENDING, EXPIRED, REJECTED, PAUSED 或 LOCATION UNAVAILABLE
                     val (statusText, statusColor) = when (contact.shareStatus) {
@@ -790,24 +991,31 @@ private fun ContactListItem(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     // 拒绝按钮
-                    androidx.compose.material3.OutlinedButton(
+                    androidx.compose.material3.FilledTonalButton(
                         onClick = onRejectClick,
-                        modifier = Modifier.height(32.dp),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp),
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = MaterialTheme.colorScheme.error
-                        )
+                        modifier = Modifier.height(36.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp),
+                        colors = ButtonDefaults.filledTonalButtonColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer,
+                            contentColor = MaterialTheme.colorScheme.onErrorContainer
+                        ),
+                        shape = RoundedCornerShape(18.dp)
                     ) {
-                        Text("拒绝", style = MaterialTheme.typography.labelMedium)
+                        Text("拒绝", style = MaterialTheme.typography.labelLarge)
                     }
 
                     // 接受按钮
-                    androidx.compose.material3.Button(
+                    androidx.compose.material3.FilledTonalButton(
                         onClick = onAcceptClick,
-                        modifier = Modifier.height(32.dp),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp)
+                        modifier = Modifier.height(36.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp),
+                        colors = ButtonDefaults.filledTonalButtonColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer
+                        ),
+                        shape = RoundedCornerShape(18.dp)
                     ) {
-                        Text("接受", style = MaterialTheme.typography.labelMedium)
+                        Text("接受", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
                     }
                 }
             }
@@ -834,11 +1042,29 @@ private fun ContactListItem(
                 ActionButton(
                     icon = Icons.Default.Refresh,
                     label = "刷新",
-                    enabled = canRefresh && !isRequestingLocation,
+                    enabled = canRefresh && !isRequestingLocation && !isTracking,
                     onClick = onRequestLocationUpdate
                 )
 
-                // 2. 导航 (仅当有位置时可用)
+                // 2. 实时追踪 (支持启动和停止)
+                if (isTracking) {
+                    ActionButton(
+                        icon = Icons.Default.Stop,
+                        label = "停止",
+                        enabled = true,
+                        isDestructive = true,
+                        onClick = onStopContinuousTracking
+                    )
+                } else {
+                    ActionButton(
+                        icon = Icons.Default.Radar,
+                        label = "实时",
+                        enabled = canRefresh && !isRequestingLocation,
+                        onClick = onStartContinuousTracking
+                    )
+                }
+
+                // 3. 导航 (仅当有位置时可用)
                 val canNavigate = contact.location != null && contact.isLocationAvailable
                 ActionButton(
                     icon = Icons.Default.Directions,
@@ -894,11 +1120,12 @@ private fun ContactListItem(
                 }
             }
         }
+        }
     }
 }
 
 /**
- * 操作按钮组件
+ * 操作按钮组件 - 优化版
  */
 @Composable
 private fun ActionButton(
@@ -908,37 +1135,52 @@ private fun ActionButton(
     isDestructive: Boolean = false,
     onClick: () -> Unit
 ) {
-    val contentColor =
-        if (isDestructive) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
-    val containerColor =
-        if (isDestructive) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.primaryContainer
+    val contentColor = when {
+        !enabled -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+        isDestructive -> MaterialTheme.colorScheme.error
+        else -> MaterialTheme.colorScheme.primary
+    }
+
+    val containerColor = when {
+        !enabled -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f)
+        isDestructive -> MaterialTheme.colorScheme.errorContainer
+        else -> MaterialTheme.colorScheme.primaryContainer
+    }
 
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
-            .clip(RoundedCornerShape(8.dp))
+            .clip(RoundedCornerShape(12.dp))
             .clickable(enabled = enabled, onClick = onClick)
-            .padding(8.dp)
+            .padding(horizontal = 4.dp, vertical = 8.dp)
     ) {
         Surface(
             shape = CircleShape,
-            color = if (enabled) containerColor else Color.Gray.copy(alpha = 0.1f),
-            modifier = Modifier.size(40.dp)
+            color = containerColor,
+            tonalElevation = if (enabled) 3.dp else 0.dp,
+            modifier = Modifier.size(48.dp)
         ) {
             Box(contentAlignment = Alignment.Center) {
                 Icon(
                     imageVector = icon,
                     contentDescription = label,
-                    tint = if (enabled) contentColor else Color.Gray,
-                    modifier = Modifier.size(20.dp)
+                    tint = if (enabled && isDestructive) {
+                        MaterialTheme.colorScheme.onErrorContainer
+                    } else if (enabled) {
+                        MaterialTheme.colorScheme.onPrimaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                    },
+                    modifier = Modifier.size(24.dp)
                 )
             }
         }
-        Spacer(modifier = Modifier.height(4.dp))
+        Spacer(modifier = Modifier.height(6.dp))
         Text(
             text = label,
-            style = MaterialTheme.typography.labelSmall,
-            color = if (enabled) contentColor else Color.Gray
+            style = MaterialTheme.typography.labelMedium,
+            color = contentColor,
+            fontWeight = if (enabled) FontWeight.Medium else FontWeight.Normal
         )
     }
 }

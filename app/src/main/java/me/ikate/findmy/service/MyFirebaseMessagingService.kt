@@ -19,6 +19,7 @@ import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import me.ikate.findmy.MainActivity
 import me.ikate.findmy.worker.LocationReportWorker
+import me.ikate.findmy.worker.ContinuousLocationWorker
 
 class MyFirebaseMessagingService : FirebaseMessagingService() {
 
@@ -50,7 +51,12 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
                 "LOCATION_REQUEST" -> {
                     handleLocationRequest(remoteMessage.data)
                 }
-
+                "LOCATION_TRACK_START" -> {
+                    handleContinuousTrackingStart(remoteMessage.data)
+                }
+                "LOCATION_TRACK_STOP" -> {
+                    handleContinuousTrackingStop()
+                }
                 else -> {
                     // 其他类型的数据消息，例如自动刷新联系人列表
                     Log.d(TAG, "Received unknown data message type")
@@ -70,7 +76,10 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
      */
     private fun handleLocationRequest(data: Map<String, String>) {
         val requesterUid = data["requesterUid"]
-        Log.d(TAG, "收到位置请求，来自: $requesterUid")
+        Log.d(TAG, "收到来自: $requesterUid 的位置请求")
+
+        // 🔍 调试：显示通知，验证FCM消息已到达
+        sendDebugNotification("FCM已到达", "收到位置请求，来自: $requesterUid")
 
         // 检查是否超过防抖动冷却时间
         val prefs = getSharedPreferences("location_request", MODE_PRIVATE)
@@ -79,10 +88,13 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         val cooldownMillis = 60 * 1000 // 1分钟冷却时间
 
         if (currentTime - lastRequestTime < cooldownMillis) {
+            val remainingSeconds = (cooldownMillis - (currentTime - lastRequestTime)) / 1000
             Log.d(
                 TAG,
-                "位置请求过于频繁，忽略本次请求 (冷却时间: ${(cooldownMillis - (currentTime - lastRequestTime)) / 1000}秒)"
+                "位置请求过于频繁，忽略本次请求 (冷却时间: ${remainingSeconds}秒)"
             )
+            // 🔍 调试：通知用户被防抖动拦截
+            sendDebugNotification("请求被拦截", "冷却中，剩余 ${remainingSeconds}秒")
             return
         }
 
@@ -108,7 +120,99 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
                 workRequest
             )
 
-        Log.d(TAG, "已启动加急位置上报任务")
+        Log.d(TAG, "已启动加急位置上报任务，WorkRequest ID: ${workRequest.id}")
+        // 🔍 调试：通知Worker已启动
+        sendDebugNotification("Worker已启动", "任务ID: ${workRequest.id}")
+    }
+
+    /**
+     * 处理短时实时追踪开始请求
+     * 启动60秒的连续位置更新任务
+     */
+    private fun handleContinuousTrackingStart(data: Map<String, String>) {
+        val requesterUid = data["requesterUid"]
+        Log.d(TAG, "🎯 收到来自: $requesterUid 的实时追踪请求")
+
+        sendDebugNotification("开始实时追踪", "来自: $requesterUid，持续60秒")
+
+        // 检查是否有正在运行的追踪任务
+        val prefs = getSharedPreferences("continuous_tracking", MODE_PRIVATE)
+        val lastTrackingTime = prefs.getLong("last_tracking_time", 0)
+        val currentTime = System.currentTimeMillis()
+        val cooldownMillis = 120 * 1000 // 2分钟冷却时间（防止频繁启动）
+
+        if (currentTime - lastTrackingTime < cooldownMillis) {
+            val remainingSeconds = (cooldownMillis - (currentTime - lastTrackingTime)) / 1000
+            Log.d(TAG, "追踪请求过于频繁，忽略本次请求 (冷却时间: ${remainingSeconds}秒)")
+            sendDebugNotification("请求被拦截", "冷却中，剩余 ${remainingSeconds}秒")
+            return
+        }
+
+        // 更新最后追踪时间
+        prefs.edit { putLong("last_tracking_time", currentTime) }
+
+        // 启动连续位置更新任务
+        val workRequest = OneTimeWorkRequestBuilder<ContinuousLocationWorker>()
+            .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+            .setInputData(
+                workDataOf(
+                    "requesterUid" to requesterUid
+                )
+            )
+            .build()
+
+        // 使用唯一名称，KEEP 策略：如果已在运行则忽略新请求
+        // 这样可以防止多人同时追踪时互相干扰
+        WorkManager.getInstance(applicationContext)
+            .enqueueUniqueWork(
+                "continuous_location_tracking",
+                ExistingWorkPolicy.KEEP,  // 改为 KEEP：保护正在运行的任务
+                workRequest
+            )
+
+        Log.d(TAG, "已启动连续位置追踪任务，WorkRequest ID: ${workRequest.id}")
+    }
+
+    /**
+     * 处理停止追踪请求
+     * 取消正在运行的连续位置更新任务
+     */
+    private fun handleContinuousTrackingStop() {
+        Log.d(TAG, "⏹️ 收到停止追踪请求")
+        sendDebugNotification("停止实时追踪", "已取消连续位置更新")
+
+        // 取消正在运行的追踪任务
+        WorkManager.getInstance(applicationContext)
+            .cancelUniqueWork("continuous_location_tracking")
+
+        Log.d(TAG, "连续位置追踪任务已取消")
+    }
+
+    /**
+     * 🔍 调试工具：发送调试通知
+     * 用于验证FCM消息接收和Worker启动状态
+     */
+    private fun sendDebugNotification(title: String, message: String) {
+        val notificationManager = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
+
+        // 创建调试通知渠道
+        val debugChannelId = "debug_channel"
+        val debugChannel = NotificationChannel(
+            debugChannelId,
+            "调试通知",
+            NotificationManager.IMPORTANCE_HIGH // 高优先级，确保能看到
+        )
+        notificationManager.createNotificationChannel(debugChannel)
+
+        val notification = NotificationCompat.Builder(this, debugChannelId)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle("🔍 $title")
+            .setContentText(message)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .build()
+
+        notificationManager.notify(System.currentTimeMillis().toInt(), notification)
     }
 
     /**

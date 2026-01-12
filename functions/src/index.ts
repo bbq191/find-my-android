@@ -5,8 +5,103 @@ import {onSchedule} from "firebase-functions/v2/scheduler";
 admin.initializeApp();
 
 /**
+ * 根据请求类型构建 FCM Data Message
+ * @param {string} type - 请求类型: single, continuous, stop_continuous
+ * @param {string} requesterUid - 请求者 UID
+ * @param {string} targetUid - 目标用户 UID
+ * @return {Record<string, string>} FCM Data Message
+ */
+function buildFCMMessage(
+  type: string,
+  requesterUid: string,
+  targetUid: string,
+): Record<string, string> {
+  switch (type) {
+  case "single":
+    // 单次位置请求
+    return {
+      type: "LOCATION_REQUEST",
+      requesterUid: requesterUid,
+      targetUid: targetUid,
+    };
+
+  case "continuous":
+    // 开始短时实时追踪（60秒）
+    return {
+      type: "LOCATION_TRACK_START",
+      requesterUid: requesterUid,
+      targetUid: targetUid,
+      duration: "60", // 60秒
+    };
+
+  case "stop_continuous":
+    // 停止实时追踪
+    return {
+      type: "LOCATION_TRACK_STOP",
+      requesterUid: requesterUid,
+      targetUid: targetUid,
+    };
+
+  default:
+    throw new Error(`不支持的请求类型: ${type}`);
+  }
+}
+
+/**
+ * 清理无效的 FCM Token
+ * 只清理永久性错误的 Token（如已卸载、Token失效）
+ * @param {string} targetUid - 目标用户 UID
+ * @param {string[]} fcmTokens - FCM Token 列表
+ * @param {admin.messaging.SendResponse[]} responses - FCM 发送响应列表
+ * @return {Promise<void>} Promise
+ */
+async function cleanupInvalidTokens(
+  targetUid: string,
+  fcmTokens: string[],
+  responses: admin.messaging.SendResponse[],
+): Promise<void> {
+  const tokensToRemove: string[] = [];
+
+  responses.forEach((resp, idx) => {
+    if (!resp.success && resp.error) {
+      const errorCode = resp.error.code;
+      // 只清理永久性错误
+      if (
+        errorCode === "messaging/invalid-registration-token" ||
+        errorCode === "messaging/registration-token-not-registered"
+      ) {
+        tokensToRemove.push(fcmTokens[idx]);
+        console.warn(
+          `清理无效 Token: ${fcmTokens[idx]}, 错误: ${errorCode}`,
+        );
+      } else {
+        // 临时性错误，记录但不删除
+        console.warn(
+          `Token 暂时失败: ${fcmTokens[idx]}, 错误: ${errorCode}`,
+        );
+      }
+    }
+  });
+
+  // 从用户文档中移除无效 Token
+  if (tokensToRemove.length > 0) {
+    console.log(`🗑️ 清理 ${tokensToRemove.length} 个无效 Token`);
+    await admin.firestore()
+      .collection("users")
+      .doc(targetUid)
+      .update({
+        fcmTokens: admin.firestore.FieldValue
+          .arrayRemove(...tokensToRemove),
+      });
+  }
+}
+
+/**
  * 监听 locationRequests 集合的新文档创建事件
- * 当用户请求位置更新时，发送 FCM Data Message 给目标用户
+ * 支持三种请求类型：
+ * - single: 单次位置更新
+ * - continuous: 开始短时实时追踪（60秒）
+ * - stop_continuous: 停止实时追踪
  */
 export const onLocationRequest = onDocumentCreated(
   {
@@ -21,10 +116,20 @@ export const onLocationRequest = onDocumentCreated(
     }
 
     const requestData = snapshot.data();
-    const {requesterUid, targetUid, timestamp} = requestData;
+    const {requesterUid, targetUid, type} = requestData;
+
+    // 验证必需字段
+    if (!requesterUid || !targetUid || !type) {
+      console.error("❌ 无效的请求数据，缺少必需字段", requestData);
+      await snapshot.ref.update({
+        status: "failed",
+        error: "Missing required fields",
+      });
+      return;
+    }
 
     console.log(
-      `收到位置请求: ${requesterUid} -> ${targetUid}`,
+      `📬 收到位置请求: ${requesterUid} -> ${targetUid}, 类型: ${type}`,
     );
 
     try {
@@ -35,41 +140,34 @@ export const onLocationRequest = onDocumentCreated(
         .get();
 
       if (!userDoc.exists) {
-        console.error(`目标用户不存在: ${targetUid}`);
-        return;
+        throw new Error(`目标用户不存在: ${targetUid}`);
       }
 
       const userData = userDoc.data();
       const fcmTokens: string[] = userData?.fcmTokens || [];
 
       if (fcmTokens.length === 0) {
-        console.warn(`目标用户没有 FCM Token: ${targetUid}`);
-        // 更新请求状态为失败
-        await snapshot.ref.update({
-          status: "failed",
-          error: "No FCM tokens available",
-        });
-        return;
+        throw new Error(`目标用户没有注册的设备: ${targetUid}`);
       }
 
-      // 2. 构建 FCM Data Message
+      console.log(`🎯 找到 ${fcmTokens.length} 个设备，准备发送 FCM 消息`);
+
+      // 2. 根据请求类型构建 FCM 消息
+      const messageData = buildFCMMessage(type, requesterUid, targetUid);
+
+      // 3. 发送 FCM Data Message
       const message = {
         tokens: fcmTokens,
-        data: {
-          type: "LOCATION_REQUEST",
-          requesterUid: requesterUid,
-          timestamp: timestamp.toString(),
-        },
+        data: messageData,
         android: {
           priority: "high" as const,
         },
       };
 
-      // 3. 发送 FCM
       const response = await admin.messaging().sendEachForMulticast(message);
 
       console.log(
-        `FCM 发送: ${response.successCount}/${fcmTokens.length}`,
+        `✅ FCM 发送完成: 成功 ${response.successCount}, 失败 ${response.failureCount}`,
       );
 
       // 4. 更新请求状态
@@ -80,32 +178,12 @@ export const onLocationRequest = onDocumentCreated(
         sentAt: admin.firestore.FieldValue.serverTimestamp(),
       });
 
-      // 5. 清理失败的 Token
+      // 5. 清理无效的 FCM Token
       if (response.failureCount > 0) {
-        const tokensToRemove: string[] = [];
-        response.responses.forEach((resp, idx) => {
-          if (!resp.success) {
-            tokensToRemove.push(fcmTokens[idx]);
-            const errorMsg = resp.error?.message || "Unknown";
-            console.warn(
-              `Token 失败: ${fcmTokens[idx]}, 错误: ${errorMsg}`,
-            );
-          }
-        });
-
-        // 从用户文档中移除无效 Token
-        if (tokensToRemove.length > 0) {
-          await admin.firestore()
-            .collection("users")
-            .doc(targetUid)
-            .update({
-              fcmTokens: admin.firestore.FieldValue
-                .arrayRemove(...tokensToRemove),
-            });
-        }
+        await cleanupInvalidTokens(targetUid, fcmTokens, response.responses);
       }
     } catch (error) {
-      console.error("发送 FCM 失败:", error);
+      console.error("❌ 处理位置请求失败:", error);
       await snapshot.ref.update({
         status: "failed",
         error: String(error),
