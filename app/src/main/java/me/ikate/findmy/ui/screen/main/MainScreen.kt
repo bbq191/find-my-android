@@ -61,8 +61,7 @@ fun MainScreen(
     // 收集 ViewModel 状态
     val googleMap by viewModel.googleMap.collectAsState()
     val isLocationCentered by viewModel.isLocationCentered.collectAsState()
-    /* val devices by viewModel.devices.collectAsState() // 移除设备列表收集 */
-    val devices = emptyList<me.ikate.findmy.data.model.Device>() // 传递空列表
+    val devices by viewModel.devices.collectAsState() // 收集设备列表
 
     // 收集联系人 ViewModel 状态
     val contacts by contactViewModel.contacts.collectAsState()

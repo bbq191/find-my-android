@@ -135,6 +135,11 @@ class LocationReportService(private val context: Context) {
             val bearing = if (location.hasBearing()) location.bearing else 0f
             val currentUserId = auth.currentUser?.uid ?: ""
 
+            android.util.Log.d(
+                "LocationReportService",
+                "🔐 当前用户UID: $currentUserId, 设备ID: ${getDeviceId()}"
+            )
+
             // 创建设备对象（使用 WGS-84 坐标，DeviceRepository 会自动转换为 GCJ-02）
             val device = Device(
                 id = getDeviceId(),
@@ -154,7 +159,7 @@ class LocationReportService(private val context: Context) {
 
             android.util.Log.d(
                 "LocationReportService",
-                "位置上报成功: ${device.name} at (${location.latitude}, ${location.longitude})"
+                "✅ 位置上报成功: ${device.name} (ownerId=$currentUserId) at (${location.latitude}, ${location.longitude})"
             )
             Result.success(device)
         } catch (e: Exception) {

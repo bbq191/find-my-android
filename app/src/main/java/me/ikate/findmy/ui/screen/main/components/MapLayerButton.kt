@@ -3,7 +3,6 @@ package me.ikate.findmy.ui.screen.main.components
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -17,14 +16,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.DirectionsBike
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.DirectionsBike
 import androidx.compose.material.icons.filled.Layers
-import androidx.compose.material.icons.filled.Traffic
-import androidx.compose.material.icons.filled.ViewInAr
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.FloatingActionButtonDefaults
@@ -50,7 +46,6 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -488,7 +483,7 @@ fun BicyclingIcon(isSelected: Boolean) {
     val primaryColor = if (isSelected) Color(0xFF1A73E8) else Color(0xFF5F6368)
     // 使用内置图标即可，因为比较标准，或者绘制一个简化的自行车
     Icon(
-        imageVector = Icons.Default.DirectionsBike,
+        imageVector = Icons.AutoMirrored.Filled.DirectionsBike,
         contentDescription = null,
         tint = primaryColor,
         modifier = Modifier.size(32.dp)
@@ -686,11 +681,11 @@ fun TerrainMapPreview() {
         // 蓝色河流
         val path = Path().apply {
             moveTo(0f, h * 0.2f)
-            quadraticBezierTo(
+            quadraticTo(
                 w * 0.3f, h * 0.25f,
                 w * 0.5f, h * 0.4f
             )
-            quadraticBezierTo(
+            quadraticTo(
                 w * 0.7f, h * 0.5f,
                 w, h * 0.55f
             )

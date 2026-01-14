@@ -56,9 +56,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // 设备列表（从 Firebase 实时获取）
     private val _devices = MutableStateFlow<List<Device>>(emptyList())
+    val devices: StateFlow<List<Device>> = _devices.asStateFlow()
 
     // 选中的设备（用于显示详情）
     private val _selectedDevice = MutableStateFlow<Device?>(null)
+    val selectedDevice: StateFlow<Device?> = _selectedDevice.asStateFlow()
 
     // 底部面板状态
     private val _sheetValue = MutableStateFlow(SheetValue.Collapsed)
@@ -123,6 +125,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun observeDevices() {
         viewModelScope.launch {
             deviceRepository.observeDevices().collect { deviceList ->
+                android.util.Log.d("MainViewModel", "📱 收到设备列表更新，数量: ${deviceList.size}")
+                deviceList.forEach { device ->
+                    android.util.Log.d("MainViewModel", "  - ${device.name} (id=${device.id})")
+                }
                 _devices.value = deviceList
             }
         }

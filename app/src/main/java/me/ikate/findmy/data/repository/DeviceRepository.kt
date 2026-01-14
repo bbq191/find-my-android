@@ -45,6 +45,8 @@ class DeviceRepository {
             return@callbackFlow
         }
 
+        android.util.Log.d("DeviceRepository", "🔍 开始监听设备，当前用户UID: $currentUserId")
+
         // 由于 Firestore 不支持 OR 查询,需要两个监听器
         var myDevices: List<Device> = emptyList()
         var sharedDevices: List<Device> = emptyList()
@@ -61,8 +63,14 @@ class DeviceRepository {
                 myDevices =
                     snapshot?.documents?.mapNotNull { doc -> parseDevice(doc) } ?: emptyList()
 
+                android.util.Log.d("DeviceRepository", "📱 我的设备数量: ${myDevices.size}")
+                myDevices.forEach { device ->
+                    android.util.Log.d("DeviceRepository", "  - ${device.name} (id=${device.id}, ownerId=${device.ownerId})")
+                }
+
                 // 合并两个列表并发送
                 val allDevices = (myDevices + sharedDevices).distinctBy { it.id }
+                android.util.Log.d("DeviceRepository", "📊 合并后总设备数: ${allDevices.size}")
                 trySend(allDevices)
             }
 
@@ -78,8 +86,14 @@ class DeviceRepository {
                 sharedDevices =
                     snapshot?.documents?.mapNotNull { doc -> parseDevice(doc) } ?: emptyList()
 
+                android.util.Log.d("DeviceRepository", "🤝 共享给我的设备数量: ${sharedDevices.size}")
+                sharedDevices.forEach { device ->
+                    android.util.Log.d("DeviceRepository", "  - ${device.name} (id=${device.id}, ownerId=${device.ownerId}, sharedWith=${device.sharedWith})")
+                }
+
                 // 合并两个列表并发送
                 val allDevices = (myDevices + sharedDevices).distinctBy { it.id }
+                android.util.Log.d("DeviceRepository", "📊 合并后总设备数: ${allDevices.size}")
                 trySend(allDevices)
             }
 
@@ -157,13 +171,28 @@ class DeviceRepository {
         )
 
         // 🔧 使用 merge 模式，保留文档中的其他字段（如 sharedWith）
+        android.util.Log.d(
+            "DeviceRepository",
+            "💾 准备保存设备: ${device.id}, location=${device.location}, battery=${device.battery}"
+        )
+
         devicesCollection.document(device.id)
             .set(deviceData, com.google.firebase.firestore.SetOptions.merge())
             .addOnSuccessListener {
-                android.util.Log.d("DeviceRepository", "设备保存成功: ${device.id}")
+                android.util.Log.d("DeviceRepository", "✅ 设备保存成功: ${device.id}")
+
+                // 验证 sharedWith 字段是否被保留
+                devicesCollection.document(device.id).get()
+                    .addOnSuccessListener { doc ->
+                        val sharedWith = doc.get("sharedWith") as? List<*>
+                        android.util.Log.d(
+                            "DeviceRepository",
+                            "  📋 验证 sharedWith 字段: $sharedWith"
+                        )
+                    }
             }
             .addOnFailureListener { e ->
-                android.util.Log.e("DeviceRepository", "设备保存失败: ${device.id}", e)
+                android.util.Log.e("DeviceRepository", "❌ 设备保存失败: ${device.id}", e)
             }
     }
 

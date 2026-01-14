@@ -13,3 +13,9 @@
 .externalNativeBuild
 .cxx
 local.properties
+.python-version
+node_modules/
+lib/**/*.js
+lib/**/*.js.map
+typings/
+*.local

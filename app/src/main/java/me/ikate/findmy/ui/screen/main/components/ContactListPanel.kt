@@ -30,6 +30,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.BatteryFull
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Directions
 import androidx.compose.material.icons.filled.Pause
@@ -38,6 +39,7 @@ import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Radar
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Tablet
 import androidx.compose.material.icons.filled.Watch
@@ -55,15 +57,14 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.ClipboardManager
-import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -72,6 +73,7 @@ import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import coil3.request.crossfade
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import me.ikate.findmy.data.model.Contact
 import me.ikate.findmy.data.model.Device
@@ -81,9 +83,8 @@ import me.ikate.findmy.data.model.ShareDuration
 import me.ikate.findmy.data.model.ShareStatus
 import me.ikate.findmy.data.model.User
 import me.ikate.findmy.util.AddressFormatter
+import me.ikate.findmy.util.AppIconHelper
 import me.ikate.findmy.util.ShareHelper
-
-// ... existing imports ...
 
 @Composable
 fun ContactListPanel(
@@ -110,6 +111,7 @@ fun ContactListPanel(
     modifier: Modifier = Modifier
 ) {
     var showUidDialog by remember { mutableStateOf(false) }
+    var showIconDialog by remember { mutableStateOf(false) }
     var contactToResume by remember { mutableStateOf<Contact?>(null) }
     var contactToRemove by remember { mutableStateOf<Contact?>(null) } // 移除确认弹窗
     // 记录当前展开的联系人 ID
@@ -119,6 +121,18 @@ fun ContactListPanel(
         MyUidDialog(
             uid = currentUser.uid,
             onDismiss = { showUidDialog = false }
+        )
+    }
+
+    if (showIconDialog) {
+        val context = LocalContext.current
+        AppIconSelectionDialog(
+            currentIcon = AppIconHelper.getCurrentIcon(context),
+            onDismiss = { showIconDialog = false },
+            onIconSelected = {
+                AppIconHelper.setIcon(context, it)
+                showIconDialog = false
+            }
         )
     }
 
@@ -171,20 +185,39 @@ fun ContactListPanel(
                     )
                 }
 
-                FloatingActionButton(
-                    onClick = onAddContactClick,
-                    modifier = Modifier.size(56.dp),
-                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                    elevation = FloatingActionButtonDefaults.elevation(
-                        defaultElevation = 3.dp
-                    )
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Icon(
-                        Icons.Default.Add,
-                        contentDescription = "添加联系人",
-                        modifier = Modifier.size(24.dp)
-                    )
+                    // 轻量化的设置按钮
+                    androidx.compose.material3.IconButton(
+                        onClick = { showIconDialog = true },
+                        modifier = Modifier.size(48.dp)
+                    ) {
+                        Icon(
+                            Icons.Default.Settings,
+                            contentDescription = "设置图标",
+                            modifier = Modifier.size(24.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    // 主要的添加联系人按钮
+                    FloatingActionButton(
+                        onClick = onAddContactClick,
+                        modifier = Modifier.size(56.dp),
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                        elevation = FloatingActionButtonDefaults.elevation(
+                            defaultElevation = 3.dp
+                        )
+                    ) {
+                        Icon(
+                            Icons.Default.Add,
+                            contentDescription = "添加联系人",
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
                 }
             }
         }
@@ -261,7 +294,6 @@ fun ContactListPanel(
                     }
                 }
             } else {
-// ... existing empty state ...
                 // 空状态
                 item {
                     Box(
@@ -431,8 +463,9 @@ private fun MyUidDialog(
     uid: String,
     onDismiss: () -> Unit
 ) {
-    val clipboardManager: ClipboardManager = LocalClipboardManager.current
+    val clipboard = LocalClipboard.current
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var copied by remember { mutableStateOf(false) }
 
     androidx.compose.material3.AlertDialog(
@@ -467,8 +500,14 @@ private fun MyUidDialog(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clickable {
-                            clipboardManager.setText(AnnotatedString(uid))
-                            copied = true
+                            scope.launch {
+                                clipboard.setClipEntry(
+                                    androidx.compose.ui.platform.ClipEntry(
+                                        android.content.ClipData.newPlainText("uid", uid)
+                                    )
+                                )
+                                copied = true
+                            }
                         }
                 ) {
                     Column(
@@ -722,7 +761,6 @@ private fun ContactListItem(
     onStopContinuousTracking: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
-    // ... existing time and address logic ...
     // 自动刷新时间显示（每分钟更新一次）
     val context = LocalContext.current
     var addressText by remember { mutableStateOf<String?>(null) } // 初始为null，加载中
@@ -1200,5 +1238,186 @@ private fun formatUpdateTime(timestamp: Long): String {
             val sdf = java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.getDefault())
             sdf.format(java.util.Date(timestamp))
         }
+    }
+}
+
+/**
+ * 应用图标选择对话框
+ */
+@Composable
+private fun AppIconSelectionDialog(
+    currentIcon: AppIconHelper.AppIcon,
+    onDismiss: () -> Unit,
+    onIconSelected: (AppIconHelper.AppIcon) -> Unit
+) {
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = {
+            Icon(
+                imageVector = Icons.Default.Settings,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(32.dp)
+            )
+        },
+        title = {
+            Text(
+                "设置应用图标",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold
+            )
+        },
+        text = {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(20.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    "选择您喜欢的应用图标样式",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    // Boy Option
+                    IconOption(
+                        iconRes = me.ikate.findmy.R.drawable.avatar_boy,
+                        label = "男孩",
+                        selected = currentIcon == AppIconHelper.AppIcon.BOY,
+                        onClick = { onIconSelected(AppIconHelper.AppIcon.BOY) }
+                    )
+
+                    // Girl Option
+                    IconOption(
+                        iconRes = me.ikate.findmy.R.drawable.avatar_girl,
+                        label = "女孩",
+                        selected = currentIcon == AppIconHelper.AppIcon.GIRL,
+                        onClick = { onIconSelected(AppIconHelper.AppIcon.GIRL) }
+                    )
+                }
+
+                // 提示信息
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Text(
+                            text = "图标更改后，请重启应用以生效",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            androidx.compose.material3.FilledTonalButton(
+                onClick = onDismiss,
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Text("完成", fontWeight = FontWeight.SemiBold)
+            }
+        },
+        shape = RoundedCornerShape(24.dp)
+    )
+}
+
+@Composable
+private fun IconOption(
+    iconRes: Int,
+    label: String,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick)
+            .background(
+                if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+                RoundedCornerShape(16.dp)
+            )
+            .padding(16.dp)
+    ) {
+        // 使用圆形裁剪，模拟Home界面的Adaptive Icon效果
+        Box(
+            modifier = Modifier.size(80.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            // 外圈选中指示器
+            if (selected) {
+                Surface(
+                    modifier = Modifier.size(88.dp),
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
+                ) {}
+            }
+
+            // 图标容器 - 圆形裁剪
+            Surface(
+                modifier = Modifier.size(80.dp),
+                shape = CircleShape,
+                shadowElevation = if (selected) 6.dp else 3.dp,
+                tonalElevation = if (selected) 3.dp else 1.dp
+            ) {
+                AsyncImage(
+                    model = ImageRequest.Builder(LocalContext.current)
+                        .data(iconRes)
+                        .crossfade(true)
+                        .build(),
+                    contentDescription = label,
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clip(CircleShape)
+                )
+            }
+
+            // 选中标记 - 右上角
+            if (selected) {
+                Surface(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .size(24.dp),
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.primary,
+                    shadowElevation = 2.dp
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Default.Check,
+                            contentDescription = "已选择",
+                            tint = MaterialTheme.colorScheme.onPrimary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+        )
     }
 }

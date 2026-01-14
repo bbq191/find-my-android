@@ -3,11 +3,12 @@ package me.ikate.findmy.worker
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
+import android.content.pm.ServiceInfo
+import android.os.Build
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.work.CoroutineWorker
 import androidx.work.ForegroundInfo
-import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import com.google.android.gms.location.Priority
 import kotlinx.coroutines.delay
@@ -134,6 +135,7 @@ class ContinuousLocationWorker(
 
     /**
      * 创建前台通知信息（提升Worker优先级）
+     * Android 14+ 需要指定前台服务类型
      */
     private fun createForegroundInfo(): ForegroundInfo {
         val notificationManager =
@@ -157,7 +159,16 @@ class ContinuousLocationWorker(
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
 
-        return ForegroundInfo(NOTIFICATION_ID, notification)
+        // Android 14+ (API 34+) 需要指定前台服务类型
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            ForegroundInfo(
+                NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+            )
+        } else {
+            ForegroundInfo(NOTIFICATION_ID, notification)
+        }
     }
 
     /**

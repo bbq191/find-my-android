@@ -620,10 +620,20 @@ class ContactRepository {
                 }
 
                 // 设备位置更新，触发重新合并
-                Log.d(TAG, "检测到 ${snapshot?.size() ?: 0} 个共享设备更新，触发联系人列表刷新")
+                Log.d(TAG, "🔄 检测到 ${snapshot?.size() ?: 0} 个共享设备更新，触发联系人列表刷新")
+                snapshot?.documents?.forEach { doc ->
+                    val ownerId = doc.getString("ownerId")
+                    val location = doc.getGeoPoint("location")
+                    val updateTime = doc.getTimestamp("lastUpdateTime")
+                    Log.d(TAG, "  📱 设备: ${doc.id}, 所有者: $ownerId, 位置: $location, 更新时间: $updateTime")
+                }
 
                 kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
                     val contacts = mergeContactLists(iShareList, theyShareList)
+                    Log.d(TAG, "🔄 合并后联系人列表: ${contacts.size} 个联系人")
+                    contacts.forEach { contact ->
+                        Log.d(TAG, "  👤 ${contact.name}: location=${contact.location}, lastUpdate=${contact.lastUpdateTime}")
+                    }
                     trySend(contacts)
                 }
             }
@@ -688,14 +698,25 @@ class ContactRepository {
 
             if (theirShare != null) {
                 if (theirShare.status == ShareStatus.ACCEPTED && !theirShare.isPaused) {
+                    Log.d(TAG, "🔍 查询用户 $otherUid 的设备位置...")
                     val deviceSnapshot = devicesCollection
                         .whereEqualTo("ownerId", otherUid)
-                        .limit(1)
+                        .orderBy("lastUpdateTime", com.google.firebase.firestore.Query.Direction.DESCENDING)  // 按更新时间降序排序
+                        .limit(1)  // 获取最近更新的设备
                         .get()
                         .await()
 
+                    if (deviceSnapshot.isEmpty) {
+                        Log.w(TAG, "  ⚠️ 未找到用户 $otherUid 的设备")
+                    } else {
+                        Log.d(TAG, "  ✅ 找到 ${deviceSnapshot.size()} 个设备")
+                    }
+
                     deviceSnapshot.documents.firstOrNull()?.let { deviceDoc ->
                         val geoPoint = deviceDoc.getGeoPoint("location")
+                        val sharedWith = deviceDoc.get("sharedWith") as? List<*>
+                        Log.d(TAG, "  📍 设备 ${deviceDoc.id}: location=$geoPoint, sharedWith=$sharedWith")
+
                         location = geoPoint?.let {
                             CoordinateConverter.wgs84ToGcj02(it.latitude, it.longitude)
                         }

@@ -24,7 +24,8 @@ data class Contact(
     val isLocationAvailable: Boolean = false,  // 位置是否可用
     val isPaused: Boolean = false, // 是否已暂停共享
     val deviceName: String? = null, // 设备名称/型号
-    val battery: Int? = null // 设备电量
+    val battery: Int? = null, // 设备电量
+//    val speed: Float? = null // 移动速度 (m/s)
 )
 
 /**

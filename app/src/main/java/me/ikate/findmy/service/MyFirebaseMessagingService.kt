@@ -18,8 +18,8 @@ import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import me.ikate.findmy.MainActivity
-import me.ikate.findmy.worker.LocationReportWorker
 import me.ikate.findmy.worker.ContinuousLocationWorker
+import me.ikate.findmy.worker.LocationReportWorker
 
 class MyFirebaseMessagingService : FirebaseMessagingService() {
 
@@ -40,7 +40,10 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
      * 当应用在前台收到消息，或者后台收到数据消息时调用
      */
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
-        Log.d(TAG, "From: ${remoteMessage.from}")
+        Log.d(TAG, "📬 收到 FCM 消息！From: ${remoteMessage.from}")
+
+        // 🔍 立即发送通知，确认消息到达
+        sendDebugNotification("📬 FCM 消息到达", "From: ${remoteMessage.from}")
 
         // 检查消息是否包含数据有效负载
         if (remoteMessage.data.isNotEmpty()) {

@@ -2,6 +2,9 @@ package me.ikate.findmy.core
 
 import android.app.Application
 import com.google.firebase.FirebaseApp
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FieldValue
+import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.messaging.FirebaseMessaging
 
 /**
@@ -12,6 +15,8 @@ import com.google.firebase.messaging.FirebaseMessaging
  * 并放置在 app/ 目录下
  */
 object FirebaseManager {
+
+    private const val TAG = "FirebaseManager"
 
     /**
      * 初始化 Firebase
@@ -27,11 +32,49 @@ object FirebaseManager {
         FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
             if (task.isSuccessful) {
                 val token = task.result
-                // TODO: 将 Token 上传到服务器
-                android.util.Log.d("FirebaseManager", "FCM Token: $token")
+                android.util.Log.d(TAG, "FCM Token 获取成功: $token")
+
+                // 保存 Token 到 Firestore
+                saveTokenToFirestore(token)
             } else {
-                android.util.Log.e("FirebaseManager", "获取 FCM Token 失败", task.exception)
+                android.util.Log.e(TAG, "获取 FCM Token 失败", task.exception)
             }
+        }
+    }
+
+    /**
+     * 保存 FCM Token 到 Firestore
+     * 支持多设备（使用 arrayUnion）
+     */
+    private fun saveTokenToFirestore(token: String) {
+        val currentUser = FirebaseAuth.getInstance().currentUser
+        if (currentUser != null && !currentUser.isAnonymous) {
+            val db = FirebaseFirestore.getInstance()
+            db.collection("users").document(currentUser.uid)
+                .update("fcmTokens", FieldValue.arrayUnion(token))
+                .addOnSuccessListener {
+                    android.util.Log.d(TAG, "✅ FCM Token 已保存到 Firestore")
+                }
+                .addOnFailureListener { e ->
+                    android.util.Log.w(TAG, "⚠️ 保存 FCM Token 失败，尝试创建文档", e)
+                    // 如果 users 文档不存在，创建它
+                    val userData = hashMapOf(
+                        "uid" to currentUser.uid,
+                        "email" to (currentUser.email ?: ""),
+                        "fcmTokens" to listOf(token),
+                        "createdAt" to com.google.firebase.Timestamp.now()
+                    )
+                    db.collection("users").document(currentUser.uid)
+                        .set(userData)
+                        .addOnSuccessListener {
+                            android.util.Log.d(TAG, "✅ 用户文档已创建，FCM Token 已保存")
+                        }
+                        .addOnFailureListener { e2 ->
+                            android.util.Log.e(TAG, "❌ 创建用户文档失败", e2)
+                        }
+                }
+        } else {
+            android.util.Log.w(TAG, "⚠️ 用户未登录，跳过保存 FCM Token")
         }
     }
 

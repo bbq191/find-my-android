@@ -27,7 +27,6 @@ import me.ikate.findmy.data.repository.DeviceRepository
 import me.ikate.findmy.util.AddressFormatter
 import me.ikate.findmy.util.NotificationHelper
 import me.ikate.findmy.util.PermissionGuideHelper
-import java.util.Locale
 
 /**
  * 联系人功能 ViewModel
