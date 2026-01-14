@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#E6000000"
+    android:gravity="center"
+    android:orientation="vertical"
+    android:padding="32dp">
+
+    <!-- 锁定图标 -->
+    <ImageView
+        android:id="@+id/ivLock"
+        android:layout_width="80dp"
+        android:layout_height="80dp"
+        android:src="@android:drawable/ic_lock_lock"
+        android:layout_marginBottom="24dp"
+        android:contentDescription="@string/app_name" />
+
+    <!-- 标题 -->
+    <TextView
+        android:id="@+id/tvTitle"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="此设备已丢失"
+        android:textColor="#FFFFFF"
+        android:textSize="28sp"
+        android:textStyle="bold"
+        android:layout_marginBottom="16dp" />
+
+    <!-- 消息 -->
+    <TextView
+        android:id="@+id/tvMessage"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="请联系机主归还此设备"
+        android:textColor="#CCCCCC"
+        android:textSize="16sp"
+        android:textAlignment="center"
+        android:gravity="center"
+        android:layout_marginHorizontal="24dp"
+        android:layout_marginBottom="32dp" />
+
+    <!-- 电话号码 -->
+    <TextView
+        android:id="@+id/tvPhone"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="联系电话: "
+        android:textColor="#4CAF50"
+        android:textSize="20sp"
+        android:textStyle="bold"
+        android:layout_marginBottom="24dp"
+        android:visibility="gone" />
+
+    <!-- 拨打电话按钮 -->
+    <Button
+        android:id="@+id/btnCall"
+        android:layout_width="wrap_content"
+        android:layout_height="56dp"
+        android:text="拨打电话"
+        android:textSize="16sp"
+        android:paddingHorizontal="32dp"
+        android:layout_marginBottom="48dp"
+        android:visibility="gone" />
+
+    <!-- 占位空间 -->
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1" />
+
+    <!-- 关闭按钮（仅供机主） -->
+    <Button
+        android:id="@+id/btnDismiss"
+        android:layout_width="wrap_content"
+        android:layout_height="48dp"
+        android:text="关闭丢失模式"
+        android:textSize="14sp"
+        android:paddingHorizontal="24dp"
+        android:layout_marginBottom="48dp" />
+
+</LinearLayout>

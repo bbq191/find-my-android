@@ -60,6 +60,18 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
                 "LOCATION_TRACK_STOP" -> {
                     handleContinuousTrackingStop()
                 }
+                "PLAY_SOUND" -> {
+                    handlePlaySound(remoteMessage.data)
+                }
+                "STOP_SOUND" -> {
+                    handleStopSound()
+                }
+                "ENABLE_LOST_MODE" -> {
+                    handleEnableLostMode(remoteMessage.data)
+                }
+                "DISABLE_LOST_MODE" -> {
+                    handleDisableLostMode()
+                }
                 else -> {
                     // 其他类型的数据消息，例如自动刷新联系人列表
                     Log.d(TAG, "Received unknown data message type")
@@ -189,6 +201,59 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
             .cancelUniqueWork("continuous_location_tracking")
 
         Log.d(TAG, "连续位置追踪任务已取消")
+    }
+
+    /**
+     * 处理播放声音请求
+     * 启动 SoundPlaybackService 播放查找提示音
+     */
+    private fun handlePlaySound(data: Map<String, String>) {
+        val requesterUid = data["requesterUid"]
+        Log.d(TAG, "🔔 收到播放声音请求，来自: $requesterUid")
+        sendDebugNotification("开始播放提示音", "来自: $requesterUid")
+
+        SoundPlaybackService.startPlaying(applicationContext, requesterUid)
+    }
+
+    /**
+     * 处理停止播放声音请求
+     */
+    private fun handleStopSound() {
+        Log.d(TAG, "🔕 收到停止播放声音请求")
+        sendDebugNotification("停止播放提示音", "已停止")
+
+        SoundPlaybackService.stopPlaying(applicationContext)
+    }
+
+    /**
+     * 处理启用丢失模式请求
+     */
+    private fun handleEnableLostMode(data: Map<String, String>) {
+        val requesterUid = data["requesterUid"]
+        val message = data["message"] ?: "此设备已丢失"
+        val phoneNumber = data["phoneNumber"] ?: ""
+        val playSound = data["playSound"]?.toBoolean() ?: true
+
+        Log.d(TAG, "🔒 收到启用丢失模式请求，来自: $requesterUid")
+        sendDebugNotification("启用丢失模式", "消息: $message")
+
+        LostModeService.enable(
+            context = applicationContext,
+            message = message,
+            phoneNumber = phoneNumber,
+            playSound = playSound,
+            requesterUid = requesterUid
+        )
+    }
+
+    /**
+     * 处理关闭丢失模式请求
+     */
+    private fun handleDisableLostMode() {
+        Log.d(TAG, "🔓 收到关闭丢失模式请求")
+        sendDebugNotification("关闭丢失模式", "已关闭")
+
+        LostModeService.disable(applicationContext)
     }
 
     /**

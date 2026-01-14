@@ -279,7 +279,6 @@ fun MapViewWrapper(
                     )
 
                     // 绘制当前位置的蓝色小圆点（使用动画位置）
-                    android.util.Log.d("MapViewWrapper", "🔵 绘制当前设备圆点: ${animatedPosition.value}")
                     Circle(
                         center = animatedPosition.value,
                         radius = 15.0,

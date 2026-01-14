@@ -5,17 +5,27 @@ import {onSchedule} from "firebase-functions/v2/scheduler";
 admin.initializeApp();
 
 /**
+ * 请求数据接口
+ */
+interface LocationRequestData {
+  requesterUid: string;
+  targetUid: string;
+  type: string;
+  message?: string;
+  phoneNumber?: string;
+  playSound?: boolean;
+}
+
+/**
  * 根据请求类型构建 FCM Data Message
- * @param {string} type - 请求类型: single, continuous, stop_continuous
- * @param {string} requesterUid - 请求者 UID
- * @param {string} targetUid - 目标用户 UID
+ * @param {LocationRequestData} requestData - 请求数据
  * @return {Record<string, string>} FCM Data Message
  */
 function buildFCMMessage(
-  type: string,
-  requesterUid: string,
-  targetUid: string,
+  requestData: LocationRequestData,
 ): Record<string, string> {
+  const {type, requesterUid, targetUid} = requestData;
+
   switch (type) {
   case "single":
     // 单次位置请求
@@ -31,13 +41,48 @@ function buildFCMMessage(
       type: "LOCATION_TRACK_START",
       requesterUid: requesterUid,
       targetUid: targetUid,
-      duration: "60", // 60秒
+      duration: "60",
     };
 
   case "stop_continuous":
     // 停止实时追踪
     return {
       type: "LOCATION_TRACK_STOP",
+      requesterUid: requesterUid,
+      targetUid: targetUid,
+    };
+
+  case "play_sound":
+    // 播放查找提示音
+    return {
+      type: "PLAY_SOUND",
+      requesterUid: requesterUid,
+      targetUid: targetUid,
+    };
+
+  case "stop_sound":
+    // 停止播放提示音
+    return {
+      type: "STOP_SOUND",
+      requesterUid: requesterUid,
+      targetUid: targetUid,
+    };
+
+  case "enable_lost_mode":
+    // 启用丢失模式
+    return {
+      type: "ENABLE_LOST_MODE",
+      requesterUid: requesterUid,
+      targetUid: targetUid,
+      message: requestData.message || "此设备已丢失",
+      phoneNumber: requestData.phoneNumber || "",
+      playSound: String(requestData.playSound ?? true),
+    };
+
+  case "disable_lost_mode":
+    // 关闭丢失模式
+    return {
+      type: "DISABLE_LOST_MODE",
       requesterUid: requesterUid,
       targetUid: targetUid,
     };
@@ -98,10 +143,20 @@ async function cleanupInvalidTokens(
 
 /**
  * 监听 locationRequests 集合的新文档创建事件
- * 支持三种请求类型：
+ * 支持以下请求类型：
+ *
+ * 位置追踪：
  * - single: 单次位置更新
  * - continuous: 开始短时实时追踪（60秒）
  * - stop_continuous: 停止实时追踪
+ *
+ * 声音查找：
+ * - play_sound: 播放查找提示音
+ * - stop_sound: 停止播放提示音
+ *
+ * 丢失模式：
+ * - enable_lost_mode: 启用丢失模式（含 message, phoneNumber, playSound）
+ * - disable_lost_mode: 关闭丢失模式
  */
 export const onLocationRequest = onDocumentCreated(
   {
@@ -153,7 +208,7 @@ export const onLocationRequest = onDocumentCreated(
       console.log(`🎯 找到 ${fcmTokens.length} 个设备，准备发送 FCM 消息`);
 
       // 2. 根据请求类型构建 FCM 消息
-      const messageData = buildFCMMessage(type, requesterUid, targetUid);
+      const messageData = buildFCMMessage(requestData as LocationRequestData);
 
       // 3. 发送 FCM Data Message
       const message = {

@@ -26,7 +26,14 @@ import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.rememberMultiplePermissionsState
 import me.ikate.findmy.data.model.Contact
 import me.ikate.findmy.ui.components.PermissionGuideDialog
+import me.ikate.findmy.ui.dialog.GeofenceConfig
+import me.ikate.findmy.ui.dialog.GeofenceDialog
+import me.ikate.findmy.ui.dialog.LostModeConfig
+import me.ikate.findmy.ui.dialog.LostModeDialog
+import me.ikate.findmy.ui.dialog.NavigationDialog
+import me.ikate.findmy.service.GeofenceManager
 import me.ikate.findmy.ui.screen.contact.ContactViewModel
+import me.ikate.findmy.util.DistanceCalculator
 import me.ikate.findmy.ui.screen.main.components.ContactListPanel
 import me.ikate.findmy.ui.screen.main.components.CustomBottomSheet
 import me.ikate.findmy.ui.screen.main.components.LocationButton
@@ -86,6 +93,20 @@ fun MainScreen(
 
     // 记录正在绑定通讯录的联系人 (null 表示绑定"我")
     var contactToBind by remember { mutableStateOf<Contact?>(null) }
+
+    // 导航对话框状态
+    var contactToNavigate by remember { mutableStateOf<Contact?>(null) }
+
+    // 丢失模式对话框状态
+    var contactForLostMode by remember { mutableStateOf<Contact?>(null) }
+
+    // 地理围栏对话框状态
+    var contactForGeofence by remember { mutableStateOf<Contact?>(null) }
+    val geofenceManager = remember { GeofenceManager(context) }
+    val activeGeofences by geofenceManager.activeGeofences.collectAsState()
+    val geofenceContactIds = remember(activeGeofences) {
+        activeGeofences.map { it.contactId }.toSet()
+    }
 
     // 联系人选择器启动器
     val contactPickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
@@ -180,19 +201,9 @@ fun MainScreen(
                     contactViewModel.showAddDialog()
                 },
                 onNavigate = { contact ->
-                    // 启动 Google Maps 导航
-                    contact.location?.let { loc ->
-                        val uri = "google.navigation:q=${loc.latitude},${loc.longitude}".toUri()
-                        val mapIntent = Intent(Intent.ACTION_VIEW, uri)
-                        mapIntent.setPackage("com.google.android.apps.maps")
-                        if (mapIntent.resolveActivity(context.packageManager) != null) {
-                            context.startActivity(mapIntent)
-                        } else {
-                            val geoUri =
-                                "geo:${loc.latitude},${loc.longitude}?q=${loc.latitude},${loc.longitude}(${contact.name})".toUri()
-                            val geoIntent = Intent(Intent.ACTION_VIEW, geoUri)
-                            context.startActivity(geoIntent)
-                        }
+                    // 显示导航选择对话框
+                    if (contact.location != null) {
+                        contactToNavigate = contact
                     }
                 },
                 onBindContact = { contact ->
@@ -222,7 +233,17 @@ fun MainScreen(
                 },
                 onStopContinuousTracking = { targetUid ->
                     contactViewModel.stopContinuousTracking(targetUid)
-                }
+                },
+                onPlaySound = { targetUid ->
+                    contactViewModel.requestPlaySound(targetUid)
+                },
+                onLostModeClick = { contact ->
+                    contactForLostMode = contact
+                },
+                onGeofenceClick = { contact ->
+                    contactForGeofence = contact
+                },
+                geofenceContactIds = geofenceContactIds
             )
         },
         onSheetValueChange = { value ->
@@ -312,6 +333,91 @@ fun MainScreen(
             },
             onConfirm = {
                 contactViewModel.onPermissionGranted()
+            }
+        )
+    }
+
+    // 导航对话框
+    contactToNavigate?.let { contact ->
+        contact.location?.let { destination ->
+            val distanceText = myDevice?.location?.let { myLoc ->
+                DistanceCalculator.calculateAndFormatDistance(myLoc, destination)
+            }
+
+            NavigationDialog(
+                contactName = contact.name,
+                destination = destination,
+                currentLocation = myDevice?.location,
+                distanceText = distanceText,
+                onDismiss = { contactToNavigate = null }
+            )
+        }
+    }
+
+    // 丢失模式对话框
+    contactForLostMode?.let { contact ->
+        LostModeDialog(
+            contactName = contact.name,
+            currentConfig = LostModeConfig(), // TODO: 从联系人状态读取
+            onDismiss = { contactForLostMode = null },
+            onConfirm = { config ->
+                contact.targetUserId?.let { targetUid ->
+                    if (config.enabled) {
+                        contactViewModel.enableLostMode(
+                            targetUid = targetUid,
+                            message = config.message,
+                            phoneNumber = config.phoneNumber,
+                            playSound = config.playSound
+                        )
+                    } else {
+                        contactViewModel.disableLostMode(targetUid)
+                    }
+                }
+                contactForLostMode = null
+            }
+        )
+    }
+
+    // 地理围栏对话框
+    contactForGeofence?.let { contact ->
+        val existingGeofence = geofenceManager.getGeofenceForContact(contact.id)
+        val currentConfig = if (existingGeofence != null) {
+            GeofenceConfig(
+                enabled = true,
+                locationName = existingGeofence.locationName,
+                center = contact.location,
+                radiusMeters = existingGeofence.radiusMeters,
+                notifyOnEnter = existingGeofence.notifyOnEnter,
+                notifyOnExit = existingGeofence.notifyOnExit
+            )
+        } else {
+            GeofenceConfig()
+        }
+
+        GeofenceDialog(
+            contactName = contact.name,
+            contactLocation = contact.location,
+            currentConfig = currentConfig,
+            onDismiss = { contactForGeofence = null },
+            onConfirm = { config ->
+                if (config.enabled && config.center != null) {
+                    geofenceManager.addGeofence(
+                        contactId = contact.id,
+                        contactName = contact.name,
+                        locationName = config.locationName,
+                        center = config.center,
+                        radiusMeters = config.radiusMeters,
+                        notifyOnEnter = config.notifyOnEnter,
+                        notifyOnExit = config.notifyOnExit
+                    ) { success, error ->
+                        if (!success) {
+                            // TODO: 显示错误提示
+                        }
+                    }
+                } else {
+                    geofenceManager.removeGeofencesForContact(contact.id) { _, _ -> }
+                }
+                contactForGeofence = null
             }
         )
     }

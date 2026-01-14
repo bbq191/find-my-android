@@ -21,6 +21,7 @@ object NotificationHelper {
 
     private const val CHANNEL_ID_SHARE_REQUEST = "location_share_requests"
     private const val CHANNEL_ID_LOCATION_UPDATE = "location_updates"
+    private const val CHANNEL_ID_GEOFENCE = "geofence_alerts"
 
     /**
      * 创建通知渠道（Android 8.0+）
@@ -49,8 +50,19 @@ object NotificationHelper {
                 description = "联系人位置更新通知"
             }
 
+            // 地理围栏渠道
+            val geofenceChannel = NotificationChannel(
+                CHANNEL_ID_GEOFENCE,
+                "地理围栏提醒",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "联系人进入或离开指定区域时的通知"
+                enableVibration(true)
+            }
+
             notificationManager.createNotificationChannel(shareRequestChannel)
             notificationManager.createNotificationChannel(locationUpdateChannel)
+            notificationManager.createNotificationChannel(geofenceChannel)
         }
     }
 
@@ -149,6 +161,134 @@ object NotificationHelper {
                 .notify(contactName.hashCode(), notification)
         } catch (e: SecurityException) {
             android.util.Log.e("NotificationHelper", "显示通知失败：没有权限", e)
+        }
+    }
+
+    // ====================================================================
+    // 调试通知（用于开发调试）
+    // ====================================================================
+
+    private const val CHANNEL_ID_DEBUG = "debug_notifications"
+
+    /**
+     * 发送调试通知
+     * 用于验证 FCM 消息接收、Worker 启动等状态
+     *
+     * @param context 上下文
+     * @param title 通知标题
+     * @param message 通知内容
+     */
+    fun sendDebugNotification(context: Context, title: String, message: String) {
+        val notificationManager =
+            context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
+        // 创建调试通知渠道
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                CHANNEL_ID_DEBUG,
+                "调试通知",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "开发调试用通知"
+            }
+            notificationManager.createNotificationChannel(channel)
+        }
+
+        val notification = NotificationCompat.Builder(context, CHANNEL_ID_DEBUG)
+            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle(title)
+            .setContentText(message)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(message))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .build()
+
+        try {
+            notificationManager.notify(System.currentTimeMillis().toInt(), notification)
+        } catch (e: SecurityException) {
+            android.util.Log.w("NotificationHelper", "发送调试通知失败：没有权限")
+        }
+    }
+
+    /**
+     * 创建前台服务通知
+     * 用于 Worker 和 Service 的前台通知
+     *
+     * @param context 上下文
+     * @param title 通知标题
+     * @param message 通知内容
+     * @param channelId 通知渠道 ID
+     * @return 通知对象
+     */
+    fun createForegroundNotification(
+        context: Context,
+        title: String,
+        message: String,
+        channelId: String = CHANNEL_ID_LOCATION_UPDATE
+    ): android.app.Notification {
+        return NotificationCompat.Builder(context, channelId)
+            .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+            .setContentTitle(title)
+            .setContentText(message)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setOngoing(true)
+            .build()
+    }
+
+    // ====================================================================
+    // 地理围栏通知
+    // ====================================================================
+
+    /**
+     * 显示地理围栏通知
+     * @param context 上下文
+     * @param title 通知标题
+     * @param message 通知内容
+     * @param isEntering 是否为进入事件
+     */
+    fun showGeofenceNotification(
+        context: Context,
+        title: String,
+        message: String,
+        isEntering: Boolean
+    ) {
+        if (!hasNotificationPermission(context)) {
+            android.util.Log.w("NotificationHelper", "没有通知权限，跳过地理围栏通知")
+            return
+        }
+
+        val intent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            context,
+            title.hashCode(),
+            intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        val iconRes = if (isEntering) {
+            android.R.drawable.ic_menu_myplaces
+        } else {
+            android.R.drawable.ic_menu_directions
+        }
+
+        val notification = NotificationCompat.Builder(context, CHANNEL_ID_GEOFENCE)
+            .setSmallIcon(iconRes)
+            .setContentTitle(title)
+            .setContentText(message)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(message))
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent)
+            .setVibrate(longArrayOf(0, 300, 100, 300))
+            .build()
+
+        try {
+            NotificationManagerCompat.from(context)
+                .notify(title.hashCode(), notification)
+        } catch (e: SecurityException) {
+            android.util.Log.e("NotificationHelper", "显示地理围栏通知失败：没有权限", e)
         }
     }
 }

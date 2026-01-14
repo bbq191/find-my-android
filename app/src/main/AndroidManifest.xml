@@ -18,6 +18,17 @@
     <!-- 通知权限 (Android 13+) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- 振动权限 (用于查找设备) -->
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+    <!-- 前台服务权限 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
+    <!-- 系统覆盖层权限（丢失模式） -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
     <!-- 存储权限 (用于地图缓存) -->
     <uses-permission
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
@@ -94,7 +105,37 @@
         <service
             android:name="androidx.work.impl.foreground.SystemForegroundService"
             android:foregroundServiceType="location"
-            tools:node="merge" />
+            tools:node="merge"
+            tools:ignore="ForegroundServicePermission" />
+
+        <!-- 声音播放服务（用于查找设备） -->
+        <service
+            android:name=".service.SoundPlaybackService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+
+        <!-- 丢失模式服务 -->
+        <service
+            android:name=".service.LostModeService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="lost_mode_display" />
+        </service>
+
+        <!-- 地理围栏广播接收器 -->
+        <receiver
+            android:name=".service.GeofenceBroadcastReceiver"
+            android:exported="false" />
+
+        <!-- 丢失模式身份验证 Activity -->
+        <activity
+            android:name=".ui.LostModeAuthActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true" />
     </application>
 
 </manifest>
