@@ -1,7 +1,9 @@
 package me.ikate.findmy.ui.screen.main
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.net.Uri
+import android.provider.Settings
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -23,7 +25,9 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.rememberMultiplePermissionsState
+import com.google.firebase.auth.FirebaseAuth
 import me.ikate.findmy.data.model.Contact
+import me.ikate.findmy.data.model.Device
 import me.ikate.findmy.ui.components.PermissionGuideDialog
 import me.ikate.findmy.ui.dialog.GeofenceConfig
 import me.ikate.findmy.ui.dialog.GeofenceDialog
@@ -50,6 +54,7 @@ import me.ikate.findmy.util.MapCameraHelper
  * 主屏幕 - Find My 应用的主界面
  * 包含全屏地图视图和交互组件
  */
+@SuppressLint("HardwareIds")
 @OptIn(ExperimentalPermissionsApi::class)
 @Composable
 fun MainScreen(
@@ -57,6 +62,12 @@ fun MainScreen(
     contactViewModel: ContactViewModel = viewModel()
 ) {
     val context = LocalContext.current
+
+    // 获取当前设备 ID 和用户 ID
+    val currentDeviceId = remember {
+        Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
+    }
+    val currentUserId = remember { FirebaseAuth.getInstance().currentUser?.uid }
 
     // 定位权限状态（增量请求：先粗略定位，再精确定位，加通讯录权限）
     val permissionsState = rememberMultiplePermissionsState(
@@ -118,6 +129,11 @@ fun MainScreen(
     val geofenceContactIds = remember(activeGeofences) {
         activeGeofences.map { it.contactId }.toSet()
     }
+
+    // 设备相关状态
+    var ringingDeviceId by remember { mutableStateOf<String?>(null) }
+    var deviceToNavigate by remember { mutableStateOf<Device?>(null) }
+    var deviceForLostMode by remember { mutableStateOf<Device?>(null) }
 
     // 联系人选择器启动器
     val contactPickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
@@ -234,8 +250,34 @@ fun MainScreen(
                     onLostModeClick = { contact -> contactForLostMode = contact },
                     onGeofenceClick = { contact -> contactForGeofence = contact },
                     // Devices Tab 参数
-                    myDevice = myDevice,
-                    myAddress = myAddress,
+                    devices = devices,
+                    currentDeviceId = currentDeviceId,
+                    currentUserId = currentUserId,
+                    currentDeviceAddress = myAddress,
+                    ringingDeviceId = ringingDeviceId,
+                    onDeviceClick = { device ->
+                        device.location.let { location ->
+                            MapCameraHelper.animateToLocation(googleMap, location, zoom = 15f)
+                            viewModel.updateSheetValue(SheetValue.HalfExpanded)
+                        }
+                    },
+                    onNavigateToDevice = { device ->
+                        deviceToNavigate = device
+                    },
+                    onPlaySoundOnDevice = { device ->
+                        ringingDeviceId = device.id
+                        contactViewModel.requestPlaySound(device.ownerId)
+                    },
+                    onStopSoundOnDevice = {
+                        ringingDeviceId?.let { _ ->
+                            // 停止响铃
+                            contactViewModel.stopRinging()
+                        }
+                        ringingDeviceId = null
+                    },
+                    onLostModeOnDevice = { device ->
+                        deviceForLostMode = device
+                    },
                     // Me Tab 参数
                     currentUser = currentUser,
                     meName = meName,
@@ -346,7 +388,7 @@ fun MainScreen(
         )
     }
 
-    // 导航对话框
+    // 联系人导航对话框
     contactToNavigate?.let { contact ->
         contact.location?.let { destination ->
             val distanceText = myDevice?.location?.let { myLoc ->
@@ -363,7 +405,23 @@ fun MainScreen(
         }
     }
 
-    // 丢失模式对话框
+    // 设备导航对话框
+    deviceToNavigate?.let { device ->
+        val destination = device.location
+        val distanceText = myDevice?.location?.let { myLoc ->
+            DistanceCalculator.calculateAndFormatDistance(myLoc, destination)
+        }
+
+        NavigationDialog(
+            contactName = device.customName ?: device.name,
+            destination = destination,
+            currentLocation = myDevice?.location,
+            distanceText = distanceText,
+            onDismiss = { deviceToNavigate = null }
+        )
+    }
+
+    // 联系人丢失模式对话框
     contactForLostMode?.let { contact ->
         // 判断当前联系人是否正在播放提示音
         val isSoundPlaying = ringingContactUid == contact.targetUserId
@@ -395,6 +453,40 @@ fun MainScreen(
                     }
                 }
                 contactForLostMode = null
+            }
+        )
+    }
+
+    // 设备丢失模式对话框
+    deviceForLostMode?.let { device ->
+        val isSoundPlaying = ringingDeviceId == device.id
+
+        LostModeDialog(
+            contactName = device.customName ?: device.name,
+            currentConfig = LostModeConfig(
+                enabled = false,
+                isSoundPlaying = isSoundPlaying
+            ),
+            onDismiss = { deviceForLostMode = null },
+            onAction = { action, config ->
+                when (action) {
+                    LostModeAction.ENABLE -> {
+                        contactViewModel.enableLostMode(
+                            targetUid = device.ownerId,
+                            message = config.message,
+                            phoneNumber = config.phoneNumber,
+                            playSound = config.playSound
+                        )
+                    }
+                    LostModeAction.DISABLE -> {
+                        contactViewModel.disableLostMode(device.ownerId)
+                    }
+                    LostModeAction.STOP_SOUND -> {
+                        contactViewModel.requestStopSound(device.ownerId)
+                        ringingDeviceId = null
+                    }
+                }
+                deviceForLostMode = null
             }
         )
     }

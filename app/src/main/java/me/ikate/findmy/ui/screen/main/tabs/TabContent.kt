@@ -46,8 +46,16 @@ fun TabContent(
     onLostModeClick: (Contact) -> Unit,
     onGeofenceClick: (Contact) -> Unit,
     // Devices Tab 参数
-    myDevice: Device?,
-    myAddress: String?,
+    devices: List<Device>,
+    currentDeviceId: String?,
+    currentUserId: String?,
+    currentDeviceAddress: String?,
+    ringingDeviceId: String?,
+    onDeviceClick: (Device) -> Unit,
+    onNavigateToDevice: (Device) -> Unit,
+    onPlaySoundOnDevice: (Device) -> Unit,
+    onStopSoundOnDevice: () -> Unit,
+    onLostModeOnDevice: (Device) -> Unit,
     // Me Tab 参数
     currentUser: User?,
     meName: String?,
@@ -102,11 +110,17 @@ fun TabContent(
             )
 
             FindMyTab.DEVICES -> DevicesTab(
-                myDevice = myDevice,
-                myAddress = myAddress
+                devices = devices,
+                currentDeviceId = currentDeviceId,
+                currentUserId = currentUserId,
+                currentDeviceAddress = currentDeviceAddress,
+                ringingDeviceId = ringingDeviceId,
+                onDeviceClick = onDeviceClick,
+                onNavigate = onNavigateToDevice,
+                onPlaySound = onPlaySoundOnDevice,
+                onStopSound = onStopSoundOnDevice,
+                onLostMode = onLostModeOnDevice
             )
-
-            FindMyTab.ITEMS -> ItemsTab()
 
             FindMyTab.ME -> MeTab(
                 currentUser = currentUser,

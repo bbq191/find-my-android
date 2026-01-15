@@ -1,6 +1,5 @@
 package me.ikate.findmy.ui.screen.main.components
 
-import android.location.Geocoder
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
@@ -65,15 +64,13 @@ import androidx.compose.ui.unit.dp
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import coil3.request.crossfade
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import me.ikate.findmy.data.model.Contact
 import me.ikate.findmy.data.model.Device
 import me.ikate.findmy.data.model.ShareDirection
 import me.ikate.findmy.data.model.ShareStatus
 import me.ikate.findmy.ui.components.ActionButton
-import me.ikate.findmy.util.AddressFormatter
 import me.ikate.findmy.util.DistanceCalculator
+import me.ikate.findmy.util.ReverseGeocodeHelper
 import me.ikate.findmy.util.TimeFormatter
 
 /**
@@ -109,47 +106,19 @@ fun ContactListItem(
     val context = LocalContext.current
     var addressText by remember { mutableStateOf<String?>(null) }
 
-    // 自动刷新时间显示
-    LaunchedEffect(contact.id) {
-        while (true) {
-            kotlinx.coroutines.delay(60_000)
-        }
-    }
-
-    // 获取地址
+    // 获取地址（使用缓存）
     LaunchedEffect(contact.location) {
         if (contact.location == null) {
             addressText = null
             return@LaunchedEffect
         }
 
-        withContext(Dispatchers.IO) {
-            try {
-                if (Geocoder.isPresent()) {
-                    val geocoder = Geocoder(context, java.util.Locale.SIMPLIFIED_CHINESE)
-                    geocoder.getFromLocation(
-                        contact.location.latitude,
-                        contact.location.longitude,
-                        1
-                    ) { addresses ->
-                        if (addresses.isNotEmpty()) {
-                            val formatted = AddressFormatter.formatAddress(addresses[0])
-                            addressText = if (AddressFormatter.isPlusCode(formatted)) {
-                                "纬度 ${String.format("%.4f", contact.location.latitude)}, " +
-                                "经度 ${String.format("%.4f", contact.location.longitude)}"
-                            } else {
-                                formatted
-                            }
-                        } else {
-                            addressText = "位置未知"
-                        }
-                    }
-                } else {
-                    addressText = "无法获取地址"
-                }
-            } catch (_: Exception) {
-                addressText = "获取地址失败"
-            }
+        ReverseGeocodeHelper.getAddressFromLocation(
+            context = context,
+            latitude = contact.location.latitude,
+            longitude = contact.location.longitude
+        ) { result ->
+            addressText = result
         }
     }
 

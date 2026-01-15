@@ -7,11 +7,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Sell
 import androidx.compose.material.icons.filled.Smartphone
 import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.Person
-import androidx.compose.material.icons.outlined.Sell
 import androidx.compose.material.icons.outlined.Smartphone
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -46,11 +44,6 @@ enum class FindMyTab(
         label = "设备",
         selectedIcon = Icons.Filled.Smartphone,
         unselectedIcon = Icons.Outlined.Smartphone
-    ),
-    ITEMS(
-        label = "物品",
-        selectedIcon = Icons.Filled.Sell,
-        unselectedIcon = Icons.Outlined.Sell
     ),
     ME(
         label = "我",

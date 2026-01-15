@@ -4,51 +4,60 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Battery4Bar
-import androidx.compose.material.icons.filled.LocationOn
-import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.outlined.Smartphone
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import me.ikate.findmy.data.model.Device
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import me.ikate.findmy.ui.screen.main.components.DeviceCard
 
 /**
  * 设备 Tab
- * 显示当前用户的设备列表
+ * 显示当前用户的所有设备列表（包括共享设备）
  */
 @Composable
 fun DevicesTab(
-    myDevice: Device?,
-    myAddress: String?,
+    devices: List<Device>,
+    currentDeviceId: String?,
+    currentUserId: String?,
+    currentDeviceAddress: String?,
+    ringingDeviceId: String?,
+    onDeviceClick: (Device) -> Unit,
+    onNavigate: (Device) -> Unit,
+    onPlaySound: (Device) -> Unit,
+    onStopSound: () -> Unit,
+    onLostMode: (Device) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    // 展开状态
+    var expandedDeviceId by remember { mutableStateOf<String?>(null) }
+
+    // 分组设备（只显示自己的设备）
+    val myDevices = devices.filter { it.ownerId == currentUserId }
+    val currentDevice = myDevices.find { it.id == currentDeviceId }
+    val myOtherDevices = myDevices.filter { it.id != currentDeviceId }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -57,7 +66,9 @@ fun DevicesTab(
         // iOS 风格大标题
         DevicesHeader()
 
-        if (myDevice != null) {
+        if (myDevices.isEmpty()) {
+            EmptyDevicesState()
+        } else {
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -66,30 +77,72 @@ fun DevicesTab(
                     Spacer(modifier = Modifier.height(8.dp))
                 }
 
-                // 当前设备卡片
-                item {
-                    CurrentDeviceCard(
-                        device = myDevice,
-                        address = myAddress
-                    )
+                // 当前设备
+                currentDevice?.let { device ->
+                    item(key = device.id) {
+                        DeviceCard(
+                            device = device,
+                            isCurrentDevice = true,
+                            isSharedDevice = false,
+                            isExpanded = expandedDeviceId == device.id,
+                            address = currentDeviceAddress,
+                            onClick = {
+                                expandedDeviceId = if (expandedDeviceId == device.id) null else device.id
+                                onDeviceClick(device)
+                            },
+                            onNavigate = { onNavigate(device) },
+                            onPlaySound = { onPlaySound(device) },
+                            onStopSound = onStopSound,
+                            onLostMode = { onLostMode(device) },
+                            isRinging = ringingDeviceId == device.id,
+                            modifier = Modifier.padding(horizontal = 16.dp)
+                        )
+                    }
+
+                    item {
+                        Text(
+                            text = "这是你当前正在使用的设备",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 20.dp)
+                        )
+                    }
                 }
 
-                // 提示文字
-                item {
-                    Text(
-                        text = "这是你当前正在使用的设备",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 20.dp)
-                    )
+                // 我的其他设备
+                if (myOtherDevices.isNotEmpty()) {
+                    item {
+                        SectionHeader(title = "我的其他设备")
+                    }
+
+                    items(
+                        items = myOtherDevices,
+                        key = { it.id }
+                    ) { device ->
+                        DeviceCard(
+                            device = device,
+                            isCurrentDevice = false,
+                            isSharedDevice = false,
+                            isExpanded = expandedDeviceId == device.id,
+                            address = null,
+                            onClick = {
+                                expandedDeviceId = if (expandedDeviceId == device.id) null else device.id
+                                onDeviceClick(device)
+                            },
+                            onNavigate = { onNavigate(device) },
+                            onPlaySound = { onPlaySound(device) },
+                            onStopSound = onStopSound,
+                            onLostMode = { onLostMode(device) },
+                            isRinging = ringingDeviceId == device.id,
+                            modifier = Modifier.padding(horizontal = 16.dp)
+                        )
+                    }
                 }
 
                 item {
                     Spacer(modifier = Modifier.height(100.dp))
                 }
             }
-        } else {
-            EmptyDevicesState()
         }
     }
 }
@@ -122,141 +175,14 @@ private fun DevicesHeader() {
 }
 
 @Composable
-private fun CurrentDeviceCard(
-    device: Device,
-    address: String?
-) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
-        ),
-        elevation = CardDefaults.cardElevation(
-            defaultElevation = 1.dp
-        )
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp)
-        ) {
-            // 设备信息行
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // 设备图标
-                Surface(
-                    modifier = Modifier.size(56.dp),
-                    shape = CircleShape,
-                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = Icons.Filled.PhoneAndroid,
-                            contentDescription = null,
-                            modifier = Modifier.size(28.dp),
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.width(16.dp))
-
-                // 设备详情
-                Column(modifier = Modifier.weight(1f)) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Text(
-                            text = device.name,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-
-                        // 在线状态指示
-                        Surface(
-                            shape = RoundedCornerShape(4.dp),
-                            color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
-                        ) {
-                            Text(
-                                text = "此设备",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(4.dp))
-
-                    // 位置信息
-                    if (address != null) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.LocationOn,
-                                contentDescription = null,
-                                modifier = Modifier.size(14.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Text(
-                                text = address,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(4.dp))
-
-                    // 电量和更新时间
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        // 电量
-                        val battery = device.battery
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Battery4Bar,
-                                contentDescription = null,
-                                modifier = Modifier.size(14.dp),
-                                tint = when {
-                                    battery <= 20 -> MaterialTheme.colorScheme.error
-                                    battery <= 50 -> MaterialTheme.colorScheme.tertiary
-                                    else -> MaterialTheme.colorScheme.primary
-                                }
-                            )
-                            Text(
-                                text = "$battery%",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-
-                        // 更新时间
-                        Text(
-                            text = formatRelativeTime(device.lastUpdateTime),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
-        }
-    }
+private fun SectionHeader(title: String) {
+    Text(
+        text = title,
+        style = MaterialTheme.typography.titleSmall,
+        fontWeight = FontWeight.SemiBold,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp)
+    )
 }
 
 @Composable
@@ -289,21 +215,6 @@ private fun EmptyDevicesState() {
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                 textAlign = TextAlign.Center
             )
-        }
-    }
-}
-
-private fun formatRelativeTime(timestamp: Long): String {
-    val now = System.currentTimeMillis()
-    val diff = now - timestamp
-
-    return when {
-        diff < 60_000 -> "刚刚"
-        diff < 3600_000 -> "${diff / 60_000} 分钟前"
-        diff < 86400_000 -> "${diff / 3600_000} 小时前"
-        else -> {
-            val sdf = SimpleDateFormat("MM/dd HH:mm", Locale.getDefault())
-            sdf.format(Date(timestamp))
         }
     }
 }

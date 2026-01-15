@@ -149,8 +149,8 @@ class DeviceRepository {
      * @param device 设备对象
      */
     fun saveDevice(device: Device) {
-        val currentUserId = FirebaseAuth.getInstance().currentUser?.uid
-        if (currentUserId == null) {
+        val currentUser = FirebaseAuth.getInstance().currentUser
+        if (currentUser == null) {
             android.util.Log.e("DeviceRepository", "用户未登录，无法保存设备")
             return
         }
@@ -163,7 +163,8 @@ class DeviceRepository {
             "lastUpdateTime" to com.google.firebase.Timestamp.now(),
             "isOnline" to device.isOnline,
             "deviceType" to device.deviceType.name,
-            "ownerId" to currentUserId,
+            "ownerId" to currentUser.uid,
+            "ownerEmail" to currentUser.email,  // 添加用户邮箱，方便调试和识别
             "customName" to device.customName,
             "bearing" to device.bearing
             // ❌ 移除: "sharedWith" to device.sharedWith

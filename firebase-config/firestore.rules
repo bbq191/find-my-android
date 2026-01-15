@@ -90,6 +90,29 @@ service cloud.firestore {
     }
 
     // ====================================================================
+    // 追踪物品集合规则
+    // ====================================================================
+    match /tracked_items/{itemId} {
+      // 读取：物品所有者或被分享者
+      allow read: if request.auth != null && (
+        resource.data.ownerId == request.auth.uid ||
+        request.auth.uid in resource.data.sharedWith
+      );
+
+      // 创建：已登录用户，且 ownerId 必须是自己
+      allow create: if request.auth != null &&
+                       request.resource.data.ownerId == request.auth.uid;
+
+      // 更新：只有物品所有者可以更新
+      allow update: if request.auth != null &&
+                       resource.data.ownerId == request.auth.uid;
+
+      // 删除：只有物品所有者可以删除
+      allow delete: if request.auth != null &&
+                       resource.data.ownerId == request.auth.uid;
+    }
+
+    // ====================================================================
     // 辅助函数
     // ====================================================================
 

@@ -38,6 +38,71 @@ class LocationTrackingManager(
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
 
+    // ====================================================================
+    // 通用请求执行器
+    // ====================================================================
+
+    /**
+     * 执行 Firebase 请求的通用方法
+     *
+     * @param currentUid 当前用户的 UID（必须非空）
+     * @param targetUid 目标用户的 UID
+     * @param type 请求类型
+     * @param additionalData 额外数据字段
+     * @param errorMessagePrefix 错误消息前缀
+     * @param onSuccess 成功回调（可选）
+     */
+    private fun executeRequest(
+        currentUid: String?,
+        targetUid: String,
+        type: String,
+        additionalData: Map<String, Any> = emptyMap(),
+        errorMessagePrefix: String = "请求失败",
+        reportLocationFirst: Boolean = false,
+        onSuccess: (() -> Unit)? = null
+    ) {
+        if (currentUid == null) {
+            Log.w(TAG, "当前用户未登录，无法执行请求: $type")
+            return
+        }
+
+        scope.launch {
+            try {
+                Log.d(TAG, "执行请求: type=$type, targetUid=$targetUid")
+
+                // 根据需要先上报自己的位置
+                if (reportLocationFirst) {
+                    reportMyLocationFirst()
+                }
+
+                // 构建请求数据
+                val requestData = hashMapOf<String, Any>(
+                    "requesterUid" to currentUid,
+                    "targetUid" to targetUid,
+                    "type" to type,
+                    "timestamp" to System.currentTimeMillis(),
+                    "status" to "pending"
+                ).apply {
+                    putAll(additionalData)
+                }
+
+                firestore.collection(COLLECTION_LOCATION_REQUESTS)
+                    .add(requestData)
+                    .await()
+
+                Log.d(TAG, "请求已创建: $type")
+                onSuccess?.invoke()
+            } catch (e: Exception) {
+                Log.e(TAG, "请求失败: $type", e)
+                _errorMessage.value = "$errorMessagePrefix: ${e.localizedMessage}"
+            }
+        }
+    }
+
+    // ====================================================================
+    // 位置请求
+    // ====================================================================
+
     /**
      * 请求联系人的实时位置更新
      *
@@ -137,41 +202,15 @@ class LocationTrackingManager(
 
     /**
      * 停止连续追踪
-     *
-     * @param currentUid 当前用户的 UID
-     * @param targetUid 目标联系人的 UID
      */
     fun stopContinuousTracking(currentUid: String?, targetUid: String) {
-        if (currentUid == null) {
-            Log.w(TAG, "当前用户未登录")
-            return
-        }
-
-        scope.launch {
-            try {
-                Log.d(TAG, "停止连续追踪: targetUid=$targetUid")
-
-                // 创建停止请求
-                val stopData = hashMapOf(
-                    "requesterUid" to currentUid,
-                    "targetUid" to targetUid,
-                    "type" to "stop_continuous",
-                    "timestamp" to System.currentTimeMillis(),
-                    "status" to "pending"
-                )
-
-                firestore.collection(COLLECTION_LOCATION_REQUESTS)
-                    .add(stopData)
-                    .await()
-
-                Log.d(TAG, "停止追踪请求已创建")
-                _trackingContactUid.value = null
-            } catch (e: Exception) {
-                Log.e(TAG, "停止连续追踪失败", e)
-                _trackingContactUid.value = null
-                _errorMessage.value = "停止失败: ${e.localizedMessage}"
-            }
-        }
+        _trackingContactUid.value = null
+        executeRequest(
+            currentUid = currentUid,
+            targetUid = targetUid,
+            type = "stop_continuous",
+            errorMessagePrefix = "停止追踪失败"
+        )
     }
 
     /**
@@ -183,84 +222,30 @@ class LocationTrackingManager(
 
     /**
      * 请求目标设备播放声音
-     *
-     * @param currentUid 当前用户的 UID
-     * @param targetUid 目标用户的 UID
      */
     fun requestPlaySound(currentUid: String?, targetUid: String) {
-        if (currentUid == null) {
-            Log.w(TAG, "当前用户未登录，无法请求播放声音")
-            return
-        }
-
-        scope.launch {
-            try {
-                Log.d(TAG, "请求播放声音: targetUid=$targetUid")
-
-                val requestData = hashMapOf(
-                    "requesterUid" to currentUid,
-                    "targetUid" to targetUid,
-                    "type" to "play_sound",
-                    "timestamp" to System.currentTimeMillis(),
-                    "status" to "pending"
-                )
-
-                firestore.collection(COLLECTION_LOCATION_REQUESTS)
-                    .add(requestData)
-                    .await()
-
-                Log.d(TAG, "播放声音请求已发送")
-            } catch (e: Exception) {
-                Log.e(TAG, "请求播放声音失败", e)
-                _errorMessage.value = "请求失败: ${e.localizedMessage}"
-            }
-        }
+        executeRequest(
+            currentUid = currentUid,
+            targetUid = targetUid,
+            type = "play_sound",
+            errorMessagePrefix = "请求播放声音失败"
+        )
     }
 
     /**
      * 请求目标设备停止播放声音
-     *
-     * @param currentUid 当前用户的 UID
-     * @param targetUid 目标用户的 UID
      */
     fun requestStopSound(currentUid: String?, targetUid: String) {
-        if (currentUid == null) {
-            Log.w(TAG, "当前用户未登录")
-            return
-        }
-
-        scope.launch {
-            try {
-                Log.d(TAG, "请求停止播放声音: targetUid=$targetUid")
-
-                val requestData = hashMapOf(
-                    "requesterUid" to currentUid,
-                    "targetUid" to targetUid,
-                    "type" to "stop_sound",
-                    "timestamp" to System.currentTimeMillis(),
-                    "status" to "pending"
-                )
-
-                firestore.collection(COLLECTION_LOCATION_REQUESTS)
-                    .add(requestData)
-                    .await()
-
-                Log.d(TAG, "停止播放声音请求已发送")
-            } catch (e: Exception) {
-                Log.e(TAG, "请求停止播放声音失败", e)
-                _errorMessage.value = "请求失败: ${e.localizedMessage}"
-            }
-        }
+        executeRequest(
+            currentUid = currentUid,
+            targetUid = targetUid,
+            type = "stop_sound",
+            errorMessagePrefix = "请求停止播放声音失败"
+        )
     }
 
     /**
      * 启用丢失模式
-     *
-     * @param currentUid 当前用户的 UID
-     * @param targetUid 目标用户的 UID
-     * @param message 显示消息
-     * @param phoneNumber 联系电话
-     * @param playSound 是否播放声音
      */
     fun enableLostMode(
         currentUid: String?,
@@ -269,72 +254,29 @@ class LocationTrackingManager(
         phoneNumber: String,
         playSound: Boolean
     ) {
-        if (currentUid == null) {
-            Log.w(TAG, "当前用户未登录，无法启用丢失模式")
-            return
-        }
-
-        scope.launch {
-            try {
-                Log.d(TAG, "启用丢失模式: targetUid=$targetUid")
-
-                val requestData = hashMapOf(
-                    "requesterUid" to currentUid,
-                    "targetUid" to targetUid,
-                    "type" to "enable_lost_mode",
-                    "message" to message,
-                    "phoneNumber" to phoneNumber,
-                    "playSound" to playSound,
-                    "timestamp" to System.currentTimeMillis(),
-                    "status" to "pending"
-                )
-
-                firestore.collection(COLLECTION_LOCATION_REQUESTS)
-                    .add(requestData)
-                    .await()
-
-                Log.d(TAG, "丢失模式请求已发送")
-            } catch (e: Exception) {
-                Log.e(TAG, "启用丢失模式失败", e)
-                _errorMessage.value = "启用丢失模式失败: ${e.localizedMessage}"
-            }
-        }
+        executeRequest(
+            currentUid = currentUid,
+            targetUid = targetUid,
+            type = "enable_lost_mode",
+            additionalData = mapOf(
+                "message" to message,
+                "phoneNumber" to phoneNumber,
+                "playSound" to playSound
+            ),
+            errorMessagePrefix = "启用丢失模式失败"
+        )
     }
 
     /**
      * 关闭丢失模式
-     *
-     * @param currentUid 当前用户的 UID
-     * @param targetUid 目标用户的 UID
      */
     fun disableLostMode(currentUid: String?, targetUid: String) {
-        if (currentUid == null) {
-            Log.w(TAG, "当前用户未登录")
-            return
-        }
-
-        scope.launch {
-            try {
-                Log.d(TAG, "关闭丢失模式: targetUid=$targetUid")
-
-                val requestData = hashMapOf(
-                    "requesterUid" to currentUid,
-                    "targetUid" to targetUid,
-                    "type" to "disable_lost_mode",
-                    "timestamp" to System.currentTimeMillis(),
-                    "status" to "pending"
-                )
-
-                firestore.collection(COLLECTION_LOCATION_REQUESTS)
-                    .add(requestData)
-                    .await()
-
-                Log.d(TAG, "关闭丢失模式请求已发送")
-            } catch (e: Exception) {
-                Log.e(TAG, "关闭丢失模式失败", e)
-                _errorMessage.value = "关闭丢失模式失败: ${e.localizedMessage}"
-            }
-        }
+        executeRequest(
+            currentUid = currentUid,
+            targetUid = targetUid,
+            type = "disable_lost_mode",
+            errorMessagePrefix = "关闭丢失模式失败"
+        )
     }
 
     /**
