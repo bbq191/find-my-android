@@ -8,12 +8,18 @@
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION"
         tools:ignore="BackgroundLocationPolicy" />
 
+    <!-- 活动识别权限 (智能位置上报) -->
+    <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
+
     <!-- 网络权限 -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <!-- 通讯录权限 (用于获取机主信息) -->
     <uses-permission android:name="android.permission.READ_CONTACTS" />
+
+    <!-- 账户权限 (用于获取 Google/三星账户名称) -->
+    <uses-permission android:name="android.permission.GET_ACCOUNTS" />
 
     <!-- 通知权限 (Android 13+) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -129,6 +135,11 @@
             android:name=".service.GeofenceBroadcastReceiver"
             android:exported="false" />
 
+        <!-- 活动识别广播接收器 -->
+        <receiver
+            android:name=".service.ActivityTransitionReceiver"
+            android:exported="false" />
+
         <!-- 丢失模式身份验证 Activity -->
         <activity
             android:name=".ui.LostModeAuthActivity"
@@ -136,6 +147,16 @@
             android:theme="@android:style/Theme.Translucent.NoTitleBar"
             android:showWhenLocked="true"
             android:turnScreenOn="true" />
+
+        <!-- 丢失模式全屏 Activity -->
+        <activity
+            android:name=".ui.LostModeActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Findmy"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTask" />
     </application>
 
 </manifest>

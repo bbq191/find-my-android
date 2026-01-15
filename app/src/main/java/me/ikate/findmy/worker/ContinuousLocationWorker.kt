@@ -80,19 +80,19 @@ class ContinuousLocationWorker(
                 }
 
                 Log.d(TAG, "✅ 短时实时追踪完成，共上报 $updateCount 次位置")
-                sendDebugNotification(
-                    "实时追踪结束",
-                    "已完成 ${updateCount} 次位置更新"
-                )
+                // sendDebugNotification(
+                //     "实时追踪结束",
+                //     "已完成 ${updateCount} 次位置更新"
+                // )
 
                 Result.success()
             } catch (e: kotlinx.coroutines.CancellationException) {
                 // 协程被取消（WorkManager 调用 stop）
                 Log.d(TAG, "⏹️ 追踪任务被取消，共上报 $updateCount 次位置")
-                sendDebugNotification(
-                    "实时追踪已停止",
-                    "任务被取消，已上报 ${updateCount} 次"
-                )
+                // sendDebugNotification(
+                //     "实时追踪已停止",
+                //     "任务被取消，已上报 ${updateCount} 次"
+                // )
                 // 重新抛出 CancellationException，让协程正确处理取消
                 throw e
             } finally {
@@ -104,10 +104,10 @@ class ContinuousLocationWorker(
             throw e
         } catch (e: Exception) {
             Log.e(TAG, "❌ 短时实时追踪失败", e)
-            sendDebugNotification(
-                "实时追踪异常",
-                "错误: ${e.message}"
-            )
+            // sendDebugNotification(
+            //     "实时追踪异常",
+            //     "错误: ${e.message}"
+            // )
             Result.failure()
         }
     }

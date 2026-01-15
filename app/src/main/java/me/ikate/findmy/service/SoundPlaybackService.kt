@@ -1,5 +1,8 @@
 package me.ikate.findmy.service
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -13,12 +16,15 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import android.util.Log
+import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import me.ikate.findmy.util.NotificationHelper
 
 /**
  * 播放声音服务
@@ -36,10 +42,15 @@ class SoundPlaybackService : Service() {
     companion object {
         private const val TAG = "SoundPlaybackService"
         private const val NOTIFICATION_ID = 9999
-        private const val MAX_PLAY_DURATION_MS = 2 * 60 * 1000L // 2分钟
+        private const val MAX_PLAY_DURATION_MS = 1 * 60 * 1000L // 2分钟
         private const val ACTION_PLAY = "me.ikate.findmy.ACTION_PLAY_SOUND"
         private const val ACTION_STOP = "me.ikate.findmy.ACTION_STOP_SOUND"
         private const val EXTRA_REQUESTER_UID = "requester_uid"
+        private const val CHANNEL_ID_SOUND = "sound_playback"
+
+        // 播放状态 - 供 UI 观察
+        private val _isPlaying = MutableStateFlow(false)
+        val isPlaying: StateFlow<Boolean> = _isPlaying.asStateFlow()
 
         /**
          * 启动播放声音
@@ -104,12 +115,14 @@ class SoundPlaybackService : Service() {
     private fun startPlayback(requesterUid: String?) {
         Log.d(TAG, "开始播放查找提示音，请求者: $requesterUid")
 
-        // 启动前台服务
-        val notification = NotificationHelper.createForegroundNotification(
-            context = this,
-            title = "正在播放查找提示音",
-            message = "点击停止播放"
-        )
+        // 更新播放状态
+        _isPlaying.value = true
+
+        // 创建通知渠道
+        createNotificationChannel()
+
+        // 创建带停止按钮的通知
+        val notification = createSoundNotification()
         startForeground(NOTIFICATION_ID, notification)
 
         // 保存原始音量
@@ -176,6 +189,9 @@ class SoundPlaybackService : Service() {
     private fun stopPlayback() {
         Log.d(TAG, "停止播放查找提示音")
 
+        // 更新播放状态
+        _isPlaying.value = false
+
         // 取消自动停止计时器
         stopJob?.cancel()
         stopJob = null
@@ -208,6 +224,54 @@ class SoundPlaybackService : Service() {
         // 停止前台服务
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
+    }
+
+    /**
+     * 创建通知渠道
+     */
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                CHANNEL_ID_SOUND,
+                "查找设备提示音",
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "播放查找设备提示音时的通知"
+                setSound(null, null) // 通知本身不发声
+            }
+            val notificationManager = getSystemService(NotificationManager::class.java)
+            notificationManager.createNotificationChannel(channel)
+        }
+    }
+
+    /**
+     * 创建带停止按钮的通知
+     */
+    private fun createSoundNotification(): android.app.Notification {
+        // 点击通知停止播放的 PendingIntent
+        val stopIntent = Intent(this, SoundPlaybackService::class.java).apply {
+            action = ACTION_STOP
+        }
+        val stopPendingIntent = PendingIntent.getService(
+            this,
+            0,
+            stopIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        return NotificationCompat.Builder(this, CHANNEL_ID_SOUND)
+            .setSmallIcon(android.R.drawable.ic_lock_silent_mode_off)
+            .setContentTitle("正在播放查找提示音")
+            .setContentText("点击停止播放")
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setOngoing(true)
+            .setContentIntent(stopPendingIntent)  // 点击通知停止
+            .addAction(
+                android.R.drawable.ic_media_pause,
+                "停止",
+                stopPendingIntent
+            )  // 添加停止按钮
+            .build()
     }
 
     override fun onDestroy() {

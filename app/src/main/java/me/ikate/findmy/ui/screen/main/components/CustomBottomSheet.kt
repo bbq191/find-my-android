@@ -112,16 +112,10 @@ fun CustomBottomSheet(
                 .fillMaxWidth()
                 .height(sheetHeightDp)
                 .align(Alignment.BottomCenter)
-                // 关键：避免被系统导航栏遮挡，增加底部内边距
-                // 注意：这里不在 height 上加 padding，而是在内部布局处理，或者让 Surface 整体上移？
-                // 如果是 Edge-to-Edge，align(BottomCenter) 会贴着物理屏幕底部。
-                // navigationBarsPadding() 会给内容增加 padding，但 Surface 背景依然贴底。
-                // 这样是正确的。
                 .pointerInput(maxHeightPx) {
                     detectVerticalDragGestures(
                         onDragEnd = {
                             // 拖拽结束，根据当前位置吸附到最近的锚点
-                            // 防御 NaN
                             if (currentOffset.isNaN()) {
                                 currentOffset = safeInitialOffset
                                 onSheetValueChange(initialValue)
@@ -143,24 +137,15 @@ fun CustomBottomSheet(
                                 if (targetOffset.isNaN()) safeInitialOffset else targetOffset
                             currentOffset = finalOffset
 
-                            // 回调状态变化
                             val newState = when (finalOffset) {
                                 collapsedOffset -> SheetValue.Collapsed
                                 halfExpandedOffset -> SheetValue.HalfExpanded
                                 else -> SheetValue.Expanded
                             }
                             onSheetValueChange(newState)
-                            // 动画结束后再通知？这里为了响应速度直接通知
                             onOffsetChange(finalOffset)
                         },
                         onVerticalDrag = { _, dragAmount ->
-                            // 拖拽过程中更新偏移量
-                            // dragAmount > 0 是向下，< 0 是向上
-                            // newOffset = currentOffset - dragAmount
-                            // 向上拖动 (dragAmount < 0) -> offset 增加
-                            // 向下拖动 (dragAmount > 0) -> offset 减少
-
-                            // 这里的 dragAmount 也有可能是 NaN? 极低概率，但防一下
                             val safeDragAmount = if (dragAmount.isNaN()) 0f else dragAmount
 
                             var newOffset = currentOffset - safeDragAmount
@@ -176,41 +161,38 @@ fun CustomBottomSheet(
                         }
                     )
                 },
-            shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
+            shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp), // 增大圆角
             color = MaterialTheme.colorScheme.surface,
-            shadowElevation = 8.dp
+            shadowElevation = 12.dp, // 增强阴影
+            tonalElevation = 2.dp
         ) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 8.dp)
-                // 内容区域避开系统导航栏
-                // 这里不需要 navigationBarsPadding，因为 Surface 高度包含了导航栏区域。
-                // 但是如果内容也是到底部的，会被遮挡。
-                // 更好的做法是：Surface 延伸到底部，但 Column 底部留出空间。
-                // 或者给 Column 加 .windowInsetsPadding(WindowInsets.navigationBars)
-                // 但是注意，CustomBottomSheet 的 offset 是从物理底部算的。
+                    .padding(top = 12.dp)
             ) {
-                // 拖拽手柄
+                // 拖拽手柄 - 优化样式
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.Center
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(width = 40.dp, height = 4.dp)
-                            .clip(RoundedCornerShape(2.dp))
-                            .background(Color.Gray.copy(alpha = 0.3f))
+                            .size(width = 36.dp, height = 5.dp)
+                            .clip(RoundedCornerShape(2.5.dp))
+                            .background(
+                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
+                            )
                     )
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
                 // 面板内容容器
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(1f) // 占满剩余空间
+                        .weight(1f)
                 ) {
                     sheetContent()
                 }

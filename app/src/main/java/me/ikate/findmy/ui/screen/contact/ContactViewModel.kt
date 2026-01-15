@@ -102,6 +102,10 @@ class ContactViewModel(application: Application) : AndroidViewModel(application)
     val requestingLocationFor: StateFlow<String?> = trackingManager.requestingLocationFor
     val trackingContactUid: StateFlow<String?> = trackingManager.trackingContactUid
 
+    // 响铃状态 - 跟踪正在请求响铃的联系人
+    private val _ringingContactUid = MutableStateFlow<String?>(null)
+    val ringingContactUid: StateFlow<String?> = _ringingContactUid.asStateFlow()
+
     // 权限引导
     private val _showPermissionGuide = MutableStateFlow(false)
     val showPermissionGuide: StateFlow<Boolean> = _showPermissionGuide.asStateFlow()
@@ -139,6 +143,22 @@ class ContactViewModel(application: Application) : AndroidViewModel(application)
     private fun loadLocalProfile() {
         _meName.value = prefs.getString(KEY_ME_NAME, null)
         _meAvatarUrl.value = prefs.getString(KEY_ME_AVATAR, null)
+    }
+
+    /**
+     * 更新"我"的显示名称
+     */
+    fun updateMeName(name: String) {
+        _meName.value = name
+        prefs.edit().putString(KEY_ME_NAME, name).apply()
+    }
+
+    /**
+     * 更新"我"的头像 URL
+     */
+    fun updateMeAvatar(avatarUrl: String?) {
+        _meAvatarUrl.value = avatarUrl
+        prefs.edit().putString(KEY_ME_AVATAR, avatarUrl).apply()
     }
 
     // ====================================================================
@@ -502,10 +522,18 @@ class ContactViewModel(application: Application) : AndroidViewModel(application)
 
     fun requestPlaySound(targetUid: String) {
         trackingManager.requestPlaySound(_currentUser.value?.uid, targetUid)
+        _ringingContactUid.value = targetUid
     }
 
     fun requestStopSound(targetUid: String) {
         trackingManager.requestStopSound(_currentUser.value?.uid, targetUid)
+        _ringingContactUid.value = null
+    }
+
+    fun stopRinging() {
+        _ringingContactUid.value?.let { targetUid ->
+            requestStopSound(targetUid)
+        }
     }
 
     // ====================================================================

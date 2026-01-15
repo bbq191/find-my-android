@@ -42,8 +42,8 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
         Log.d(TAG, "📬 收到 FCM 消息！From: ${remoteMessage.from}")
 
-        // 🔍 立即发送通知，确认消息到达
-        sendDebugNotification("📬 FCM 消息到达", "From: ${remoteMessage.from}")
+        // 🔍 调试通知已关闭（生产环境）
+        // sendDebugNotification("📬 FCM 消息到达", "From: ${remoteMessage.from}")
 
         // 检查消息是否包含数据有效负载
         if (remoteMessage.data.isNotEmpty()) {
@@ -93,8 +93,8 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         val requesterUid = data["requesterUid"]
         Log.d(TAG, "收到来自: $requesterUid 的位置请求")
 
-        // 🔍 调试：显示通知，验证FCM消息已到达
-        sendDebugNotification("FCM已到达", "收到位置请求，来自: $requesterUid")
+        // 🔍 调试通知已关闭（生产环境）
+        // sendDebugNotification("FCM已到达", "收到位置请求，来自: $requesterUid")
 
         // 检查是否超过防抖动冷却时间
         val prefs = getSharedPreferences("location_request", MODE_PRIVATE)
@@ -108,8 +108,8 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
                 TAG,
                 "位置请求过于频繁，忽略本次请求 (冷却时间: ${remainingSeconds}秒)"
             )
-            // 🔍 调试：通知用户被防抖动拦截
-            sendDebugNotification("请求被拦截", "冷却中，剩余 ${remainingSeconds}秒")
+            // 🔍 调试通知已关闭（生产环境）
+            // sendDebugNotification("请求被拦截", "冷却中，剩余 ${remainingSeconds}秒")
             return
         }
 
@@ -136,8 +136,8 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
             )
 
         Log.d(TAG, "已启动加急位置上报任务，WorkRequest ID: ${workRequest.id}")
-        // 🔍 调试：通知Worker已启动
-        sendDebugNotification("Worker已启动", "任务ID: ${workRequest.id}")
+        // 🔍 调试通知已关闭（生产环境）
+        // sendDebugNotification("Worker已启动", "任务ID: ${workRequest.id}")
     }
 
     /**
@@ -148,7 +148,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         val requesterUid = data["requesterUid"]
         Log.d(TAG, "🎯 收到来自: $requesterUid 的实时追踪请求")
 
-        sendDebugNotification("开始实时追踪", "来自: $requesterUid，持续60秒")
+        // sendDebugNotification("开始实时追踪", "来自: $requesterUid，持续60秒")
 
         // 检查是否有正在运行的追踪任务
         val prefs = getSharedPreferences("continuous_tracking", MODE_PRIVATE)
@@ -159,7 +159,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         if (currentTime - lastTrackingTime < cooldownMillis) {
             val remainingSeconds = (cooldownMillis - (currentTime - lastTrackingTime)) / 1000
             Log.d(TAG, "追踪请求过于频繁，忽略本次请求 (冷却时间: ${remainingSeconds}秒)")
-            sendDebugNotification("请求被拦截", "冷却中，剩余 ${remainingSeconds}秒")
+            // sendDebugNotification("请求被拦截", "冷却中，剩余 ${remainingSeconds}秒")
             return
         }
 
@@ -194,7 +194,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
      */
     private fun handleContinuousTrackingStop() {
         Log.d(TAG, "⏹️ 收到停止追踪请求")
-        sendDebugNotification("停止实时追踪", "已取消连续位置更新")
+        // sendDebugNotification("停止实时追踪", "已取消连续位置更新")
 
         // 取消正在运行的追踪任务
         WorkManager.getInstance(applicationContext)
@@ -210,7 +210,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
     private fun handlePlaySound(data: Map<String, String>) {
         val requesterUid = data["requesterUid"]
         Log.d(TAG, "🔔 收到播放声音请求，来自: $requesterUid")
-        sendDebugNotification("开始播放提示音", "来自: $requesterUid")
+        // sendDebugNotification("开始播放提示音", "来自: $requesterUid")
 
         SoundPlaybackService.startPlaying(applicationContext, requesterUid)
     }
@@ -220,7 +220,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
      */
     private fun handleStopSound() {
         Log.d(TAG, "🔕 收到停止播放声音请求")
-        sendDebugNotification("停止播放提示音", "已停止")
+        // sendDebugNotification("停止播放提示音", "已停止")
 
         SoundPlaybackService.stopPlaying(applicationContext)
     }
@@ -235,7 +235,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
         val playSound = data["playSound"]?.toBoolean() ?: true
 
         Log.d(TAG, "🔒 收到启用丢失模式请求，来自: $requesterUid")
-        sendDebugNotification("启用丢失模式", "消息: $message")
+        // sendDebugNotification("启用丢失模式", "消息: $message")
 
         LostModeService.enable(
             context = applicationContext,
@@ -251,7 +251,7 @@ class MyFirebaseMessagingService : FirebaseMessagingService() {
      */
     private fun handleDisableLostMode() {
         Log.d(TAG, "🔓 收到关闭丢失模式请求")
-        sendDebugNotification("关闭丢失模式", "已关闭")
+        // sendDebugNotification("关闭丢失模式", "已关闭")
 
         LostModeService.disable(applicationContext)
     }

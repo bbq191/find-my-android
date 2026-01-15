@@ -41,8 +41,8 @@ fun ActionButton(
 
     val containerColor = when {
         !enabled -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f)
-        isDestructive -> MaterialTheme.colorScheme.errorContainer
-        else -> MaterialTheme.colorScheme.primaryContainer
+        isDestructive -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.6f)
+        else -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
     }
 
     Column(

@@ -71,6 +71,8 @@ fun ContactListPanel(
     onStartContinuousTracking: (String) -> Unit = {},
     onStopContinuousTracking: (String) -> Unit = {},
     onPlaySound: (String) -> Unit = {},
+    onStopSound: () -> Unit = {},
+    isRinging: Boolean = false,
     onLostModeClick: (Contact) -> Unit = {},
     onGeofenceClick: (Contact) -> Unit = {},
     geofenceContactIds: Set<String> = emptySet(),
@@ -151,6 +153,8 @@ fun ContactListPanel(
             onStartContinuousTracking = onStartContinuousTracking,
             onStopContinuousTracking = onStopContinuousTracking,
             onPlaySound = onPlaySound,
+            onStopSound = onStopSound,
+            isRinging = isRinging,
             onLostModeClick = onLostModeClick,
             onGeofenceClick = onGeofenceClick,
             geofenceContactIds = geofenceContactIds
@@ -309,6 +313,8 @@ private fun ContactList(
     onStartContinuousTracking: (String) -> Unit,
     onStopContinuousTracking: (String) -> Unit,
     onPlaySound: (String) -> Unit,
+    onStopSound: () -> Unit,
+    isRinging: Boolean,
     onLostModeClick: (Contact) -> Unit,
     onGeofenceClick: (Contact) -> Unit,
     geofenceContactIds: Set<String>
@@ -348,6 +354,8 @@ private fun ContactList(
                     onPlaySound = {
                         contact.targetUserId?.let { onPlaySound(it) }
                     },
+                    onStopSound = onStopSound,
+                    isRinging = isRinging,
                     onLostModeClick = {
                         onLostModeClick(contact)
                     },

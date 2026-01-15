@@ -1,8 +1,8 @@
 package me.ikate.findmy.ui.screen.main
 
 import android.Manifest
-import android.content.Intent
 import android.net.Uri
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
@@ -20,7 +20,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.core.net.toUri
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.rememberMultiplePermissionsState
@@ -28,19 +27,22 @@ import me.ikate.findmy.data.model.Contact
 import me.ikate.findmy.ui.components.PermissionGuideDialog
 import me.ikate.findmy.ui.dialog.GeofenceConfig
 import me.ikate.findmy.ui.dialog.GeofenceDialog
+import me.ikate.findmy.ui.dialog.LostModeAction
 import me.ikate.findmy.ui.dialog.LostModeConfig
 import me.ikate.findmy.ui.dialog.LostModeDialog
 import me.ikate.findmy.ui.dialog.NavigationDialog
+import me.ikate.findmy.ui.navigation.BottomNavBar
+import me.ikate.findmy.ui.navigation.FindMyTab
 import me.ikate.findmy.service.GeofenceManager
 import me.ikate.findmy.ui.screen.contact.ContactViewModel
 import me.ikate.findmy.util.DistanceCalculator
-import me.ikate.findmy.ui.screen.main.components.ContactListPanel
 import me.ikate.findmy.ui.screen.main.components.CustomBottomSheet
 import me.ikate.findmy.ui.screen.main.components.LocationButton
 import me.ikate.findmy.ui.screen.main.components.MapLayerButton
 import me.ikate.findmy.ui.screen.main.components.MapViewWrapper
 import me.ikate.findmy.ui.screen.main.components.ShareLocationDialog
 import me.ikate.findmy.ui.screen.main.components.SheetValue
+import me.ikate.findmy.ui.screen.main.tabs.TabContent
 import me.ikate.findmy.util.CompassHelper
 import me.ikate.findmy.util.MapCameraHelper
 
@@ -69,6 +71,7 @@ fun MainScreen(
     val googleMap by viewModel.googleMap.collectAsState()
     val isLocationCentered by viewModel.isLocationCentered.collectAsState()
     val devices by viewModel.devices.collectAsState() // 收集设备列表
+    val isSmartLocationEnabled by viewModel.isSmartLocationEnabled.collectAsState() // 智能位置状态
 
     // 收集联系人 ViewModel 状态
     val contacts by contactViewModel.contacts.collectAsState()
@@ -82,6 +85,7 @@ fun MainScreen(
     val errorMessage by contactViewModel.errorMessage.collectAsState()
     val requestingLocationFor by contactViewModel.requestingLocationFor.collectAsState() // 正在请求位置的联系人
     val trackingContactUid by contactViewModel.trackingContactUid.collectAsState() // 正在实时追踪的联系人
+    val ringingContactUid by contactViewModel.ringingContactUid.collectAsState() // 正在响铃的联系人
 
     // 获取当前设备实时朝向
     val currentHeading = CompassHelper.rememberCompassHeading()
@@ -90,6 +94,13 @@ fun MainScreen(
     var bottomSheetOffsetPx by remember { mutableFloatStateOf(0f) }
     val density = androidx.compose.ui.platform.LocalDensity.current
     val bottomSheetOffsetDp = with(density) { bottomSheetOffsetPx.toDp() }
+
+    // 底部导航栏高度
+    val bottomNavHeightDp = 80.dp
+    val bottomNavHeightPx = with(density) { bottomNavHeightDp.toPx() }
+
+    // Tab 状态
+    var selectedTab by remember { mutableStateOf(FindMyTab.PEOPLE) }
 
     // 记录正在绑定通讯录的联系人 (null 表示绑定"我")
     var contactToBind by remember { mutableStateOf<Contact?>(null) }
@@ -137,20 +148,22 @@ fun MainScreen(
     }
 
     // 使用 Box 包裹所有内容，确保按钮在最上层
-    androidx.compose.foundation.layout.Box(
+    Box(
         modifier = Modifier.fillMaxSize()
     ) {
         // 使用自定义底部面板包裹地图和设备列表
         CustomBottomSheet(
-            modifier = Modifier.fillMaxSize(),
-            initialValue = SheetValue.Expanded, // 启动时直接展开联系人页面
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(bottom = bottomNavHeightDp), // 为底部导航栏留出空间
+            initialValue = SheetValue.HalfExpanded, // 启动时半展开
             backgroundContent = {
                 // 背景：全屏地图视图
                 MapViewWrapper(
                     modifier = Modifier.fillMaxSize(),
-                    devices = devices, // 传递空列表，不显示设备
-                    contacts = contacts, // 传递联系人列表用于渲染联系人位置 Marker
-                    currentDeviceHeading = currentHeading, // 传递实时朝向
+                    devices = devices,
+                    contacts = if (selectedTab == FindMyTab.PEOPLE) contacts else emptyList(),
+                    currentDeviceHeading = currentHeading,
                     onMapReady = { map ->
                         viewModel.setGoogleMap(map)
                         if (permissionsState.allPermissionsGranted) {
@@ -158,103 +171,99 @@ fun MainScreen(
                         }
                     },
                     onMarkerClick = { device ->
-                        // 理论上不会触发，因为没有设备 Marker
+                        selectedTab = FindMyTab.DEVICES
                     },
                     onContactMarkerClick = { contact ->
-                        // 点击联系人 Marker 时，移动地图到联系人位置
                         contact.location?.let { location ->
-                            // 仅移动地图，不再设置 selectedContact 触发详情页
-                            // contactViewModel.selectContact(contact)
-                            viewModel.clearSelectedDevice() // 清除选中的设备
+                            viewModel.clearSelectedDevice()
                             MapCameraHelper.animateToLocation(googleMap, location, zoom = 15f)
                             viewModel.updateSheetValue(SheetValue.HalfExpanded)
                         }
                     },
                     onMapClick = {
-                        // 点击地图空白区域，取消选中设备和联系人
                         viewModel.clearSelectedDevice()
                         contactViewModel.clearSelectedContact()
                     }
                 )
             },
-        sheetContent = {
-            // 直接显示联系人列表和当前设备
-            ContactListPanel(
-                currentUser = currentUser,
-                meName = meName,
-                meAvatarUrl = meAvatarUrl,
-                myDevice = myDevice,
-                myAddress = myAddress,
-                contacts = contacts,
-                requestingLocationFor = requestingLocationFor,
-                trackingContactUid = trackingContactUid,
-                onContactClick = { contact ->
-                    // 点击联系人时：移动地图
-                    viewModel.clearSelectedDevice()
+            sheetContent = {
+                // Tab 内容切换
+                TabContent(
+                    selectedTab = selectedTab,
+                    // People Tab 参数
+                    contacts = contacts,
+                    requestingLocationFor = requestingLocationFor,
+                    trackingContactUid = trackingContactUid,
+                    geofenceContactIds = geofenceContactIds,
+                    onContactClick = { contact ->
+                        viewModel.clearSelectedDevice()
+                        contact.location?.let { location ->
+                            MapCameraHelper.animateToLocation(googleMap, location, zoom = 15f)
+                            viewModel.updateSheetValue(SheetValue.HalfExpanded)
+                        }
+                    },
+                    onAddContactClick = { contactViewModel.showAddDialog() },
+                    onNavigate = { contact ->
+                        if (contact.location != null) {
+                            contactToNavigate = contact
+                        }
+                    },
+                    onBindContact = { contact ->
+                        contactToBind = contact
+                        contactPickerLauncher.launch(null)
+                    },
+                    onPauseShare = { contact -> contactViewModel.pauseShare(contact) },
+                    onResumeShare = { contact, shareDuration ->
+                        contactViewModel.resumeShare(contact, shareDuration)
+                    },
+                    onRemoveContact = { contact -> contactViewModel.removeContact(contact) },
+                    onAcceptShare = { contact -> contactViewModel.acceptShare(contact.id) },
+                    onRejectShare = { contact -> contactViewModel.rejectShare(contact.id) },
+                    onRequestLocationUpdate = { targetUid ->
+                        contactViewModel.requestLocationUpdate(targetUid)
+                    },
+                    onStartContinuousTracking = { targetUid ->
+                        contactViewModel.startContinuousTracking(targetUid)
+                    },
+                    onStopContinuousTracking = { targetUid ->
+                        contactViewModel.stopContinuousTracking(targetUid)
+                    },
+                    onPlaySound = { targetUid -> contactViewModel.requestPlaySound(targetUid) },
+                    onStopSound = { contactViewModel.stopRinging() },
+                    isRinging = ringingContactUid != null,
+                    onLostModeClick = { contact -> contactForLostMode = contact },
+                    onGeofenceClick = { contact -> contactForGeofence = contact },
+                    // Devices Tab 参数
+                    myDevice = myDevice,
+                    myAddress = myAddress,
+                    // Me Tab 参数
+                    currentUser = currentUser,
+                    meName = meName,
+                    meAvatarUrl = meAvatarUrl,
+                    sharingWithCount = contacts.size,
+                    isSmartLocationEnabled = isSmartLocationEnabled,
+                    onSmartLocationToggle = { enabled ->
+                        viewModel.setSmartModeEnabled(enabled)
+                    },
+                    onNameChange = { name -> contactViewModel.updateMeName(name) },
+                    onAvatarChange = { avatarUrl -> contactViewModel.updateMeAvatar(avatarUrl) }
+                )
+            },
+            onSheetValueChange = { value ->
+                viewModel.updateSheetValue(value)
+            },
+            onOffsetChange = { offset ->
+                MapCameraHelper.adjustMapPadding(googleMap, offset + bottomNavHeightPx)
+                bottomSheetOffsetPx = offset
+            }
+        )
 
-                    contact.location?.let { location ->
-                        MapCameraHelper.animateToLocation(googleMap, location, zoom = 15f)
-                        viewModel.updateSheetValue(SheetValue.HalfExpanded)
-                    }
-                },
-                onAddContactClick = {
-                    contactViewModel.showAddDialog()
-                },
-                onNavigate = { contact ->
-                    // 显示导航选择对话框
-                    if (contact.location != null) {
-                        contactToNavigate = contact
-                    }
-                },
-                onBindContact = { contact ->
-                    contactToBind = contact
-                    contactPickerLauncher.launch(null)
-                },
-                onPauseShare = { contact ->
-                    contactViewModel.pauseShare(contact)
-                },
-                onResumeShare = { contact, duration ->
-                    contactViewModel.resumeShare(contact, duration)
-                },
-                onRemoveContact = { contact ->
-                    contactViewModel.removeContact(contact)
-                },
-                onAcceptShare = { contact ->
-                    contactViewModel.acceptShare(contact.id)
-                },
-                onRejectShare = { contact ->
-                    contactViewModel.rejectShare(contact.id)
-                },
-                onRequestLocationUpdate = { targetUid ->
-                    contactViewModel.requestLocationUpdate(targetUid)
-                },
-                onStartContinuousTracking = { targetUid ->
-                    contactViewModel.startContinuousTracking(targetUid)
-                },
-                onStopContinuousTracking = { targetUid ->
-                    contactViewModel.stopContinuousTracking(targetUid)
-                },
-                onPlaySound = { targetUid ->
-                    contactViewModel.requestPlaySound(targetUid)
-                },
-                onLostModeClick = { contact ->
-                    contactForLostMode = contact
-                },
-                onGeofenceClick = { contact ->
-                    contactForGeofence = contact
-                },
-                geofenceContactIds = geofenceContactIds
-            )
-        },
-        onSheetValueChange = { value ->
-            viewModel.updateSheetValue(value)
-        },
-        onOffsetChange = { offset ->
-            // 面板偏移量变化时，动态调整地图 Padding 和按钮位置
-            MapCameraHelper.adjustMapPadding(googleMap, offset)
-            bottomSheetOffsetPx = offset
-        }
-    )
+        // 底部导航栏
+        BottomNavBar(
+            selectedTab = selectedTab,
+            onTabSelected = { tab -> selectedTab = tab },
+            modifier = Modifier.align(Alignment.BottomCenter)
+        )
 
         // 定位按钮（右下角）- 移到最上层确保可见
         if (permissionsState.allPermissionsGranted) {
@@ -264,7 +273,7 @@ fun MainScreen(
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .padding(16.dp)
-                    .padding(bottom = bottomSheetOffsetDp + 16.dp) // 动态避开底部面板
+                    .padding(bottom = bottomSheetOffsetDp + bottomNavHeightDp + 16.dp)
             )
         }
 
@@ -274,7 +283,7 @@ fun MainScreen(
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .padding(16.dp)
-                .padding(top = 40.dp) // 避免与状态栏重叠
+                .padding(top = 40.dp)
         )
     }
 
@@ -356,21 +365,33 @@ fun MainScreen(
 
     // 丢失模式对话框
     contactForLostMode?.let { contact ->
+        // 判断当前联系人是否正在播放提示音
+        val isSoundPlaying = ringingContactUid == contact.targetUserId
+
         LostModeDialog(
             contactName = contact.name,
-            currentConfig = LostModeConfig(), // TODO: 从联系人状态读取
+            currentConfig = LostModeConfig(
+                enabled = false, // TODO: 从联系人状态读取丢失模式是否启用
+                isSoundPlaying = isSoundPlaying
+            ),
             onDismiss = { contactForLostMode = null },
-            onConfirm = { config ->
+            onAction = { action, config ->
                 contact.targetUserId?.let { targetUid ->
-                    if (config.enabled) {
-                        contactViewModel.enableLostMode(
-                            targetUid = targetUid,
-                            message = config.message,
-                            phoneNumber = config.phoneNumber,
-                            playSound = config.playSound
-                        )
-                    } else {
-                        contactViewModel.disableLostMode(targetUid)
+                    when (action) {
+                        LostModeAction.ENABLE -> {
+                            contactViewModel.enableLostMode(
+                                targetUid = targetUid,
+                                message = config.message,
+                                phoneNumber = config.phoneNumber,
+                                playSound = config.playSound
+                            )
+                        }
+                        LostModeAction.DISABLE -> {
+                            contactViewModel.disableLostMode(targetUid)
+                        }
+                        LostModeAction.STOP_SOUND -> {
+                            contactViewModel.requestStopSound(targetUid)
+                        }
                     }
                 }
                 contactForLostMode = null

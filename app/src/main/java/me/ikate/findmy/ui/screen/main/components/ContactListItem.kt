@@ -22,10 +22,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.BatteryFull
+import androidx.compose.material.icons.filled.Battery4Bar
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Directions
+import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.Person
@@ -34,6 +36,12 @@ import androidx.compose.material.icons.filled.Radar
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilledTonalButton
@@ -91,6 +99,8 @@ fun ContactListItem(
     onStartContinuousTracking: () -> Unit = {},
     onStopContinuousTracking: () -> Unit = {},
     onPlaySound: () -> Unit = {},
+    onStopSound: () -> Unit = {},
+    isRinging: Boolean = false,
     onLostModeClick: () -> Unit = {},
     onGeofenceClick: () -> Unit = {},
     hasGeofence: Boolean = false,
@@ -143,23 +153,24 @@ fun ContactListItem(
         }
     }
 
-    Surface(
+    Card(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 6.dp),
-        shape = RoundedCornerShape(20.dp),
-        tonalElevation = if (isExpanded) 4.dp else 1.dp,
-        shadowElevation = if (isExpanded) 2.dp else 0.dp
+            .padding(horizontal = 16.dp)
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+        ),
+        elevation = CardDefaults.cardElevation(
+            defaultElevation = if (isExpanded) 4.dp else 1.dp
+        )
     ) {
         Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable(onClick = onClick)
+            modifier = Modifier.padding(16.dp)
         ) {
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
+                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 // 头像
@@ -198,6 +209,8 @@ fun ContactListItem(
                 onStartContinuousTracking = onStartContinuousTracking,
                 onStopContinuousTracking = onStopContinuousTracking,
                 onPlaySound = onPlaySound,
+                onStopSound = onStopSound,
+                isRinging = isRinging,
                 onLostModeClick = onLostModeClick,
                 onGeofenceClick = onGeofenceClick,
                 onNavigate = onNavigate,
@@ -214,10 +227,9 @@ fun ContactListItem(
 @Composable
 private fun ContactAvatar(contact: Contact) {
     Surface(
-        modifier = Modifier.size(60.dp),
+        modifier = Modifier.size(56.dp),
         shape = CircleShape,
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        tonalElevation = 2.dp
+        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
     ) {
         Box(contentAlignment = Alignment.Center) {
             if (!contact.avatarUrl.isNullOrBlank()) {
@@ -236,7 +248,7 @@ private fun ContactAvatar(contact: Contact) {
                 Text(
                     text = contact.name.take(1).uppercase(),
                     style = MaterialTheme.typography.headlineSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = MaterialTheme.colorScheme.primary,
                     fontWeight = FontWeight.Bold
                 )
             }
@@ -325,42 +337,72 @@ private fun RequestingStatusRow() {
 private fun DeviceStatusRow(contact: Contact) {
     val isOnline = TimeFormatter.isOnline(contact.lastUpdateTime ?: 0L)
     val onlineText = if (isOnline) "在线" else "离线"
-    val onlineColor = if (isOnline) MaterialTheme.colorScheme.primary else Color.Gray
+    val onlineColor = if (isOnline) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
     val timeText = TimeFormatter.formatUpdateTime(contact.lastUpdateTime ?: 0L)
     val deviceName = contact.deviceName ?: "未知设备"
+    val battery = contact.battery ?: 100
 
-    Row(verticalAlignment = Alignment.CenterVertically) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        // 电量指示
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Default.Battery4Bar,
+                contentDescription = "电量",
+                modifier = Modifier.size(14.dp),
+                tint = when {
+                    battery <= 20 -> MaterialTheme.colorScheme.error
+                    battery <= 50 -> MaterialTheme.colorScheme.tertiary
+                    else -> MaterialTheme.colorScheme.primary
+                }
+            )
+            Text(
+                text = "$battery%",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
         Text(
-            text = "$deviceName • ",
+            text = "•",
             style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.secondary
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+
+        Text(
+            text = deviceName,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
+        Text(
+            text = "•",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
         Text(
             text = onlineText,
             style = MaterialTheme.typography.bodySmall,
             color = onlineColor
         )
+
         Text(
-            text = " • $timeText",
+            text = "•",
             style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.secondary
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
 
-        // 电量指示
-        if (contact.battery != null && contact.battery < 100) {
-            Spacer(modifier = Modifier.width(8.dp))
-            androidx.compose.material3.Icon(
-                imageVector = Icons.Default.BatteryFull,
-                contentDescription = "电量",
-                modifier = Modifier.size(14.dp),
-                tint = if (contact.battery < 20) Color.Red else Color.Gray
-            )
-            Text(
-                text = "${contact.battery}%",
-                style = MaterialTheme.typography.bodySmall,
-                color = if (contact.battery < 20) Color.Red else Color.Gray
-            )
-        }
+        Text(
+            text = timeText,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 
@@ -380,6 +422,14 @@ private fun DistanceAndAddressRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
+        // 位置图标
+        Icon(
+            imageVector = Icons.Default.LocationOn,
+            contentDescription = null,
+            modifier = Modifier.size(14.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+
         if (distanceText != null) {
             Text(
                 text = distanceText,
@@ -390,14 +440,14 @@ private fun DistanceAndAddressRow(
             Text(
                 text = "•",
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.secondary
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
 
         Text(
             text = addressText ?: "正在获取位置...",
             style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.secondary,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f, fill = false)
@@ -479,6 +529,8 @@ private fun ExpandedActionBar(
     onStartContinuousTracking: () -> Unit,
     onStopContinuousTracking: () -> Unit,
     onPlaySound: () -> Unit,
+    onStopSound: () -> Unit,
+    isRinging: Boolean,
     onLostModeClick: () -> Unit,
     onGeofenceClick: () -> Unit,
     onNavigate: () -> Unit,
@@ -499,126 +551,208 @@ private fun ExpandedActionBar(
     val isPendingRequest = contact.shareStatus == ShareStatus.PENDING &&
             contact.shareDirection == ShareDirection.THEY_SHARE_TO_ME
 
+    var showMoreMenu by remember { mutableStateOf(false) }
+
     AnimatedVisibility(
         visible = visible,
         enter = expandVertically() + fadeIn(),
         exit = shrinkVertically() + fadeOut()
     ) {
-        Column(
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 12.dp, vertical = 4.dp)
                 .padding(bottom = 8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.SpaceEvenly
         ) {
-            // 第一行：定位相关操作
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly
-            ) {
-                // 刷新位置
+            // 刷新/实时追踪
+            if (isTracking) {
+                ActionButton(
+                    icon = Icons.Default.Stop,
+                    label = "停止追踪",
+                    enabled = true,
+                    isDestructive = true,
+                    onClick = onStopContinuousTracking
+                )
+            } else {
                 ActionButton(
                     icon = Icons.Default.Refresh,
-                    label = "刷新",
-                    enabled = canRefresh && !isRequestingLocation && !isTracking,
+                    label = if (isRequestingLocation) "定位中" else "刷新",
+                    enabled = canRefresh && !isRequestingLocation,
                     onClick = onRequestLocationUpdate
                 )
+            }
 
-                // 实时追踪
-                if (isTracking) {
-                    ActionButton(
-                        icon = Icons.Default.Stop,
-                        label = "停止",
-                        enabled = true,
-                        isDestructive = true,
-                        onClick = onStopContinuousTracking
-                    )
-                } else {
-                    ActionButton(
-                        icon = Icons.Default.Radar,
-                        label = "实时",
-                        enabled = canRefresh && !isRequestingLocation,
-                        onClick = onStartContinuousTracking
-                    )
-                }
+            // 导航
+            ActionButton(
+                icon = Icons.Default.Directions,
+                label = "导航",
+                enabled = canNavigate,
+                onClick = onNavigate
+            )
 
-                // 响铃查找
+            // 响铃查找 / 停止响铃
+            if (isRinging) {
+                ActionButton(
+                    icon = Icons.Default.Stop,
+                    label = "停止响铃",
+                    enabled = true,
+                    onClick = onStopSound
+                )
+            } else {
                 ActionButton(
                     icon = Icons.AutoMirrored.Filled.VolumeUp,
                     label = "响铃",
                     enabled = canRefresh,
                     onClick = onPlaySound
                 )
+            }
 
-                // 导航
+            // 暂停/恢复
+            if (contact.isPaused) {
                 ActionButton(
-                    icon = Icons.Default.Directions,
-                    label = "导航",
-                    enabled = canNavigate,
-                    onClick = onNavigate
+                    icon = Icons.Default.PlayArrow,
+                    label = "恢复共享",
+                    enabled = canControlShare,
+                    onClick = onResumeClick
+                )
+            } else {
+                ActionButton(
+                    icon = Icons.Default.Pause,
+                    label = "暂停共享",
+                    enabled = canControlShare,
+                    onClick = onPauseClick
                 )
             }
 
-            // 第二行：设备管理操作
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly
-            ) {
-                // 丢失模式
+            // 更多菜单
+            Box {
                 ActionButton(
-                    icon = Icons.Default.Lock,
-                    label = "丢失",
-                    enabled = canRefresh,
-                    onClick = onLostModeClick
+                    icon = Icons.Default.MoreHoriz,
+                    label = "更多",
+                    onClick = { showMoreMenu = true }
                 )
 
-                // 地理围栏
-                ActionButton(
-                    icon = Icons.Default.MyLocation,
-                    label = if (hasGeofence) "围栏✓" else "围栏",
-                    enabled = canRefresh,
-                    onClick = onGeofenceClick
-                )
+                DropdownMenu(
+                    expanded = showMoreMenu,
+                    onDismissRequest = { showMoreMenu = false }
+                ) {
+                    // 实时追踪
+                    if (!isTracking) {
+                        DropdownMenuItem(
+                            text = { Text("实时追踪") },
+                            onClick = {
+                                showMoreMenu = false
+                                onStartContinuousTracking()
+                            },
+                            leadingIcon = {
+                                androidx.compose.material3.Icon(
+                                    Icons.Default.Radar,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            },
+                            enabled = canRefresh && !isRequestingLocation
+                        )
+                    }
 
-                // 暂停/恢复
-                if (contact.isPaused) {
-                    ActionButton(
-                        icon = Icons.Default.PlayArrow,
-                        label = "恢复",
-                        enabled = canControlShare,
-                        onClick = onResumeClick
+                    // 地理围栏
+                    DropdownMenuItem(
+                        text = { Text(if (hasGeofence) "地理围栏 (已设置)" else "地理围栏") },
+                        onClick = {
+                            showMoreMenu = false
+                            onGeofenceClick()
+                        },
+                        leadingIcon = {
+                            androidx.compose.material3.Icon(
+                                Icons.Default.MyLocation,
+                                contentDescription = null,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        },
+                        enabled = canRefresh
                     )
-                } else {
-                    ActionButton(
-                        icon = Icons.Default.Pause,
-                        label = "暂停",
-                        enabled = canControlShare,
-                        onClick = onPauseClick
-                    )
-                }
 
-                // 绑定
-                ActionButton(
-                    icon = Icons.Default.Person,
-                    label = "绑定",
-                    onClick = onBindClick
-                )
+                    // 丢失模式
+                    DropdownMenuItem(
+                        text = { Text("丢失模式") },
+                        onClick = {
+                            showMoreMenu = false
+                            onLostModeClick()
+                        },
+                        leadingIcon = {
+                            androidx.compose.material3.Icon(
+                                Icons.Default.Lock,
+                                contentDescription = null,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        },
+                        enabled = canRefresh
+                    )
 
-                // 删除/拒绝
-                if (isPendingRequest) {
-                    ActionButton(
-                        icon = Icons.Default.Delete,
-                        label = "拒绝",
-                        isDestructive = true,
-                        onClick = onRejectClick
+                    // 绑定联系人
+                    DropdownMenuItem(
+                        text = { Text("绑定联系人") },
+                        onClick = {
+                            showMoreMenu = false
+                            onBindClick()
+                        },
+                        leadingIcon = {
+                            androidx.compose.material3.Icon(
+                                Icons.Default.Person,
+                                contentDescription = null,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
                     )
-                } else {
-                    ActionButton(
-                        icon = Icons.Default.Delete,
-                        label = "移除",
-                        isDestructive = true,
-                        onClick = onRemoveClick
-                    )
+
+                    // 分隔线
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+                    // 移除/拒绝
+                    if (isPendingRequest) {
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    "拒绝邀请",
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            },
+                            onClick = {
+                                showMoreMenu = false
+                                onRejectClick()
+                            },
+                            leadingIcon = {
+                                androidx.compose.material3.Icon(
+                                    Icons.Default.Delete,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp),
+                                    tint = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        )
+                    } else {
+                        DropdownMenuItem(
+                            text = {
+                                Text(
+                                    "移除联系人",
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            },
+                            onClick = {
+                                showMoreMenu = false
+                                onRemoveClick()
+                            },
+                            leadingIcon = {
+                                androidx.compose.material3.Icon(
+                                    Icons.Default.Delete,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp),
+                                    tint = MaterialTheme.colorScheme.error
+                                )
+                            }
+                        )
+                    }
                 }
             }
         }

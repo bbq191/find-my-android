@@ -39,8 +39,18 @@ data class LostModeConfig(
     val enabled: Boolean = false,
     val message: String = "",
     val phoneNumber: String = "",
-    val playSound: Boolean = true
+    val playSound: Boolean = true,
+    val isSoundPlaying: Boolean = false  // 当前是否正在播放声音
 )
+
+/**
+ * 丢失模式操作类型
+ */
+enum class LostModeAction {
+    ENABLE,         // 启用丢失模式
+    DISABLE,        // 关闭丢失模式
+    STOP_SOUND      // 仅停止提示音
+}
 
 /**
  * 丢失模式对话框
@@ -51,13 +61,14 @@ fun LostModeDialog(
     contactName: String,
     currentConfig: LostModeConfig = LostModeConfig(),
     onDismiss: () -> Unit,
-    onConfirm: (LostModeConfig) -> Unit
+    onAction: (LostModeAction, LostModeConfig) -> Unit
 ) {
     var message by remember { mutableStateOf(currentConfig.message) }
     var phoneNumber by remember { mutableStateOf(currentConfig.phoneNumber) }
     var playSound by remember { mutableStateOf(currentConfig.playSound) }
 
     val isEnabled = currentConfig.enabled
+    val isSoundPlaying = currentConfig.isSoundPlaying
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -71,24 +82,33 @@ fun LostModeDialog(
         },
         title = {
             Text(
-                text = if (isEnabled) "关闭丢失模式" else "启用丢失模式",
+                text = if (isEnabled) "丢失模式管理" else "启用丢失模式",
                 fontWeight = FontWeight.Bold
             )
         },
         text = {
             Column {
                 if (isEnabled) {
-                    // 当前处于丢失模式，显示关闭提示
+                    // 当前处于丢失模式，显示管理选项
                     Text(
                         text = "「$contactName」当前处于丢失模式。",
                         style = MaterialTheme.typography.bodyMedium
                     )
                     Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "关闭丢失模式后，设备将恢复正常状态，不再显示丢失消息。",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.secondary
-                    )
+
+                    if (isSoundPlaying) {
+                        Text(
+                            text = "提示音正在播放中，你可以选择停止提示音或完全关闭丢失模式。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.secondary
+                        )
+                    } else {
+                        Text(
+                            text = "关闭丢失模式后，设备将恢复正常状态，不再显示丢失消息。",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.secondary
+                        )
+                    }
                 } else {
                     // 启用丢失模式的配置表单
                     Text(
@@ -170,17 +190,20 @@ fun LostModeDialog(
         },
         confirmButton = {
             if (isEnabled) {
+                // 已启用状态：显示关闭按钮
                 TextButton(
                     onClick = {
-                        onConfirm(LostModeConfig(enabled = false))
+                        onAction(LostModeAction.DISABLE, LostModeConfig(enabled = false))
                     }
                 ) {
                     Text("关闭丢失模式", color = MaterialTheme.colorScheme.error)
                 }
             } else {
+                // 未启用状态：显示启用按钮
                 TextButton(
                     onClick = {
-                        onConfirm(
+                        onAction(
+                            LostModeAction.ENABLE,
                             LostModeConfig(
                                 enabled = true,
                                 message = message.ifBlank { "此设备已丢失，请联系机主" },
@@ -195,8 +218,20 @@ fun LostModeDialog(
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("取消")
+            Row {
+                // 如果正在播放声音，显示停止提示音按钮
+                if (isEnabled && isSoundPlaying) {
+                    TextButton(
+                        onClick = {
+                            onAction(LostModeAction.STOP_SOUND, currentConfig)
+                        }
+                    ) {
+                        Text("停止提示音", color = MaterialTheme.colorScheme.tertiary)
+                    }
+                }
+                TextButton(onClick = onDismiss) {
+                    Text("取消")
+                }
             }
         }
     )

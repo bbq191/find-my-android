@@ -3,24 +3,16 @@ package me.ikate.findmy.service
 import android.app.Service
 import android.content.Context
 import android.content.Intent
-import android.graphics.PixelFormat
 import android.os.Build
 import android.os.IBinder
 import android.util.Log
-import android.view.Gravity
-import android.view.LayoutInflater
-import android.view.View
-import android.view.WindowManager
-import android.widget.Button
-import android.widget.TextView
 import androidx.core.content.edit
-import me.ikate.findmy.R
-import me.ikate.findmy.ui.LostModeAuthActivity
+import me.ikate.findmy.ui.LostModeActivity
 import me.ikate.findmy.util.NotificationHelper
 
 /**
  * 丢失模式服务
- * 当设备被标记为丢失时，显示全屏覆盖层，显示机主联系信息
+ * 当设备被标记为丢失时，显示全屏 Activity，显示机主联系信息
  *
  * 功能：
  * - 显示丢失消息
@@ -88,16 +80,7 @@ class LostModeService : Service() {
         }
     }
 
-    private var windowManager: WindowManager? = null
-    private var overlayView: View? = null
-    private var isOverlayShowing = false
-
     override fun onBind(intent: Intent?): IBinder? = null
-
-    override fun onCreate() {
-        super.onCreate()
-        windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
@@ -140,16 +123,14 @@ class LostModeService : Service() {
         )
         startForeground(NOTIFICATION_ID, notification)
 
-        // 显示覆盖层
-        showOverlay(message, phoneNumber)
+        // 启动丢失模式全屏 Activity
+        launchLostModeActivity(message, phoneNumber)
 
         // 播放声音
         if (playSound) {
             SoundPlaybackService.startPlaying(this, requesterUid)
         }
 
-        // 启动高频位置追踪
-        // 通过 FCM 触发连续追踪
         Log.d(TAG, "丢失模式已启用，开始高频位置更新")
     }
 
@@ -164,9 +145,6 @@ class LostModeService : Service() {
             remove(KEY_PHONE)
         }
 
-        // 移除覆盖层
-        hideOverlay()
-
         // 停止声音
         SoundPlaybackService.stopPlaying(this)
 
@@ -175,110 +153,22 @@ class LostModeService : Service() {
         stopSelf()
     }
 
-    private fun showOverlay(message: String, phoneNumber: String) {
-        if (isOverlayShowing) {
-            hideOverlay()
-        }
-
+    /**
+     * 启动丢失模式全屏 Activity
+     */
+    private fun launchLostModeActivity(message: String, phoneNumber: String) {
         try {
-            // 创建覆盖层视图
-            val inflater = getSystemService(Context.LAYOUT_INFLATER_SERVICE) as LayoutInflater
-            overlayView = inflater.inflate(R.layout.lost_mode_overlay, null)
-
-            // 设置消息和电话
-            overlayView?.findViewById<TextView>(R.id.tvMessage)?.text = message
-            overlayView?.findViewById<TextView>(R.id.tvPhone)?.apply {
-                text = if (phoneNumber.isNotBlank()) "联系电话: $phoneNumber" else ""
-                visibility = if (phoneNumber.isNotBlank()) View.VISIBLE else View.GONE
-            }
-
-            // 设置拨打电话按钮
-            overlayView?.findViewById<Button>(R.id.btnCall)?.apply {
-                visibility = if (phoneNumber.isNotBlank()) View.VISIBLE else View.GONE
-                setOnClickListener {
-                    val callIntent = Intent(Intent.ACTION_DIAL).apply {
-                        data = android.net.Uri.parse("tel:$phoneNumber")
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    }
-                    startActivity(callIntent)
-                }
-            }
-
-            // 关闭按钮（需要验证机主身份）
-            overlayView?.findViewById<Button>(R.id.btnDismiss)?.setOnClickListener {
-                // 启动身份验证 Activity
-                launchAuthActivity()
-            }
-
-            // 窗口参数
-            val layoutType = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-            } else {
-                @Suppress("DEPRECATION")
-                WindowManager.LayoutParams.TYPE_PHONE
-            }
-
-            // FLAG_SHOW_WHEN_LOCKED 虽已弃用，但对于 WindowManager 系统覆盖层仍是必需的
-            // Activity 可用 setShowWhenLocked()，但 Service 中的 overlay 无替代方案
-            @Suppress("DEPRECATION")
-            val flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                    WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED
-
-            val params = WindowManager.LayoutParams(
-                WindowManager.LayoutParams.MATCH_PARENT,
-                WindowManager.LayoutParams.MATCH_PARENT,
-                layoutType,
-                flags,
-                PixelFormat.TRANSLUCENT
-            ).apply {
-                gravity = Gravity.CENTER
-            }
-
-            windowManager?.addView(overlayView, params)
-            isOverlayShowing = true
-
-            Log.d(TAG, "丢失模式覆盖层已显示")
+            val intent = LostModeActivity.createIntent(this, message, phoneNumber)
+            startActivity(intent)
+            Log.d(TAG, "丢失模式 Activity 已启动")
         } catch (e: Exception) {
-            Log.e(TAG, "显示覆盖层失败", e)
-            // 如果没有覆盖层权限，发送通知代替
+            Log.e(TAG, "启动丢失模式 Activity 失败", e)
+            // 发送通知作为备用方案
             NotificationHelper.sendDebugNotification(
                 this,
                 "设备已丢失",
-                "$message\n$phoneNumber"
+                "$message\n联系电话: $phoneNumber"
             )
         }
-    }
-
-    /**
-     * 启动身份验证 Activity
-     */
-    private fun launchAuthActivity() {
-        try {
-            val intent = Intent(this, LostModeAuthActivity::class.java).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            startActivity(intent)
-        } catch (e: Exception) {
-            Log.e(TAG, "启动身份验证 Activity 失败", e)
-        }
-    }
-
-    private fun hideOverlay() {
-        try {
-            overlayView?.let {
-                windowManager?.removeView(it)
-                overlayView = null
-            }
-            isOverlayShowing = false
-            Log.d(TAG, "丢失模式覆盖层已移除")
-        } catch (e: Exception) {
-            Log.e(TAG, "移除覆盖层失败", e)
-        }
-    }
-
-    override fun onDestroy() {
-        hideOverlay()
-        super.onDestroy()
     }
 }
