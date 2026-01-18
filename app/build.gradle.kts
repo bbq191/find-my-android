@@ -2,9 +2,11 @@ import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
+    // Removed kotlin.android - using AGP 9.0 built-in Kotlin support
+    // The kotlin.compose plugin is still required for Compose compiler
+    // See: https://blog.jetbrains.com/kotlin/2026/01/update-your-projects-for-agp9/
     alias(libs.plugins.kotlin.compose)
-    alias(libs.plugins.google.services)
+    alias(libs.plugins.ksp)
 }
 
 // 读取 local.properties
@@ -19,6 +21,11 @@ android {
     namespace = "me.ikate.findmy"
     compileSdk = 36
 
+    // Enable resValues feature for this module (replaces deprecated global setting)
+    buildFeatures {
+        resValues = true
+    }
+
     defaultConfig {
         applicationId = "me.ikate.findmy"
         minSdk = 36
@@ -32,8 +39,31 @@ android {
             abiFilters.add("x86_64")
         }
 
-        // 从 local.properties 读取 API Key
-        manifestPlaceholders["MAPS_API_KEY"] = localProperties.getProperty("MAPS_API_KEY", "")
+        // Mapbox Access Token (运行时使用)
+        val mapboxToken = localProperties.getProperty("MAPBOX_ACCESS_TOKEN", "")
+        resValue("string", "mapbox_access_token", mapboxToken)
+
+        // 高德定位 API Key
+        val amapKey = localProperties.getProperty("AMAP_API_KEY", "")
+        manifestPlaceholders["AMAP_API_KEY"] = amapKey
+
+        // MQTT 配置 (EMQX Cloud)
+        val mqttBrokerUrl = localProperties.getProperty("MQTT_BROKER_URL", "")
+        val mqttUsername = localProperties.getProperty("MQTT_USERNAME", "")
+        val mqttPassword = localProperties.getProperty("MQTT_PASSWORD", "")
+        buildConfigField("String", "MQTT_BROKER_URL", "\"$mqttBrokerUrl\"")
+        buildConfigField("String", "MQTT_USERNAME", "\"$mqttUsername\"")
+        buildConfigField("String", "MQTT_PASSWORD", "\"$mqttPassword\"")
+
+        // 个推推送配置
+        val getuiAppId = localProperties.getProperty("GETUI_APP_ID", "")
+        val getuiAppKey = localProperties.getProperty("GETUI_APP_KEY", "")
+        val getuiAppSecret = localProperties.getProperty("GETUI_APP_SECRET", "")
+        manifestPlaceholders["GETUI_APP_ID"] = getuiAppId
+        manifestPlaceholders["GETUI_APP_KEY"] = getuiAppKey
+        manifestPlaceholders["GETUI_APP_SECRET"] = getuiAppSecret
+        buildConfigField("String", "GETUI_APP_ID", "\"$getuiAppId\"")
+        buildConfigField("String", "GETUI_APP_KEY", "\"$getuiAppKey\"")
     }
 
     signingConfigs {
@@ -68,6 +98,11 @@ android {
     buildToolsVersion = "36.1.0"
 }
 
+// Room schema 导出目录 (KSP 配置需要放在 android 块外面)
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
+}
+
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
     compilerOptions {
         jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
@@ -88,10 +123,12 @@ dependencies {
     // ViewModel Compose
     implementation(libs.androidx.lifecycle.viewmodel.compose)
 
-    // Google Maps
-    implementation(libs.maps.compose)
-    implementation(libs.play.services.maps)
-    implementation(libs.play.services.location)
+    // Mapbox Maps SDK
+    implementation(libs.mapbox.maps)
+    implementation(libs.mapbox.compose)
+
+    // 高德定位 SDK
+    implementation(libs.amap.location)
 
     // 权限处理
     implementation(libs.accompanist.permissions)
@@ -99,17 +136,31 @@ dependencies {
     // 图片加载
     implementation(libs.coil.compose)
 
-    // Firebase
-    implementation(platform(libs.firebase.bom))
-    implementation(libs.firebase.firestore)
-    implementation(libs.firebase.messaging)
-    implementation(libs.firebase.auth)
+    // Firebase 已完全移除，使用 MQTT + Room + 个推 替代
 
     // WorkManager
     implementation(libs.androidx.work.runtime.ktx)
 
     // Biometric (身份验证)
     implementation(libs.androidx.biometric)
+
+    // Security Crypto (加密存储)
+    implementation(libs.androidx.security.crypto)
+
+    // MQTT 客户端 (Eclipse Paho)
+    implementation(libs.paho.mqtt.client)
+
+    // Room 数据库
+    implementation(libs.room.runtime)
+    implementation(libs.room.ktx)
+    ksp(libs.room.compiler)
+
+    // JSON 序列化
+    implementation(libs.gson)
+
+    // 个推推送
+    implementation(libs.getui.sdk)
+    implementation(libs.getui.core)
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

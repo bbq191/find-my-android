@@ -4,26 +4,24 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.os.BatteryManager
 import android.os.Build
-import com.google.android.gms.location.FusedLocationProviderClient
-import com.google.android.gms.location.LocationServices
-import com.google.android.gms.location.Priority
-import com.google.android.gms.maps.model.LatLng
-import com.google.firebase.auth.FirebaseAuth
-import kotlinx.coroutines.tasks.await
 import me.ikate.findmy.data.model.Device
 import me.ikate.findmy.data.model.DeviceType
+import me.ikate.findmy.data.repository.AuthRepository
 import me.ikate.findmy.data.repository.DeviceRepository
 
 /**
  * 位置上报服务
- * 负责获取当前设备位置和状态，上报到 Firebase
+ * 使用高德定位 SDK 获取当前设备位置，通过 MQTT 同步到服务器
+ *
+ * 注意：
+ * - 高德定位返回 GCJ-02 坐标，AmapLocationService 内部已转换为 WGS-84
+ * - 使用前需要确保已调用 PrivacyManager.initPrivacy() 初始化隐私合规
+ * - 数据存储在本地 Room 数据库，通过 MQTT 实时同步
  */
 class LocationReportService(private val context: Context) {
 
-    private val fusedLocationClient: FusedLocationProviderClient =
-        LocationServices.getFusedLocationProviderClient(context)
-    private val deviceRepository = DeviceRepository()
-    private val auth = FirebaseAuth.getInstance()
+    private val amapLocationService = AmapLocationService(context)
+    private val deviceRepository = DeviceRepository(context)
 
     /**
      * 获取当前设备ID
@@ -84,83 +82,62 @@ class LocationReportService(private val context: Context) {
     }
 
     /**
-     * 获取当前位置并上报到 Firebase
-     * 注意：需要已授予定位权限
+     * 获取当前位置并上报
+     * 使用高德定位 SDK 获取高精度位置，保存到本地并通过 MQTT 同步
      *
-     * @param priority 定位优先级，默认为高精度
-     * @return 上报是否成功
+     * @param timeout 定位超时时间（毫秒），默认 20 秒
+     * @return 上报结果，包含设备信息
      */
-    @SuppressLint("MissingPermission")
-    suspend fun reportCurrentLocation(
-        priority: Int = Priority.PRIORITY_HIGH_ACCURACY
-    ): Result<Device> {
+    suspend fun reportCurrentLocation(timeout: Long = 20000L): Result<Device> {
         return try {
-            // 尝试获取最后已知位置
-            var location = try {
-                fusedLocationClient.lastLocation.await()
-            } catch (e: Exception) {
-                android.util.Log.w("LocationReportService", "无法获取 LastLocation", e)
-                null
+            // 使用高德定位获取位置（内部已转换为 WGS-84）
+            val locationResult = amapLocationService.getLocation(timeout)
+
+            if (!locationResult.isSuccess) {
+                val errorMsg = "定位失败: ${locationResult.errorInfo} (错误码: ${locationResult.errorCode})"
+                android.util.Log.e("LocationReportService", errorMsg)
+                return Result.failure(Exception(errorMsg))
             }
 
-            // 如果没有最后已知位置，主动请求一次位置
-            if (location == null) {
-                android.util.Log.d(
-                    "LocationReportService",
-                    "Last location is null, requesting current location with priority: $priority"
-                )
-                try {
-                    location = fusedLocationClient.getCurrentLocation(
-                        priority,
-                        null
-                    ).await()
-                } catch (e: SecurityException) {
-                    android.util.Log.e(
-                        "LocationReportService",
-                        "获取当前位置权限/安全失败: 可能是 SHA-1 指纹不匹配或包名错误",
-                        e
-                    )
-                    return Result.failure(e)
-                } catch (e: Exception) {
-                    android.util.Log.e("LocationReportService", "获取当前位置失败", e)
-                    return Result.failure(e)
-                }
-            }
-
-            if (location == null) {
+            val point = locationResult.point
+            if (point.latitude().isNaN() || point.longitude().isNaN()) {
                 return Result.failure(Exception("无法获取位置信息，请确保已开启定位服务且信号良好"))
             }
 
-            // 获取GPS方向（bearing）
-            val bearing = if (location.hasBearing()) location.bearing else 0f
-            val currentUserId = auth.currentUser?.uid ?: ""
+            val currentUserId = AuthRepository.getUserId(context)
 
             android.util.Log.d(
                 "LocationReportService",
-                "🔐 当前用户UID: $currentUserId, 设备ID: ${getDeviceId()}"
+                "🔐 当前用户ID: $currentUserId, 设备ID: ${getDeviceId()}"
             )
 
-            // 创建设备对象（使用 WGS-84 坐标，DeviceRepository 会自动转换为 GCJ-02）
+            // 创建设备对象（坐标已是 WGS-84，Mapbox 直接使用）
             val device = Device(
                 id = getDeviceId(),
-                name = getDeviceName(), // 设备型号
+                name = getDeviceName(),
                 ownerId = currentUserId,
-                location = LatLng(location.latitude, location.longitude),
+                location = point,
                 battery = getBatteryLevel(),
                 lastUpdateTime = System.currentTimeMillis(),
                 isOnline = true,
                 deviceType = getDeviceType(),
-                customName = getCustomDeviceName(), // 设备自定义名称
-                bearing = bearing
+                customName = getCustomDeviceName(),
+                bearing = locationResult.bearing,
+                speed = locationResult.speed // GPS速度用于智能活动识别
             )
 
-            // 保存到 Firebase
+            // 保存到本地数据库并通过 MQTT 同步
             deviceRepository.saveDevice(device)
 
             android.util.Log.d(
                 "LocationReportService",
-                "✅ 位置上报成功: ${device.name} (ownerId=$currentUserId) at (${location.latitude}, ${location.longitude})"
+                "✅ 位置上报成功: ${device.name} (ownerId=$currentUserId) at (${point.latitude()}, ${point.longitude()})"
             )
+            android.util.Log.d(
+                "LocationReportService",
+                "📍 定位类型: ${getLocationTypeName(locationResult.locationType)}, 精度: ${locationResult.accuracy}m"
+            )
+
             Result.success(device)
         } catch (e: Exception) {
             android.util.Log.e("LocationReportService", "位置上报失败", e)
@@ -168,4 +145,25 @@ class LocationReportService(private val context: Context) {
         }
     }
 
+    /**
+     * 获取定位类型名称
+     */
+    private fun getLocationTypeName(type: Int): String {
+        return when (type) {
+            AmapLocationService.LOCATION_TYPE_GPS -> "GPS"
+            AmapLocationService.LOCATION_TYPE_NETWORK -> "网络"
+            AmapLocationService.LOCATION_TYPE_WIFI -> "WiFi"
+            AmapLocationService.LOCATION_TYPE_CELL -> "基站"
+            AmapLocationService.LOCATION_TYPE_OFFLINE -> "离线"
+            AmapLocationService.LOCATION_TYPE_LAST -> "缓存"
+            else -> "未知($type)"
+        }
+    }
+
+    /**
+     * 释放资源
+     */
+    fun destroy() {
+        amapLocationService.destroy()
+    }
 }

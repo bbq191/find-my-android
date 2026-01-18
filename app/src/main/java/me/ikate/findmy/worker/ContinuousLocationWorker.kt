@@ -10,7 +10,6 @@ import androidx.core.app.NotificationCompat
 import androidx.work.CoroutineWorker
 import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
-import com.google.android.gms.location.Priority
 import kotlinx.coroutines.delay
 import me.ikate.findmy.service.LocationReportService
 
@@ -117,9 +116,8 @@ class ContinuousLocationWorker(
      */
     private suspend fun reportLocation(updateCount: Int) {
         val startTime = System.currentTimeMillis()
-        val result = locationReportService.reportCurrentLocation(
-            Priority.PRIORITY_HIGH_ACCURACY
-        )
+        // 使用较短超时，确保快速响应
+        val result = locationReportService.reportCurrentLocation(timeout = 10000L)
         val duration = System.currentTimeMillis() - startTime
 
         if (result.isSuccess) {

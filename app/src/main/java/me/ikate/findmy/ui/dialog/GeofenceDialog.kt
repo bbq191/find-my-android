@@ -34,7 +34,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
-import com.google.android.gms.maps.model.LatLng
+import com.mapbox.geojson.Point
 
 /**
  * 地理围栏事件类型
@@ -51,7 +51,7 @@ enum class GeofenceEventType {
 data class GeofenceConfig(
     val enabled: Boolean = false,
     val locationName: String = "",
-    val center: LatLng? = null,
+    val center: Point? = null,
     val radiusMeters: Float = 200f,
     val eventType: GeofenceEventType = GeofenceEventType.BOTH,
     val notifyOnEnter: Boolean = true,
@@ -64,7 +64,7 @@ data class GeofenceConfig(
 @Composable
 fun GeofenceDialog(
     contactName: String,
-    contactLocation: LatLng?,
+    contactLocation: Point?,
     currentConfig: GeofenceConfig = GeofenceConfig(),
     onDismiss: () -> Unit,
     onConfirm: (GeofenceConfig) -> Unit

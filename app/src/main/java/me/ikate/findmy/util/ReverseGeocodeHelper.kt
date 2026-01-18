@@ -3,10 +3,12 @@ package me.ikate.findmy.util
 import android.content.Context
 import android.location.Geocoder
 import android.os.Build
-import com.google.android.gms.maps.model.LatLng
+import com.mapbox.geojson.Point
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import me.ikate.findmy.data.model.latitude
+import me.ikate.findmy.data.model.longitude
 import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.resume
@@ -14,6 +16,11 @@ import kotlin.coroutines.resume
 /**
  * 反向地理编码帮助类
  * 统一处理坐标转地址的逻辑，带内存缓存
+ *
+ * 注意：
+ * - 输入坐标为 WGS-84（Mapbox 使用的坐标系）
+ * - 在中国大陆范围内，会自动转换为 GCJ-02 后再进行反向编码
+ * - Android Geocoder 在中国使用高德服务，需要 GCJ-02 坐标
  */
 object ReverseGeocodeHelper {
 
@@ -67,6 +74,9 @@ object ReverseGeocodeHelper {
     /**
      * 获取地址（异步回调版本）
      * 用于 Compose 中的 LaunchedEffect
+     *
+     * @param latitude WGS-84 纬度（Mapbox 坐标系）
+     * @param longitude WGS-84 经度（Mapbox 坐标系）
      */
     suspend fun getAddressFromLocation(
         context: Context,
@@ -74,7 +84,7 @@ object ReverseGeocodeHelper {
         longitude: Double,
         onResult: (String) -> Unit
     ) {
-        // 先检查缓存
+        // 先检查缓存（使用原始 WGS-84 坐标作为缓存 key）
         getCachedAddress(latitude, longitude)?.let { cached ->
             onResult(cached)
             return
@@ -87,10 +97,19 @@ object ReverseGeocodeHelper {
                     return@withContext
                 }
 
+                // 在中国大陆范围内，将 WGS-84 转换为 GCJ-02
+                // Android Geocoder 在中国使用高德服务，需要 GCJ-02 坐标
+                val (gcjLat, gcjLng) = if (CoordinateConverter.isInChina(latitude, longitude)) {
+                    val gcj = CoordinateConverter.wgs84ToGcj02(latitude, longitude)
+                    gcj.latitude() to gcj.longitude()
+                } else {
+                    latitude to longitude
+                }
+
                 val geocoder = Geocoder(context, Locale.SIMPLIFIED_CHINESE)
 
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    geocoder.getFromLocation(latitude, longitude, 1) { addresses ->
+                    geocoder.getFromLocation(gcjLat, gcjLng, 1) { addresses ->
                         val result = if (addresses.isNotEmpty()) {
                             val formatted = AddressFormatter.formatAddress(addresses[0])
                             if (AddressFormatter.isPlusCode(formatted)) {
@@ -106,7 +125,7 @@ object ReverseGeocodeHelper {
                     }
                 } else {
                     @Suppress("DEPRECATION")
-                    val addresses = geocoder.getFromLocation(latitude, longitude, 1)
+                    val addresses = geocoder.getFromLocation(gcjLat, gcjLng, 1)
                     val result = if (!addresses.isNullOrEmpty()) {
                         val formatted = AddressFormatter.formatAddress(addresses[0])
                         if (AddressFormatter.isPlusCode(formatted)) {
@@ -129,13 +148,16 @@ object ReverseGeocodeHelper {
     /**
      * 获取地址（挂起函数版本）
      * 返回结果字符串
+     *
+     * @param latitude WGS-84 纬度（Mapbox 坐标系）
+     * @param longitude WGS-84 经度（Mapbox 坐标系）
      */
     suspend fun getAddressSync(
         context: Context,
         latitude: Double,
         longitude: Double
     ): String {
-        // 先检查缓存
+        // 先检查缓存（使用原始 WGS-84 坐标作为缓存 key）
         getCachedAddress(latitude, longitude)?.let { return it }
 
         return withContext(Dispatchers.IO) {
@@ -144,11 +166,20 @@ object ReverseGeocodeHelper {
                     return@withContext "无法获取地址"
                 }
 
+                // 在中国大陆范围内，将 WGS-84 转换为 GCJ-02
+                // Android Geocoder 在中国使用高德服务，需要 GCJ-02 坐标
+                val (gcjLat, gcjLng) = if (CoordinateConverter.isInChina(latitude, longitude)) {
+                    val gcj = CoordinateConverter.wgs84ToGcj02(latitude, longitude)
+                    gcj.latitude() to gcj.longitude()
+                } else {
+                    latitude to longitude
+                }
+
                 val geocoder = Geocoder(context, Locale.SIMPLIFIED_CHINESE)
 
                 val result = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     suspendCancellableCoroutine { continuation ->
-                        geocoder.getFromLocation(latitude, longitude, 1) { addresses ->
+                        geocoder.getFromLocation(gcjLat, gcjLng, 1) { addresses ->
                             val address = if (addresses.isNotEmpty()) {
                                 val formatted = AddressFormatter.formatAddress(addresses[0])
                                 if (AddressFormatter.isPlusCode(formatted)) {
@@ -164,11 +195,11 @@ object ReverseGeocodeHelper {
                     }
                 } else {
                     @Suppress("DEPRECATION")
-                    val addresses = geocoder.getFromLocation(latitude, longitude, 1)
+                    val addresses = geocoder.getFromLocation(gcjLat, gcjLng, 1)
                     if (!addresses.isNullOrEmpty()) {
                         val formatted = AddressFormatter.formatAddress(addresses[0])
                         if (AddressFormatter.isPlusCode(formatted)) {
-                            formatCoordinates(latitude, longitude)
+                            formatCoordinates(latitude, longitude) // 显示原始 WGS-84 坐标
                         } else {
                             formatted
                         }
@@ -177,6 +208,7 @@ object ReverseGeocodeHelper {
                     }
                 }
 
+                // 使用原始 WGS-84 坐标作为缓存 key
                 cacheAddress(latitude, longitude, result)
                 result
             } catch (_: Exception) {
@@ -186,13 +218,13 @@ object ReverseGeocodeHelper {
     }
 
     /**
-     * 从 LatLng 获取地址
+     * 从 Point 获取地址
      */
-    suspend fun getAddressFromLatLng(
+    suspend fun getAddressFromPoint(
         context: Context,
-        latLng: LatLng
+        point: Point
     ): String {
-        return getAddressSync(context, latLng.latitude, latLng.longitude)
+        return getAddressSync(context, point.latitude, point.longitude)
     }
 
     /**

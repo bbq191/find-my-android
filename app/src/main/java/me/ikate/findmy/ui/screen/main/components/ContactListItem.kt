@@ -105,20 +105,37 @@ fun ContactListItem(
 ) {
     val context = LocalContext.current
     var addressText by remember { mutableStateOf<String?>(null) }
+    var isAddressLoading by remember { mutableStateOf(false) }
 
-    // 获取地址（使用缓存）
+    // 获取地址（使用缓存 + 超时处理）
     LaunchedEffect(contact.location) {
         if (contact.location == null) {
             addressText = null
+            isAddressLoading = false
             return@LaunchedEffect
         }
 
+        isAddressLoading = true
+        addressText = null
+
         ReverseGeocodeHelper.getAddressFromLocation(
             context = context,
-            latitude = contact.location.latitude,
-            longitude = contact.location.longitude
+            latitude = contact.location.latitude(),
+            longitude = contact.location.longitude()
         ) { result ->
             addressText = result
+            isAddressLoading = false
+        }
+    }
+
+    // 10 秒超时处理
+    LaunchedEffect(contact.location, isAddressLoading) {
+        if (isAddressLoading && addressText == null) {
+            kotlinx.coroutines.delay(10_000L)
+            if (isAddressLoading && addressText == null) {
+                addressText = "获取地址超时"
+                isAddressLoading = false
+            }
         }
     }
 
@@ -154,6 +171,7 @@ fun ContactListItem(
                     isTracking = isTracking,
                     isRequestingLocation = isRequestingLocation,
                     addressText = addressText,
+                    isAddressLoading = isAddressLoading,
                     modifier = Modifier.weight(1f)
                 )
 
@@ -232,6 +250,7 @@ private fun ContactInfo(
     isTracking: Boolean,
     isRequestingLocation: Boolean,
     addressText: String?,
+    isAddressLoading: Boolean,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -259,7 +278,8 @@ private fun ContactInfo(
             DistanceAndAddressRow(
                 contact = contact,
                 myDevice = myDevice,
-                addressText = addressText
+                addressText = addressText,
+                isLoading = isAddressLoading
             )
         } else {
             StatusText(contact = contact)
@@ -379,7 +399,8 @@ private fun DeviceStatusRow(contact: Contact) {
 private fun DistanceAndAddressRow(
     contact: Contact,
     myDevice: Device?,
-    addressText: String?
+    addressText: String?,
+    isLoading: Boolean = false
 ) {
     val myLocation = myDevice?.location
     val contactLocation = contact.location
@@ -387,17 +408,28 @@ private fun DistanceAndAddressRow(
         DistanceCalculator.calculateAndFormatDistance(myLocation, contactLocation)
     } else null
 
+    // 判断是否超时
+    val isTimeout = addressText == "获取地址超时"
+
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        // 位置图标
-        Icon(
-            imageVector = Icons.Default.LocationOn,
-            contentDescription = null,
-            modifier = Modifier.size(14.dp),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        // 加载指示器或位置图标
+        if (isLoading) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(12.dp),
+                strokeWidth = 1.5.dp,
+                color = MaterialTheme.colorScheme.primary
+            )
+        } else {
+            Icon(
+                imageVector = Icons.Default.LocationOn,
+                contentDescription = null,
+                modifier = Modifier.size(14.dp),
+                tint = if (isTimeout) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
 
         if (distanceText != null) {
             Text(
@@ -414,9 +446,13 @@ private fun DistanceAndAddressRow(
         }
 
         Text(
-            text = addressText ?: "正在获取位置...",
+            text = when {
+                isLoading -> "获取中..."
+                addressText != null -> addressText
+                else -> "正在获取位置..."
+            },
             style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = if (isTimeout) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f, fill = false)
@@ -442,8 +478,18 @@ private fun StatusText(contact: Contact) {
                 "位置不可用" to MaterialTheme.colorScheme.secondary
             }
         }
-        ShareStatus.EXPIRED -> "已过期" to MaterialTheme.colorScheme.error
+        ShareStatus.EXPIRED -> {
+            // 根据共享方向给出不同提示
+            val text = if (contact.shareDirection == ShareDirection.I_SHARE_TO_THEM ||
+                contact.shareDirection == ShareDirection.MUTUAL) {
+                "已过期，点击续期"
+            } else {
+                "已过期"
+            }
+            text to MaterialTheme.colorScheme.error
+        }
         ShareStatus.REJECTED -> "已拒绝" to MaterialTheme.colorScheme.error
+        ShareStatus.REMOVED -> "已被移出" to MaterialTheme.colorScheme.error
     }
 
     Text(
@@ -515,8 +561,11 @@ private fun ExpandedActionBar(
             (contact.shareDirection == ShareDirection.THEY_SHARE_TO_ME ||
                     contact.shareDirection == ShareDirection.MUTUAL)
     val canNavigate = contact.location != null && contact.isLocationAvailable
-    val canControlShare = contact.shareDirection == ShareDirection.I_SHARE_TO_THEM ||
-            contact.shareDirection == ShareDirection.MUTUAL
+    // 暂停/恢复共享：任何方向都可以控制
+    // - I_SHARE_TO_THEM: 暂停我分享给对方
+    // - THEY_SHARE_TO_ME: 暂停接收对方的位置
+    // - MUTUAL: 暂停双向共享
+    val canControlShare = true
     val isPendingRequest = contact.shareStatus == ShareStatus.PENDING &&
             contact.shareDirection == ShareDirection.THEY_SHARE_TO_ME
 
@@ -577,11 +626,13 @@ private fun ExpandedActionBar(
                 )
             }
 
-            // 暂停/恢复
-            if (contact.isPaused) {
+            // 暂停/恢复/续期
+            // 过期或暂停状态都显示恢复按钮
+            val needsResume = contact.isPaused || contact.shareStatus == ShareStatus.EXPIRED
+            if (needsResume) {
                 ActionButton(
                     icon = Icons.Default.PlayArrow,
-                    label = "恢复共享",
+                    label = if (contact.shareStatus == ShareStatus.EXPIRED) "续期共享" else "恢复共享",
                     enabled = canControlShare,
                     onClick = onResumeClick
                 )
@@ -589,7 +640,7 @@ private fun ExpandedActionBar(
                 ActionButton(
                     icon = Icons.Default.Pause,
                     label = "暂停共享",
-                    enabled = canControlShare,
+                    enabled = canControlShare && contact.shareStatus == ShareStatus.ACCEPTED,
                     onClick = onPauseClick
                 )
             }

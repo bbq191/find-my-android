@@ -115,23 +115,25 @@ class LostModeService : Service() {
             putString(KEY_PHONE, phoneNumber)
         }
 
-        // 启动前台服务
-        val notification = NotificationHelper.createForegroundNotification(
-            context = this,
-            title = "丢失模式已启用",
-            message = "设备正处于丢失模式"
-        )
-        startForeground(NOTIFICATION_ID, notification)
+        // 创建全屏 Activity 的 Intent
+        val fullScreenIntent = LostModeActivity.createIntent(this, message, phoneNumber)
 
-        // 启动丢失模式全屏 Activity
-        launchLostModeActivity(message, phoneNumber)
+        // 使用全屏意图通知启动前台服务
+        // 这是 Android 10+ 中从后台启动 Activity 的正确方式
+        val notification = NotificationHelper.showLostModeNotification(
+            context = this,
+            fullScreenIntent = fullScreenIntent,
+            message = message,
+            phoneNumber = phoneNumber
+        )
+        startForeground(NotificationHelper.getLostModeNotificationId(), notification)
 
         // 播放声音
         if (playSound) {
             SoundPlaybackService.startPlaying(this, requesterUid)
         }
 
-        Log.d(TAG, "丢失模式已启用，开始高频位置更新")
+        Log.d(TAG, "丢失模式已启用，全屏通知已发送")
     }
 
     private fun disableLostMode() {
@@ -148,27 +150,11 @@ class LostModeService : Service() {
         // 停止声音
         SoundPlaybackService.stopPlaying(this)
 
+        // 取消丢失模式通知
+        NotificationHelper.cancelLostModeNotification(this)
+
         // 停止前台服务
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
-    }
-
-    /**
-     * 启动丢失模式全屏 Activity
-     */
-    private fun launchLostModeActivity(message: String, phoneNumber: String) {
-        try {
-            val intent = LostModeActivity.createIntent(this, message, phoneNumber)
-            startActivity(intent)
-            Log.d(TAG, "丢失模式 Activity 已启动")
-        } catch (e: Exception) {
-            Log.e(TAG, "启动丢失模式 Activity 失败", e)
-            // 发送通知作为备用方案
-            NotificationHelper.sendDebugNotification(
-                this,
-                "设备已丢失",
-                "$message\n联系电话: $phoneNumber"
-            )
-        }
     }
 }

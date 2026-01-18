@@ -41,7 +41,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import com.google.android.gms.maps.model.LatLng
+import com.mapbox.geojson.Point
 
 /**
  * 导航模式
@@ -65,8 +65,8 @@ enum class NavigationMode(
 @Composable
 fun NavigationDialog(
     contactName: String,
-    destination: LatLng,
-    currentLocation: LatLng? = null,
+    destination: Point,
+    currentLocation: Point? = null,
     distanceText: String? = null,
     onDismiss: () -> Unit
 ) {
@@ -291,9 +291,9 @@ private fun isAppInstalled(context: Context, packageName: String): Boolean {
 /**
  * 启动 Google Maps 导航
  */
-private fun launchGoogleMaps(context: Context, destination: LatLng, mode: NavigationMode) {
+private fun launchGoogleMaps(context: Context, destination: Point, mode: NavigationMode) {
     val uri = Uri.parse(
-        "google.navigation:q=${destination.latitude},${destination.longitude}&mode=${mode.googleMapsMode}"
+        "google.navigation:q=${destination.latitude()},${destination.longitude()}&mode=${mode.googleMapsMode}"
     )
     val intent = Intent(Intent.ACTION_VIEW, uri).apply {
         setPackage("com.google.android.apps.maps")
@@ -304,10 +304,10 @@ private fun launchGoogleMaps(context: Context, destination: LatLng, mode: Naviga
 /**
  * 启动高德地图导航
  */
-private fun launchAmap(context: Context, destination: LatLng, name: String, mode: NavigationMode) {
+private fun launchAmap(context: Context, destination: Point, name: String, mode: NavigationMode) {
     val uri = Uri.parse(
         "amapuri://route/plan/?" +
-                "dlat=${destination.latitude}&dlon=${destination.longitude}" +
+                "dlat=${destination.latitude()}&dlon=${destination.longitude()}" +
                 "&dname=${Uri.encode(name)}" +
                 "&dev=0&t=${getAmapMode(mode)}"
     )
@@ -321,10 +321,10 @@ private fun launchAmap(context: Context, destination: LatLng, name: String, mode
 /**
  * 启动百度地图导航
  */
-private fun launchBaiduMap(context: Context, destination: LatLng, name: String, mode: NavigationMode) {
+private fun launchBaiduMap(context: Context, destination: Point, name: String, mode: NavigationMode) {
     val uri = Uri.parse(
         "baidumap://map/direction?" +
-                "destination=latlng:${destination.latitude},${destination.longitude}|name:${Uri.encode(name)}" +
+                "destination=latlng:${destination.latitude()},${destination.longitude()}|name:${Uri.encode(name)}" +
                 "&coord_type=wgs84" +
                 "&mode=${getBaiduMode(mode)}" +
                 "&src=findmy"
@@ -338,9 +338,9 @@ private fun launchBaiduMap(context: Context, destination: LatLng, name: String, 
 /**
  * 启动系统默认地图
  */
-private fun launchSystemMap(context: Context, destination: LatLng, name: String) {
+private fun launchSystemMap(context: Context, destination: Point, name: String) {
     val uri = Uri.parse(
-        "geo:${destination.latitude},${destination.longitude}?q=${destination.latitude},${destination.longitude}(${Uri.encode(name)})"
+        "geo:${destination.latitude()},${destination.longitude()}?q=${destination.latitude()},${destination.longitude()}(${Uri.encode(name)})"
     )
     val intent = Intent(Intent.ACTION_VIEW, uri)
     context.startActivity(intent)

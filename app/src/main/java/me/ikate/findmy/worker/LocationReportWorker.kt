@@ -6,7 +6,6 @@ import android.content.Context
 import androidx.core.app.NotificationCompat
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
-import com.google.android.gms.location.Priority
 import me.ikate.findmy.service.LocationReportService
 
 /**
@@ -32,19 +31,19 @@ class LocationReportWorker(
             val isOneShot = inputData.getBoolean("isOneShot", false)
             val requesterUid = inputData.getString("requesterUid")
 
-            // 根据模式选择定位优先级
-            val priority = if (isOneShot) {
+            // 根据模式选择定位超时
+            val timeout = if (isOneShot) {
                 android.util.Log.d(TAG, "执行加急单次定位任务，请求者: $requesterUid")
                 sendDebugNotification("Worker执行中", "正在获取高精度位置...")
-                Priority.PRIORITY_HIGH_ACCURACY // 高精度，快速响应
+                10000L // 加急任务：10秒超时
             } else {
                 android.util.Log.d(TAG, "执行定期位置上报")
-                Priority.PRIORITY_BALANCED_POWER_ACCURACY // 均衡省电
+                20000L // 定期任务：20秒超时
             }
 
             val startTime = System.currentTimeMillis()
             val locationReportService = LocationReportService(applicationContext)
-            val result = locationReportService.reportCurrentLocation(priority)
+            val result = locationReportService.reportCurrentLocation(timeout)
             val duration = System.currentTimeMillis() - startTime
 
             if (result.isSuccess) {
@@ -56,7 +55,7 @@ class LocationReportWorker(
                 if (isOneShot) {
                     sendDebugNotification(
                         "位置上报成功",
-                        "耗时: ${duration}ms\n位置已更新到Firestore"
+                        "耗时: ${duration}ms\n位置已上报"
                     )
                 }
                 Result.success()

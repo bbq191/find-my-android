@@ -2,13 +2,11 @@ package me.ikate.findmy.ui.screen.contact
 
 import android.annotation.SuppressLint
 import android.app.Application
-import android.content.Context
 import android.provider.Settings
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.google.android.gms.maps.model.LatLng
-import com.google.firebase.firestore.FirebaseFirestore
+import com.mapbox.geojson.Point
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -20,9 +18,11 @@ import me.ikate.findmy.data.model.ShareDirection
 import me.ikate.findmy.data.model.ShareDuration
 import me.ikate.findmy.data.model.ShareStatus
 import me.ikate.findmy.data.model.User
+import me.ikate.findmy.data.remote.mqtt.message.ShareResponseType
 import me.ikate.findmy.data.repository.AuthRepository
 import me.ikate.findmy.data.repository.ContactRepository
 import me.ikate.findmy.data.repository.DeviceRepository
+import me.ikate.findmy.service.GeofenceManager
 import me.ikate.findmy.service.LocationReportService
 import me.ikate.findmy.service.LocationTrackingManager
 import me.ikate.findmy.util.NotificationHelper
@@ -45,18 +45,26 @@ class ContactViewModel(application: Application) : AndroidViewModel(application)
     // 依赖
     // ====================================================================
     private val context = application
-    private val prefs = context.getSharedPreferences("user_profile", Context.MODE_PRIVATE)
+    // 使用加密存储保护用户数据
+    private val prefs = me.ikate.findmy.util.SecurePreferences.getInstance(context).also {
+        // 迁移旧的非加密数据
+        me.ikate.findmy.util.SecurePreferences.migrateFromPlainPrefs(context, "user_profile")
+    }
     private val authRepository = AuthRepository(context)
-    private val contactRepository = ContactRepository()
-    private val deviceRepository = DeviceRepository()
+    private val contactRepository = ContactRepository(context)
+    private val deviceRepository = DeviceRepository(context)
     private val locationReportService = LocationReportService(context)
+    private val geofenceManager = GeofenceManager(context)
 
     // 追踪管理器
     private val trackingManager = LocationTrackingManager(
-        firestore = FirebaseFirestore.getInstance(),
+        context = context,
         locationReportService = locationReportService,
         scope = viewModelScope
     )
+
+    // MQTT 服务（用于接收邀请）
+    private val mqttService = DeviceRepository.getMqttService(context)
 
     // ====================================================================
     // 状态管理
@@ -127,6 +135,10 @@ class ContactViewModel(application: Application) : AndroidViewModel(application)
         ensureUserAuthenticatedAndObserve()
         startPeriodicCleanup()
         observeTrackingErrors()
+        // 监听 MQTT 共享消息（订阅在 MainViewModel 中完成）
+        observeShareRequests()
+        observeShareResponses()
+        observeSharePauseStatus()
     }
 
     private fun observeTrackingErrors() {
@@ -167,31 +179,15 @@ class ContactViewModel(application: Application) : AndroidViewModel(application)
 
     private fun ensureUserAuthenticatedAndObserve() {
         viewModelScope.launch {
-            if (!authRepository.isSignedIn()) {
-                Log.d(TAG, "用户未登录，开始设备登录")
-                authRepository.signInWithDeviceId().fold(
-                    onSuccess = { user ->
-                        Log.d(TAG, "设备登录成功: ${user.uid}")
-                        syncCurrentUser()
-                    },
-                    onFailure = { error ->
-                        Log.e(TAG, "设备登录失败", error)
-                    }
-                )
-            } else {
-                syncCurrentUser()
-            }
-            observeAuthStateChanges()
-        }
-    }
-
-    private suspend fun observeAuthStateChanges() {
-        authRepository.observeAuthState().collect { user ->
-            if (user != null) {
-                syncCurrentUser()
-            } else {
-                _currentUser.value = null
-            }
+            authRepository.signIn().fold(
+                onSuccess = { userId ->
+                    Log.d(TAG, "用户已就绪: $userId")
+                    syncCurrentUser()
+                },
+                onFailure = { error ->
+                    Log.e(TAG, "无法获取用户ID", error)
+                }
+            )
         }
     }
 
@@ -226,12 +222,12 @@ class ContactViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    private fun fetchMyAddress(latLng: LatLng) {
+    private fun fetchMyAddress(point: Point) {
         viewModelScope.launch {
             ReverseGeocodeHelper.getAddressFromLocation(
                 context = context,
-                latitude = latLng.latitude,
-                longitude = latLng.longitude
+                latitude = point.latitude(),
+                longitude = point.longitude()
             ) { address ->
                 _myAddress.value = address
             }
@@ -246,7 +242,29 @@ class ContactViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             contactRepository.observeMyContacts().collect { contactList ->
                 detectAndNotifyNewInvitations(contactList)
+                // 订阅已接受共享的联系人的位置主题（应用启动时恢复订阅）
+                subscribeToAcceptedContacts(contactList)
                 _contacts.value = contactList
+            }
+        }
+    }
+
+    /**
+     * 订阅已接受共享的联系人的位置主题
+     * 应用启动时或联系人列表变化时调用，确保能收到位置更新
+     */
+    private fun subscribeToAcceptedContacts(contactList: List<Contact>) {
+        viewModelScope.launch {
+            contactList.forEach { contact ->
+                // 只订阅已接受共享且对方共享给我的联系人
+                if (contact.shareStatus == ShareStatus.ACCEPTED &&
+                    contact.shareDirection == ShareDirection.THEY_SHARE_TO_ME &&
+                    !contact.isPaused) {
+                    contact.targetUserId?.let { targetUserId ->
+                        mqttService.subscribeToUser(targetUserId)
+                        Log.d(TAG, "订阅联系人位置主题: $targetUserId (${contact.name})")
+                    }
+                }
             }
         }
     }
@@ -277,6 +295,101 @@ class ContactViewModel(application: Application) : AndroidViewModel(application)
                 delay(60 * 60 * 1000L)
                 if (authRepository.isSignedIn()) {
                     contactRepository.cleanupExpiredShares()
+                }
+            }
+        }
+    }
+
+    /**
+     * 监听 MQTT 邀请请求
+     */
+    private fun observeShareRequests() {
+        viewModelScope.launch {
+            mqttService.shareRequestUpdates.collect { request ->
+                Log.d(TAG, "收到共享邀请: ${request.senderName} (${request.senderId})")
+
+                // 添加到本地数据库
+                contactRepository.addContactFromShare(
+                    shareId = request.shareId,
+                    fromUserId = request.senderId,
+                    fromUserName = request.senderName,
+                    expireTime = request.expireTime
+                )
+
+                // 显示通知
+                NotificationHelper.showShareRequestNotification(
+                    context = context,
+                    senderName = request.senderName,
+                    shareId = request.shareId
+                )
+            }
+        }
+    }
+
+    /**
+     * 监听 MQTT 邀请响应（对方接受/拒绝/移除了我的邀请）
+     */
+    private fun observeShareResponses() {
+        viewModelScope.launch {
+            mqttService.shareResponseUpdates.collect { response ->
+                Log.d(TAG, "收到共享响应: ${response.responderName} -> ${response.response}")
+
+                when (response.response) {
+                    ShareResponseType.ACCEPTED -> {
+                        // 仅更新本地状态（不发送 MQTT 响应，避免循环）
+                        contactRepository.updateShareStatusLocally(
+                            response.shareId,
+                            ShareStatus.ACCEPTED
+                        )
+                        // 订阅对方的位置更新
+                        mqttService.subscribeToUser(response.responderId)
+                        Log.d(TAG, "${response.responderName} 已接受邀请")
+                    }
+                    ShareResponseType.REJECTED -> {
+                        // 对方拒绝共享，删除本地记录
+                        contactRepository.deleteContactLocally(response.shareId)
+                        Log.d(TAG, "${response.responderName} 已拒绝共享")
+                    }
+                    ShareResponseType.REMOVED -> {
+                        // 对方将你从联系人列表中移除
+                        // 更新状态为 REMOVED，显示"已被移出"而不是直接删除
+                        contactRepository.markContactAsRemoved(response.responderId)
+                        // 取消订阅对方的位置更新
+                        mqttService.unsubscribeFromUser(response.responderId)
+                        // 清理该联系人的电子围栏
+                        geofenceManager.removeGeofence(response.responderId)
+                        // 显示通知
+                        NotificationHelper.showShareRemovedNotification(
+                            context = context,
+                            removerName = response.responderName
+                        )
+                        Log.d(TAG, "${response.responderName} 已将您移出联系人列表，已清理电子围栏")
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * 监听 MQTT 共享暂停/恢复状态
+     */
+    private fun observeSharePauseStatus() {
+        viewModelScope.launch {
+            mqttService.sharePauseUpdates.collect { pauseMessage ->
+                Log.d(TAG, "收到共享暂停状态: ${pauseMessage.senderName} -> isPaused=${pauseMessage.isPaused}")
+
+                if (pauseMessage.isPaused) {
+                    // 对方暂停了共享，显示通知
+                    NotificationHelper.showSharePausedNotification(
+                        context = context,
+                        contactName = pauseMessage.senderName
+                    )
+                } else {
+                    // 对方恢复了共享，显示通知
+                    NotificationHelper.showShareResumedNotification(
+                        context = context,
+                        contactName = pauseMessage.senderName
+                    )
                 }
             }
         }
@@ -373,9 +486,19 @@ class ContactViewModel(application: Application) : AndroidViewModel(application)
             val result = contactRepository.acceptLocationShare(shareId)
             _isLoading.value = false
 
-            result.onFailure { error ->
-                _errorMessage.value = error.message ?: "接受失败，请重试"
-            }
+            result.fold(
+                onSuccess = {
+                    // 接受成功后订阅对方的位置更新
+                    val contact = _contacts.value.find { it.id == shareId }
+                    contact?.targetUserId?.let { targetUserId ->
+                        mqttService.subscribeToUser(targetUserId)
+                        Log.d(TAG, "已订阅联系人位置: $targetUserId")
+                    }
+                },
+                onFailure = { error ->
+                    _errorMessage.value = error.message ?: "接受失败，请重试"
+                }
+            )
         }
     }
 
@@ -394,6 +517,14 @@ class ContactViewModel(application: Application) : AndroidViewModel(application)
     fun stopSharing(shareId: String) {
         viewModelScope.launch {
             _isLoading.value = true
+
+            // 在删除联系人前，先清理该联系人的电子围栏
+            val contact = _contacts.value.find { it.id == shareId }
+            contact?.targetUserId?.let { targetUserId ->
+                geofenceManager.removeGeofence(targetUserId)
+                Log.d(TAG, "已清理联系人 $targetUserId 的电子围栏")
+            }
+
             val result = contactRepository.stopSharing(shareId = shareId)
             _isLoading.value = false
 

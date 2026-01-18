@@ -8,6 +8,9 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Snackbar
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -17,17 +20,25 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.google.accompanist.permissions.ExperimentalPermissionsApi
+import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberMultiplePermissionsState
-import com.google.firebase.auth.FirebaseAuth
+import com.google.accompanist.permissions.rememberPermissionState
+import com.google.accompanist.permissions.shouldShowRationale
 import me.ikate.findmy.data.model.Contact
+import me.ikate.findmy.data.repository.AuthRepository
 import me.ikate.findmy.data.model.Device
+import android.content.Intent
+import android.provider.Settings as AndroidSettings
+import me.ikate.findmy.ui.components.LocationPermissionGuide
 import me.ikate.findmy.ui.components.PermissionGuideDialog
 import me.ikate.findmy.ui.dialog.GeofenceConfig
 import me.ikate.findmy.ui.dialog.GeofenceDialog
@@ -43,12 +54,16 @@ import me.ikate.findmy.util.DistanceCalculator
 import me.ikate.findmy.ui.screen.main.components.CustomBottomSheet
 import me.ikate.findmy.ui.screen.main.components.LocationButton
 import me.ikate.findmy.ui.screen.main.components.MapLayerButton
-import me.ikate.findmy.ui.screen.main.components.MapViewWrapper
+import me.ikate.findmy.ui.screen.main.components.MapLayerConfig
+import me.ikate.findmy.ui.screen.main.components.MapboxViewWrapper
 import me.ikate.findmy.ui.screen.main.components.ShareLocationDialog
 import me.ikate.findmy.ui.screen.main.components.SheetValue
 import me.ikate.findmy.ui.screen.main.tabs.TabContent
+import me.ikate.findmy.ui.components.ContactsPermissionDialog
+import me.ikate.findmy.ui.theme.animatedMapThemeColors
 import me.ikate.findmy.util.CompassHelper
 import me.ikate.findmy.util.MapCameraHelper
+import me.ikate.findmy.util.MapSettingsManager
 
 /**
  * 主屏幕 - Find My 应用的主界面
@@ -62,14 +77,27 @@ fun MainScreen(
     contactViewModel: ContactViewModel = viewModel()
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val snackbarHostState = remember { SnackbarHostState() }
 
-    // 获取当前设备 ID 和用户 ID
+    // 获取当前设备 ID 和用户 ID（使用 Android ID）
     val currentDeviceId = remember {
         Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
     }
-    val currentUserId = remember { FirebaseAuth.getInstance().currentUser?.uid }
+    val currentUserId = remember { AuthRepository.getUserId(context) }
 
-    // 定位权限状态（增量请求：先粗略定位，再精确定位，加通讯录权限）
+    // 位置权限状态（按需请求）
+    val locationPermissionsState = rememberMultiplePermissionsState(
+        permissions = listOf(
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+            Manifest.permission.ACCESS_FINE_LOCATION
+        )
+    )
+
+    // 通讯录权限状态（按需请求）
+    val contactsPermissionState = rememberPermissionState(Manifest.permission.READ_CONTACTS)
+
+    // 兼容旧代码：组合权限状态
     val permissionsState = rememberMultiplePermissionsState(
         permissions = listOf(
             Manifest.permission.ACCESS_COARSE_LOCATION,
@@ -79,10 +107,9 @@ fun MainScreen(
     )
 
     // 收集 ViewModel 状态
-    val googleMap by viewModel.googleMap.collectAsState()
+    val mapboxMap by viewModel.mapboxMap.collectAsState()
     val isLocationCentered by viewModel.isLocationCentered.collectAsState()
     val devices by viewModel.devices.collectAsState() // 收集设备列表
-    val isSmartLocationEnabled by viewModel.isSmartLocationEnabled.collectAsState() // 智能位置状态
 
     // 收集联系人 ViewModel 状态
     val contacts by contactViewModel.contacts.collectAsState()
@@ -116,6 +143,9 @@ fun MainScreen(
     // 记录正在绑定通讯录的联系人 (null 表示绑定"我")
     var contactToBind by remember { mutableStateOf<Contact?>(null) }
 
+    // 通讯录权限对话框状态
+    var showContactsPermissionDialog by remember { mutableStateOf(false) }
+
     // 导航对话框状态
     var contactToNavigate by remember { mutableStateOf<Contact?>(null) }
 
@@ -135,6 +165,13 @@ fun MainScreen(
     var deviceToNavigate by remember { mutableStateOf<Device?>(null) }
     var deviceForLostMode by remember { mutableStateOf<Device?>(null) }
 
+    // 地图图层状态（从本地存储加载）
+    var isTrafficEnabled by remember { mutableStateOf(MapSettingsManager.loadTrafficEnabled(context)) }
+    var mapLayerConfig by remember { mutableStateOf(MapSettingsManager.loadMapLayerConfig(context)) }
+
+    // 根据光照预设获取主题颜色（带动画过渡）
+    val themeColors = animatedMapThemeColors(mapLayerConfig.lightPreset)
+
     // 联系人选择器启动器
     val contactPickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         contract = androidx.activity.result.contract.ActivityResultContracts.PickContact()
@@ -148,18 +185,18 @@ fun MainScreen(
         }
     }
 
-    // 监听权限状态变化，一旦获得权限立即上报位置
-    LaunchedEffect(permissionsState.allPermissionsGranted) {
-        if (permissionsState.allPermissionsGranted) {
+    // 监听位置权限状态变化，一旦获得权限立即上报位置
+    LaunchedEffect(locationPermissionsState.allPermissionsGranted) {
+        if (locationPermissionsState.allPermissionsGranted) {
             viewModel.reportLocationNow()
             viewModel.attemptInitialLocationCenter()
         }
     }
 
-    // 首次启动时请求权限
-    LaunchedEffect(Unit) {
-        if (!permissionsState.allPermissionsGranted) {
-            permissionsState.launchMultiplePermissionRequest()
+    // 监听通讯录权限状态变化，获得权限后自动打开联系人选择器
+    LaunchedEffect(contactsPermissionState.status.isGranted) {
+        if (contactsPermissionState.status.isGranted && contactToBind != null) {
+            contactPickerLauncher.launch(null)
         }
     }
 
@@ -168,39 +205,69 @@ fun MainScreen(
         modifier = Modifier.fillMaxSize()
     ) {
         // 使用自定义底部面板包裹地图和设备列表
+        // 面板最大高度不超过右上角按钮区域（约 75% 屏幕高度）
         CustomBottomSheet(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(bottom = bottomNavHeightDp), // 为底部导航栏留出空间
             initialValue = SheetValue.HalfExpanded, // 启动时半展开
+            maxExpandedFraction = 0.75f, // 限制最大展开高度，确保不遮挡右上角按钮
             backgroundContent = {
-                // 背景：全屏地图视图
-                MapViewWrapper(
-                    modifier = Modifier.fillMaxSize(),
-                    devices = devices,
-                    contacts = if (selectedTab == FindMyTab.PEOPLE) contacts else emptyList(),
-                    currentDeviceHeading = currentHeading,
-                    onMapReady = { map ->
-                        viewModel.setGoogleMap(map)
-                        if (permissionsState.allPermissionsGranted) {
-                            viewModel.attemptInitialLocationCenter()
-                        }
-                    },
-                    onMarkerClick = { device ->
-                        selectedTab = FindMyTab.DEVICES
-                    },
-                    onContactMarkerClick = { contact ->
-                        contact.location?.let { location ->
+                // 背景：全屏地图视图 + 权限引导覆盖层
+                Box(modifier = Modifier.fillMaxSize()) {
+                    MapboxViewWrapper(
+                        modifier = Modifier.fillMaxSize(),
+                        devices = devices,
+                        contacts = if (selectedTab == FindMyTab.PEOPLE) contacts else emptyList(),
+                        currentDeviceHeading = currentHeading,
+                        showTraffic = isTrafficEnabled,
+                        mapLayerConfig = mapLayerConfig,
+                        bottomPadding = bottomSheetOffsetDp + 8.dp,
+                        onMapReady = { map ->
+                            viewModel.setMapboxMap(map)
+                            if (locationPermissionsState.allPermissionsGranted) {
+                                viewModel.attemptInitialLocationCenter()
+                            }
+                        },
+                        onMarkerClick = { device ->
+                            selectedTab = FindMyTab.DEVICES
+                        },
+                        onContactMarkerClick = { contact ->
+                            contact.location?.let { location ->
+                                viewModel.clearSelectedDevice()
+                                MapCameraHelper.animateToLocation(mapboxMap, location, zoom = 15.0)
+                                viewModel.updateSheetValue(SheetValue.HalfExpanded)
+                            }
+                        },
+                        onMapClick = {
                             viewModel.clearSelectedDevice()
-                            MapCameraHelper.animateToLocation(googleMap, location, zoom = 15f)
-                            viewModel.updateSheetValue(SheetValue.HalfExpanded)
+                            contactViewModel.clearSelectedContact()
                         }
-                    },
-                    onMapClick = {
-                        viewModel.clearSelectedDevice()
-                        contactViewModel.clearSelectedContact()
+                    )
+
+                    // 位置权限未授予时显示引导
+                    if (!locationPermissionsState.allPermissionsGranted) {
+                        // 判断是否需要显示"前往设置"按钮
+                        // 当 shouldShowRationale 为 false 且权限未授予时，可能是被永久拒绝
+                        val isPermanentlyDenied = !locationPermissionsState.shouldShowRationale &&
+                            locationPermissionsState.permissions.any { !it.status.isGranted }
+
+                        LocationPermissionGuide(
+                            onRequestPermission = {
+                                locationPermissionsState.launchMultiplePermissionRequest()
+                            },
+                            onOpenSettings = {
+                                // 打开应用设置页面
+                                val intent = Intent(
+                                    AndroidSettings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                    Uri.fromParts("package", context.packageName, null)
+                                )
+                                context.startActivity(intent)
+                            },
+                            showSettingsButton = isPermanentlyDenied
+                        )
                     }
-                )
+                }
             },
             sheetContent = {
                 // Tab 内容切换
@@ -214,7 +281,7 @@ fun MainScreen(
                     onContactClick = { contact ->
                         viewModel.clearSelectedDevice()
                         contact.location?.let { location ->
-                            MapCameraHelper.animateToLocation(googleMap, location, zoom = 15f)
+                            MapCameraHelper.animateToLocation(mapboxMap, location, zoom = 15.0)
                             viewModel.updateSheetValue(SheetValue.HalfExpanded)
                         }
                     },
@@ -226,7 +293,12 @@ fun MainScreen(
                     },
                     onBindContact = { contact ->
                         contactToBind = contact
-                        contactPickerLauncher.launch(null)
+                        // 检查通讯录权限
+                        if (contactsPermissionState.status.isGranted) {
+                            contactPickerLauncher.launch(null)
+                        } else {
+                            showContactsPermissionDialog = true
+                        }
                     },
                     onPauseShare = { contact -> contactViewModel.pauseShare(contact) },
                     onResumeShare = { contact, shareDuration ->
@@ -257,7 +329,7 @@ fun MainScreen(
                     ringingDeviceId = ringingDeviceId,
                     onDeviceClick = { device ->
                         device.location.let { location ->
-                            MapCameraHelper.animateToLocation(googleMap, location, zoom = 15f)
+                            MapCameraHelper.animateToLocation(mapboxMap, location, zoom = 15.0)
                             viewModel.updateSheetValue(SheetValue.HalfExpanded)
                         }
                     },
@@ -283,10 +355,6 @@ fun MainScreen(
                     meName = meName,
                     meAvatarUrl = meAvatarUrl,
                     sharingWithCount = contacts.size,
-                    isSmartLocationEnabled = isSmartLocationEnabled,
-                    onSmartLocationToggle = { enabled ->
-                        viewModel.setSmartModeEnabled(enabled)
-                    },
                     onNameChange = { name -> contactViewModel.updateMeName(name) },
                     onAvatarChange = { avatarUrl -> contactViewModel.updateMeAvatar(avatarUrl) }
                 )
@@ -295,7 +363,7 @@ fun MainScreen(
                 viewModel.updateSheetValue(value)
             },
             onOffsetChange = { offset ->
-                MapCameraHelper.adjustMapPadding(googleMap, offset + bottomNavHeightPx)
+                MapCameraHelper.adjustMapPadding(mapboxMap, offset + bottomNavHeightPx)
                 bottomSheetOffsetPx = offset
             }
         )
@@ -307,53 +375,51 @@ fun MainScreen(
             modifier = Modifier.align(Alignment.BottomCenter)
         )
 
-        // 定位按钮（右下角）- 移到最上层确保可见
-        if (permissionsState.allPermissionsGranted) {
-            LocationButton(
-                isLocationCentered = isLocationCentered,
-                onClick = { viewModel.onLocationButtonClick() },
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .padding(16.dp)
-                    .padding(bottom = bottomSheetOffsetDp + bottomNavHeightDp + 16.dp)
-            )
-        }
-
-        // 地图图层切换按钮（右上角）- 移到最上层确保可见
-        MapLayerButton(
-            map = googleMap,
+        // 右上角按钮组（地图图层 + 定位按钮）- 不随面板浮动
+        androidx.compose.foundation.layout.Column(
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .padding(16.dp)
-                .padding(top = 40.dp)
-        )
-    }
+                .padding(top = 40.dp),
+            verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(12.dp)
+        ) {
+            // 地图图层切换按钮
+            MapLayerButton(
+                map = mapboxMap,
+                isTrafficEnabled = isTrafficEnabled,
+                onTrafficToggle = { enabled ->
+                    isTrafficEnabled = enabled
+                    MapSettingsManager.saveTrafficEnabled(context, enabled)
+                },
+                config = mapLayerConfig,
+                onConfigChange = { newConfig ->
+                    mapLayerConfig = newConfig
+                    MapSettingsManager.saveMapLayerConfig(context, newConfig)
+                },
+                themeColors = themeColors
+            )
 
-    // 权限被拒绝时显示提示对话框
-    if (permissionsState.shouldShowRationale) {
-        AlertDialog(
-            onDismissRequest = { /* 不允许关闭 */ },
-            title = { Text("需要权限") },
-            text = {
-                Text(
-                    "Find My 需要访问您的位置信息和通讯录(用于显示机主信息)才能正常工作。" +
-                            "请授予相关权限以获得完整体验。"
-                )
-            },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        permissionsState.launchMultiplePermissionRequest()
+            // 定位按钮 - 在地图按钮下方，不随面板浮动
+            LocationButton(
+                isLocationCentered = isLocationCentered,
+                onClick = {
+                    if (locationPermissionsState.allPermissionsGranted) {
+                        viewModel.onLocationButtonClick()
+                    } else {
+                        // 请求位置权限
+                        locationPermissionsState.launchMultiplePermissionRequest()
                     }
-                ) {
-                    Text("授权")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { /* 暂时不处理拒绝 */ }) {
-                    Text("暂不授权")
-                }
-            }
+                },
+                themeColors = themeColors
+            )
+        }
+
+        // Snackbar 提示（用于显示操作结果）
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = bottomNavHeightDp + 16.dp)
         )
     }
 
@@ -429,7 +495,9 @@ fun MainScreen(
         LostModeDialog(
             contactName = contact.name,
             currentConfig = LostModeConfig(
-                enabled = false, // TODO: 从联系人状态读取丢失模式是否启用
+                // 丢失模式状态在目标设备上管理，本地无法获取远程设备的实时状态
+                // 每次打开对话框默认显示为未启用，用户可以选择启用/禁用
+                enabled = false,
                 isSoundPlaying = isSoundPlaying
             ),
             onDismiss = { contactForLostMode = null },
@@ -521,17 +589,60 @@ fun MainScreen(
                         center = config.center,
                         radiusMeters = config.radiusMeters,
                         notifyOnEnter = config.notifyOnEnter,
-                        notifyOnExit = config.notifyOnExit
-                    ) { success, error ->
-                        if (!success) {
-                            // TODO: 显示错误提示
+                        notifyOnExit = config.notifyOnExit,
+                        onSuccess = {
+                            scope.launch {
+                                snackbarHostState.showSnackbar(
+                                    message = "已为「${contact.name}」设置地理围栏"
+                                )
+                            }
+                        },
+                        onFailure = { errorMessage ->
+                            scope.launch {
+                                snackbarHostState.showSnackbar(
+                                    message = "设置地理围栏失败: $errorMessage"
+                                )
+                            }
                         }
-                    }
+                    )
                 } else {
-                    geofenceManager.removeGeofencesForContact(contact.id) { _, _ -> }
+                    geofenceManager.removeGeofence(contact.id)
+                    scope.launch {
+                        snackbarHostState.showSnackbar(
+                            message = "已移除「${contact.name}」的地理围栏"
+                        )
+                    }
                 }
                 contactForGeofence = null
             }
+        )
+    }
+
+    // 通讯录权限引导对话框
+    if (showContactsPermissionDialog) {
+        // 判断是否被永久拒绝
+        val isPermanentlyDenied = !contactsPermissionState.status.isGranted &&
+            !contactsPermissionState.status.shouldShowRationale
+
+        ContactsPermissionDialog(
+            onRequestPermission = {
+                showContactsPermissionDialog = false
+                contactsPermissionState.launchPermissionRequest()
+            },
+            onDismiss = {
+                showContactsPermissionDialog = false
+                contactToBind = null
+            },
+            onOpenSettings = if (isPermanentlyDenied) {
+                {
+                    showContactsPermissionDialog = false
+                    val intent = Intent(
+                        android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.fromParts("package", context.packageName, null)
+                    )
+                    context.startActivity(intent)
+                }
+            } else null
         )
     }
 }

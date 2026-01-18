@@ -23,7 +23,8 @@ object ProfileHelper {
     data class OwnerProfile(
         val displayName: String?,
         val photoUri: Uri?,
-        val source: String = "unknown"  // 来源：profile, google, samsung, device
+        val source: String = "unknown",  // 来源：profile, google, samsung, device
+        val email: String? = null        // 邮箱地址（如 Gmail）
     )
 
     /**
@@ -121,7 +122,7 @@ object ProfileHelper {
     }
 
     /**
-     * 从 Google 账户获取用户名
+     * 从 Google 账户获取用户名和邮箱
      */
     fun getFromGoogleAccount(context: Context): OwnerProfile? {
         return try {
@@ -130,18 +131,33 @@ object ProfileHelper {
 
             if (accounts.isNotEmpty()) {
                 val account = accounts[0]
-                // Google 账户的 name 通常是邮箱，尝试提取用户名部分
+                // Google 账户的 name 通常是邮箱
                 val email = account.name
                 val name = email.substringBefore("@")
 
                 // 如果看起来像是有意义的名字（不是纯数字）
                 if (name.isNotBlank() && !name.all { it.isDigit() }) {
-                    Log.d(TAG, "从 Google 账户获取成功: $name")
-                    OwnerProfile(name, null, "google")
+                    Log.d(TAG, "从 Google 账户获取成功: $name ($email)")
+                    OwnerProfile(name, null, "google", email)
                 } else null
             } else null
         } catch (e: Exception) {
             Log.e(TAG, "从 Google 账户获取失败", e)
+            null
+        }
+    }
+
+    /**
+     * 获取设备上的 Google 账户邮箱
+     * @return Gmail 地址，如果没有则返回 null
+     */
+    fun getGoogleEmail(context: Context): String? {
+        return try {
+            val accountManager = AccountManager.get(context)
+            val accounts = accountManager.getAccountsByType("com.google")
+            accounts.firstOrNull()?.name
+        } catch (e: Exception) {
+            Log.e(TAG, "获取 Google 邮箱失败", e)
             null
         }
     }

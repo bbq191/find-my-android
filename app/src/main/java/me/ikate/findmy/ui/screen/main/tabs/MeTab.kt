@@ -1,10 +1,17 @@
 package me.ikate.findmy.ui.screen.main.tabs
 
+import android.Manifest
 import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.provider.Settings
+import com.google.accompanist.permissions.ExperimentalPermissionsApi
+import com.google.accompanist.permissions.isGranted
+import com.google.accompanist.permissions.rememberPermissionState
+import com.google.accompanist.permissions.shouldShowRationale
+import me.ikate.findmy.ui.components.ContactsPermissionDialog
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -37,7 +44,6 @@ import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -47,8 +53,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -83,14 +87,13 @@ import me.ikate.findmy.util.ProfileHelper
  * 我的 Tab
  * 个人资料和设置页面
  */
+@OptIn(ExperimentalPermissionsApi::class)
 @Composable
 fun MeTab(
     currentUser: User?,
     meName: String?,
     meAvatarUrl: String?,
     sharingWithCount: Int = 0,
-    isSmartLocationEnabled: Boolean = true,
-    onSmartLocationToggle: (Boolean) -> Unit = {},
     onNameChange: (String) -> Unit = {},
     onAvatarChange: (String?) -> Unit = {},
     modifier: Modifier = Modifier
@@ -98,6 +101,22 @@ fun MeTab(
     val context = LocalContext.current
     var showEditNameDialog by remember { mutableStateOf(false) }
     var showAppIconDialog by remember { mutableStateOf(false) }
+
+    // 通讯录权限状态
+    val contactsPermissionState = rememberPermissionState(Manifest.permission.READ_CONTACTS)
+
+    var showContactsPermissionDialog by remember { mutableStateOf(false) }
+    // 记录权限请求后要执行的操作
+    var pendingContactsAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+
+    // 监听权限状态变化，执行待处理的操作
+    androidx.compose.runtime.LaunchedEffect(contactsPermissionState.status.isGranted) {
+        if (contactsPermissionState.status.isGranted && pendingContactsAction != null) {
+            pendingContactsAction?.invoke()
+            pendingContactsAction = null
+        }
+    }
+
     var showAboutDialog by remember { mutableStateOf(false) }
 
     // 用于从通讯录选择联系人的临时状态
@@ -137,6 +156,11 @@ fun MeTab(
             },
             onPickContact = {
                 contactPickerLauncher.launch(null)
+            },
+            hasContactsPermission = contactsPermissionState.status.isGranted,
+            onRequestContactsPermission = { action ->
+                pendingContactsAction = action
+                showContactsPermissionDialog = true
             }
         )
     }
@@ -152,6 +176,34 @@ fun MeTab(
     if (showAboutDialog) {
         AboutDialog(
             onDismiss = { showAboutDialog = false }
+        )
+    }
+
+    // 通讯录权限引导对话框
+    if (showContactsPermissionDialog) {
+        val isPermanentlyDenied = !contactsPermissionState.status.isGranted &&
+            !contactsPermissionState.status.shouldShowRationale
+
+        ContactsPermissionDialog(
+            onRequestPermission = {
+                showContactsPermissionDialog = false
+                contactsPermissionState.launchPermissionRequest()
+            },
+            onDismiss = {
+                showContactsPermissionDialog = false
+                pendingContactsAction = null
+            },
+            onOpenSettings = if (isPermanentlyDenied) {
+                {
+                    showContactsPermissionDialog = false
+                    // 打开应用设置
+                    val intent = Intent(
+                        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.fromParts("package", context.packageName, null)
+                    )
+                    context.startActivity(intent)
+                }
+            } else null
         )
     }
 
@@ -183,8 +235,6 @@ fun MeTab(
             // 设置选项
             item {
                 SettingsSection(
-                    isSmartLocationEnabled = isSmartLocationEnabled,
-                    onSmartLocationToggle = onSmartLocationToggle,
                     onAppIconClick = { showAppIconDialog = true },
                     onNotificationsClick = {
                         // 打开系统通知设置
@@ -410,8 +460,6 @@ private fun ProfileCard(
 
 @Composable
 private fun SettingsSection(
-    isSmartLocationEnabled: Boolean,
-    onSmartLocationToggle: (Boolean) -> Unit,
     onAppIconClick: () -> Unit,
     onNotificationsClick: () -> Unit,
     onPrivacyClick: () -> Unit,
@@ -435,18 +483,6 @@ private fun SettingsSection(
         elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
     ) {
         Column {
-            // 智能位置上报（带开关）
-            SettingsItemWithSwitch(
-                icon = Icons.Default.Speed,
-                title = "智能位置上报",
-                subtitle = if (isSmartLocationEnabled) "根据活动状态智能调整" else "已关闭",
-                checked = isSmartLocationEnabled,
-                onCheckedChange = onSmartLocationToggle
-            )
-            HorizontalDivider(
-                modifier = Modifier.padding(start = 56.dp),
-                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-            )
             SettingsItem(
                 icon = Icons.Default.AppShortcut,
                 title = "应用图标",
@@ -494,56 +530,6 @@ private fun SettingsSection(
                 onClick = { showLicensesDialog = true }
             )
         }
-    }
-}
-
-@Composable
-private fun SettingsItemWithSwitch(
-    icon: ImageVector,
-    title: String,
-    subtitle: String,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onCheckedChange(!checked) }
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            modifier = Modifier.size(24.dp),
-            tint = MaterialTheme.colorScheme.primary
-        )
-
-        Spacer(modifier = Modifier.width(16.dp))
-
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.Medium
-            )
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-
-        Switch(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-            colors = SwitchDefaults.colors(
-                checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
-                checkedTrackColor = MaterialTheme.colorScheme.primary,
-                uncheckedThumbColor = MaterialTheme.colorScheme.outline,
-                uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant
-            )
-        )
     }
 }
 
@@ -597,6 +583,8 @@ private fun SettingsItem(
  * @param pendingAvatar 从通讯录选择后待确认的头像
  * @param onConfirm (name, avatarUri) -> Unit
  * @param onPickContact 打开通讯录选择器
+ * @param hasContactsPermission 是否有通讯录权限
+ * @param onRequestContactsPermission 请求通讯录权限的回调
  */
 @Composable
 private fun EditNameDialog(
@@ -605,7 +593,9 @@ private fun EditNameDialog(
     pendingAvatar: String? = null,
     onDismiss: () -> Unit,
     onConfirm: (String, String?) -> Unit,
-    onPickContact: () -> Unit = {}
+    onPickContact: () -> Unit = {},
+    hasContactsPermission: Boolean = false,
+    onRequestContactsPermission: (action: () -> Unit) -> Unit = {}
 ) {
     val context = LocalContext.current
     var name by remember { mutableStateOf(currentName) }
@@ -740,9 +730,17 @@ private fun EditNameDialog(
                 TextButton(
                     onClick = {
                         // 检查权限
-                        if (!ProfileHelper.hasReadContactsPermission(context)) {
-                            importMessage = "需要通讯录权限，请在系统设置中授权"
-                            isError = true
+                        if (!hasContactsPermission) {
+                            // 请求权限，并设置授权后的操作
+                            onRequestContactsPermission {
+                                availableSources = ProfileHelper.getAvailableSources(context)
+                                if (availableSources.isEmpty()) {
+                                    importMessage = "未找到可用的导入来源，请从通讯录选择"
+                                    isError = true
+                                } else {
+                                    showSourcePicker = true
+                                }
+                            }
                             return@TextButton
                         }
 
@@ -768,7 +766,13 @@ private fun EditNameDialog(
 
                 // 从通讯录选择按钮
                 TextButton(
-                    onClick = onPickContact,
+                    onClick = {
+                        if (!hasContactsPermission) {
+                            onRequestContactsPermission { onPickContact() }
+                        } else {
+                            onPickContact()
+                        }
+                    },
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Icon(
@@ -982,6 +986,26 @@ private fun AppIconDialog(
 }
 
 /**
+ * 获取当前启用的应用图标资源
+ */
+private fun getCurrentAppIconRes(context: Context): Int {
+    val packageManager = context.packageManager
+    val packageName = context.packageName
+
+    // 检查女孩图标是否启用
+    return try {
+        val girlComponent = ComponentName(packageName, "$packageName.MainActivityGirl")
+        if (packageManager.getComponentEnabledSetting(girlComponent) == PackageManager.COMPONENT_ENABLED_STATE_ENABLED) {
+            R.mipmap.ic_launcher_girl
+        } else {
+            R.mipmap.ic_launcher_boy
+        }
+    } catch (_: Exception) {
+        R.mipmap.ic_launcher_boy // 默认男孩图标
+    }
+}
+
+/**
  * 关于对话框
  */
 @Composable
@@ -989,6 +1013,7 @@ private fun AboutDialog(
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
+    val currentIconRes = remember { getCurrentAppIconRes(context) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -1004,9 +1029,9 @@ private fun AboutDialog(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                // 应用图标
+                // 应用图标（跟随当前设置）
                 AsyncImage(
-                    model = R.mipmap.ic_launcher,
+                    model = currentIconRes,
                     contentDescription = "应用图标",
                     modifier = Modifier
                         .size(72.dp)
@@ -1031,7 +1056,7 @@ private fun AboutDialog(
 
                 // 描述
                 Text(
-                    text = "一款仿 iOS Find My 的 Android 位置共享应用",
+                    text = "一款位置共享与设备查找应用，帮助您与家人朋友保持联系",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center
@@ -1045,11 +1070,11 @@ private fun AboutDialog(
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     listOf(
-                        "实时位置共享",
-                        "设备查找与响铃",
-                        "地理围栏提醒",
-                        "智能位置上报"
-                    ).forEach { feature ->
+                        "实时位置共享" to "与家人朋友共享位置",
+                        "设备查找" to "远程响铃、丢失模式",
+                        "地理围栏" to "到达/离开指定区域提醒",
+                        "智能定位" to "根据活动状态智能上报"
+                    ).forEach { (title, desc) ->
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1060,11 +1085,19 @@ private fun AboutDialog(
                                 modifier = Modifier.size(16.dp),
                                 tint = MaterialTheme.colorScheme.primary
                             )
-                            Text(
-                                text = feature,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            Column {
+                                Text(
+                                    text = title,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.Medium,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = desc,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                     }
                 }
@@ -1108,18 +1141,43 @@ private fun LicensesDialog(
             license = "Apache License 2.0"
         ),
         License(
-            name = "Google Maps SDK",
-            author = "Google",
-            license = "Google Maps Platform Terms"
+            name = "Mapbox Maps SDK",
+            author = "Mapbox",
+            license = "Mapbox Terms of Service"
         ),
         License(
-            name = "Firebase",
+            name = "高德定位 SDK",
+            author = "高德",
+            license = "高德开放平台服务协议"
+        ),
+        License(
+            name = "高德地理围栏 SDK",
+            author = "高德",
+            license = "高德开放平台服务协议"
+        ),
+        License(
+            name = "Eclipse Paho MQTT",
+            author = "Eclipse Foundation",
+            license = "Eclipse Public License 2.0"
+        ),
+        License(
+            name = "Room Database",
             author = "Google",
             license = "Apache License 2.0"
         ),
         License(
+            name = "个推推送 SDK",
+            author = "个推",
+            license = "个推服务协议"
+        ),
+        License(
             name = "Coil",
             author = "Coil Contributors",
+            license = "Apache License 2.0"
+        ),
+        License(
+            name = "Accompanist Permissions",
+            author = "Google",
             license = "Apache License 2.0"
         ),
         License(
@@ -1133,17 +1191,17 @@ private fun LicensesDialog(
             license = "Apache License 2.0"
         ),
         License(
-            name = "Play Services Location",
-            author = "Google",
-            license = "Google Play Services Terms"
-        ),
-        License(
             name = "WorkManager",
             author = "Google",
             license = "Apache License 2.0"
         ),
         License(
             name = "Biometric",
+            author = "Google",
+            license = "Apache License 2.0"
+        ),
+        License(
+            name = "Gson",
             author = "Google",
             license = "Apache License 2.0"
         )

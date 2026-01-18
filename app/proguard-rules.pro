@@ -19,3 +19,33 @@
 # If you keep the line number information, uncomment this to
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
+
+# ==================== Mapbox ====================
+-keep class com.mapbox.** { *; }
+
+# ==================== 高德定位 ====================
+-keep class com.amap.api.** { *; }
+-keep class com.loc.** { *; }
+-keep class com.autonavi.** { *; }
+
+# ==================== Eclipse Paho MQTT ====================
+-keep class org.eclipse.paho.** { *; }
+
+# ==================== Gson ====================
+-keep class com.google.gson.** { *; }
+-keepattributes Signature
+-keepattributes *Annotation*
+
+# ==================== 个推推送 ====================
+-dontwarn com.getui.**
+-keep class com.getui.** { *; }
+-keep class * extends com.getui.gtc.GeTuiIntentService { *; }
+
+# ==================== Room ====================
+-keep class * extends androidx.room.RoomDatabase { *; }
+-keep @androidx.room.Entity class * { *; }
+
+# ==================== 数据模型 ====================
+-keep class me.ikate.findmy.data.model.** { *; }
+-keep class me.ikate.findmy.data.local.entity.** { *; }
+-keep class me.ikate.findmy.data.remote.mqtt.message.** { *; }

@@ -1,6 +1,7 @@
 package me.ikate.findmy.util
 
-import com.google.android.gms.maps.model.LatLng
+import com.mapbox.geojson.Point
+import me.ikate.findmy.data.model.pointOf
 import kotlin.math.abs
 import kotlin.math.cos
 import kotlin.math.sin
@@ -11,13 +12,14 @@ import kotlin.math.sqrt
  * 用于解决中国大陆地区GPS坐标（WGS-84）与地图坐标（GCJ-02）之间的偏移问题
  *
  * 背景：
- * - WGS-84：全球标准GPS坐标系，GPS设备获取的原始坐标
- * - GCJ-02：中国国家测绘局加密坐标系（火星坐标系），Google Maps在中国大陆使用此坐标系
- * - 直接将WGS-84坐标显示在GCJ-02地图上会产生100-700米的偏移
+ * - WGS-84：全球标准GPS坐标系，GPS设备获取的原始坐标，Mapbox 使用此坐标系
+ * - GCJ-02：中国国家测绘局加密坐标系（火星坐标系），高德地图使用此坐标系
+ *
+ * Mapbox 使用 WGS-84 坐标系，不需要转换
+ * 但如果使用高德定位 SDK（输出 GCJ-02），则需要转换为 WGS-84
  *
  * 参考：
  * - https://github.com/googollee/eviltransform
- * - https://www.serviceobjects.com/blog/why-gps-coordinates-look-wrong-on-maps-of-china/
  */
 object CoordinateConverter {
 
@@ -40,20 +42,20 @@ object CoordinateConverter {
 
     /**
      * WGS-84 转 GCJ-02
-     * 将GPS原始坐标转换为Google Maps中国大陆地图坐标
+     * 将GPS原始坐标转换为高德/Google Maps中国大陆地图坐标
      *
      * @param wgsLat WGS-84纬度
      * @param wgsLng WGS-84经度
-     * @return GCJ-02坐标
+     * @return GCJ-02坐标 (Point)
      */
-    fun wgs84ToGcj02(wgsLat: Double, wgsLng: Double): LatLng {
+    fun wgs84ToGcj02(wgsLat: Double, wgsLng: Double): Point {
         if (wgsLat.isNaN() || wgsLng.isNaN()) {
-            return LatLng(0.0, 0.0)
+            return pointOf(0.0, 0.0)
         }
 
         if (!isInChina(wgsLat, wgsLng)) {
             // 不在中国大陆范围内，无需转换
-            return LatLng(wgsLat, wgsLng)
+            return pointOf(wgsLat, wgsLng)
         }
 
         var dLat = transformLat(wgsLng - 105.0, wgsLat - 35.0)
@@ -68,7 +70,39 @@ object CoordinateConverter {
         val mgLat = wgsLat + dLat
         val mgLng = wgsLng + dLng
 
-        return LatLng(mgLat, mgLng)
+        return pointOf(mgLat, mgLng)
+    }
+
+    /**
+     * GCJ-02 转 WGS-84
+     * 将高德定位坐标转换为 Mapbox 使用的 WGS-84 坐标
+     * 使用迭代法提高精度
+     *
+     * @param gcjLat GCJ-02纬度
+     * @param gcjLng GCJ-02经度
+     * @return WGS-84坐标 (Point)
+     */
+    fun gcj02ToWgs84(gcjLat: Double, gcjLng: Double): Point {
+        if (gcjLat.isNaN() || gcjLng.isNaN()) {
+            return pointOf(0.0, 0.0)
+        }
+
+        if (!isInChina(gcjLat, gcjLng)) {
+            // 不在中国大陆范围内，无需转换
+            return pointOf(gcjLat, gcjLng)
+        }
+
+        // 使用迭代法反算 WGS-84 坐标
+        var wgsLat = gcjLat
+        var wgsLng = gcjLng
+
+        repeat(3) { // 迭代3次提高精度
+            val gcj = wgs84ToGcj02(wgsLat, wgsLng)
+            wgsLat += gcjLat - gcj.latitude()
+            wgsLng += gcjLng - gcj.longitude()
+        }
+
+        return pointOf(wgsLat, wgsLng)
     }
 
     private fun transformLat(x: Double, y: Double): Double {

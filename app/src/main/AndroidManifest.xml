@@ -8,8 +8,6 @@
     <uses-permission android:name="android.permission.ACCESS_BACKGROUND_LOCATION"
         tools:ignore="BackgroundLocationPolicy" />
 
-    <!-- 活动识别权限 (智能位置上报) -->
-    <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
 
     <!-- 网络权限 -->
     <uses-permission android:name="android.permission.INTERNET" />
@@ -29,9 +27,17 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+
+    <!-- 个推推送权限 -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
 
     <!-- 系统覆盖层权限（丢失模式） -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
+    <!-- 全屏意图权限（丢失模式全屏通知） -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
 
     <!-- 存储权限 (用于地图缓存) -->
     <uses-permission
@@ -43,11 +49,11 @@
         android:maxSdkVersion="32" />
 
     <queries>
-        <package android:name="com.google.android.gms" />
         <package android:name="com.android.vending" />
     </queries>
 
     <application
+        android:name=".FindMyApplication"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
@@ -57,10 +63,31 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Findmy">
 
-        <!-- Google Maps API Key (从 local.properties 读取) -->
+        <!-- 高德定位 API Key -->
         <meta-data
-            android:name="com.google.android.geo.API_KEY"
-            android:value="${MAPS_API_KEY}" />
+            android:name="com.amap.api.v2.apikey"
+            android:value="${AMAP_API_KEY}" />
+
+        <!-- 高德定位服务 -->
+        <service android:name="com.amap.api.location.APSService" />
+
+        <!-- 个推推送配置 -->
+        <meta-data
+            android:name="GETUI_APPID"
+            android:value="${GETUI_APP_ID}"
+            tools:replace="android:value" />
+        <meta-data
+            android:name="GETUI_APPKEY"
+            android:value="${GETUI_APP_KEY}" />
+        <meta-data
+            android:name="GETUI_APPSECRET"
+            android:value="${GETUI_APP_SECRET}" />
+
+        <!-- 个推推送消息服务（继承 GTIntentService） -->
+        <service
+            android:name=".push.GeTuiPushService"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
 
         <activity
             android:name=".MainActivity"
@@ -97,14 +124,6 @@
             </intent-filter>
         </activity-alias>
 
-        <service
-            android:name=".service.MyFirebaseMessagingService"
-            android:exported="false">
-            <intent-filter>
-                <action android:name="com.google.firebase.MESSAGING_EVENT" />
-            </intent-filter>
-        </service>
-
         <!-- WorkManager 前台服务（用于位置追踪） -->
         <service
             android:name="androidx.work.impl.foreground.SystemForegroundService"
@@ -128,15 +147,29 @@
                 android:value="lost_mode_display" />
         </service>
 
-        <!-- 地理围栏广播接收器 -->
+        <!-- MQTT 前台服务（保持后台连接，支持远程功能） -->
+        <service
+            android:name=".service.MqttForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <!-- 地理围栏广播接收器（高德 GeoFence SDK） -->
         <receiver
             android:name=".service.GeofenceBroadcastReceiver"
-            android:exported="false" />
+            android:exported="false">
+            <intent-filter>
+                <action android:name="me.ikate.findmy.GEOFENCE_TRIGGERED" />
+            </intent-filter>
+        </receiver>
 
         <!-- 活动识别广播接收器 -->
         <receiver
             android:name=".service.ActivityTransitionReceiver"
-            android:exported="false" />
+            android:exported="false">
+            <intent-filter>
+                <action android:name="me.ikate.findmy.ACTIVITY_TRANSITION" />
+            </intent-filter>
+        </receiver>
 
         <!-- 丢失模式身份验证 Activity -->
         <activity

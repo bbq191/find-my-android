@@ -1,6 +1,6 @@
 package me.ikate.findmy.data.model
 
-import com.google.android.gms.maps.model.LatLng
+import com.mapbox.geojson.Point
 
 /**
  * 联系人数据模型(扩展版)
@@ -19,7 +19,7 @@ data class Contact(
     val targetUserId: String? = null, // 目标用户的 UID (用于发送位置请求)
 
     // 位置信息(仅当对方分享给我且已接受时有效)
-    val location: LatLng? = null,
+    val location: Point? = null,
     val lastUpdateTime: Long? = null,
     val isLocationAvailable: Boolean = false,  // 位置是否可用
     val isPaused: Boolean = false, // 是否已暂停共享

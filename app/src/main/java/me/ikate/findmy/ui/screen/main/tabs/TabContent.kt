@@ -61,8 +61,6 @@ fun TabContent(
     meName: String?,
     meAvatarUrl: String?,
     sharingWithCount: Int,
-    isSmartLocationEnabled: Boolean,
-    onSmartLocationToggle: (Boolean) -> Unit,
     onNameChange: (String) -> Unit,
     onAvatarChange: (String?) -> Unit
 ) {
@@ -127,8 +125,6 @@ fun TabContent(
                 meName = meName,
                 meAvatarUrl = meAvatarUrl,
                 sharingWithCount = sharingWithCount,
-                isSmartLocationEnabled = isSmartLocationEnabled,
-                onSmartLocationToggle = onSmartLocationToggle,
                 onNameChange = onNameChange,
                 onAvatarChange = onAvatarChange
             )

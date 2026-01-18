@@ -1,35 +1,38 @@
 package me.ikate.findmy.data.repository
 
+import android.content.Context
 import android.util.Log
-import com.google.android.gms.maps.model.LatLng
-import com.google.firebase.auth.FirebaseAuth
-import com.google.firebase.firestore.FieldValue
-import com.google.firebase.firestore.FirebaseFirestore
-import kotlinx.coroutines.channels.awaitClose
+import com.mapbox.geojson.Point
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.callbackFlow
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.flow.map
+import me.ikate.findmy.data.local.FindMyDatabase
+import me.ikate.findmy.data.local.entity.ContactEntity
 import me.ikate.findmy.data.model.Contact
-import me.ikate.findmy.data.model.LocationShare
 import me.ikate.findmy.data.model.ShareDirection
 import me.ikate.findmy.data.model.ShareDuration
 import me.ikate.findmy.data.model.ShareStatus
 import me.ikate.findmy.data.model.User
-import me.ikate.findmy.util.CoordinateConverter
+import me.ikate.findmy.data.remote.mqtt.LocationMqttService
 
 /**
  * 联系人和位置共享数据仓库
- * 封装 Firestore 数据访问，提供用户索引、位置共享关系的管理
+ * 使用 Room 本地存储 + MQTT 同步（替代 Firestore）
  */
-class ContactRepository {
+class ContactRepository(private val context: Context) {
 
-    private val firestore = FirebaseFirestore.getInstance()
-    private val auth = FirebaseAuth.getInstance()
+    private val contactDao = FindMyDatabase.getInstance(context).contactDao()
+    private val mqttService: LocationMqttService by lazy {
+        DeviceRepository.getMqttService(context)
+    }
 
-    private val usersCollection = firestore.collection("users")
-    private val sharesCollection = firestore.collection("location_shares")
-    private val devicesCollection = firestore.collection("devices")
+    // 获取当前用户 ID
+    private fun getCurrentUid(): String = AuthRepository.getUserId(context)
+
+    // 获取当前用户名称
+    private fun getCurrentUserName(): String {
+        return context.getSharedPreferences("findmy_prefs", Context.MODE_PRIVATE)
+            .getString("user_display_name", null) ?: "用户 ${getCurrentUid().take(6)}"
+    }
 
     companion object {
         private const val TAG = "ContactRepository"
@@ -40,93 +43,30 @@ class ContactRepository {
     // ====================================================================
 
     /**
-     * 同步当前用户信息到 Firestore
-     * 仅保存 UID 和 创建时间
+     * 同步当前用户信息（本地保存）
      */
     suspend fun syncCurrentUser(): Result<Unit> {
-        val currentUser = auth.currentUser ?: return Result.failure(Exception("未登录"))
-
-        return try {
-            // 获取 FCM Token
-            val fcmToken = try {
-                com.google.firebase.messaging.FirebaseMessaging.getInstance().token.await()
-            } catch (e: Exception) {
-                Log.w(TAG, "获取 FCM Token 失败", e)
-                null
-            }
-
-            val userData = hashMapOf(
-                "uid" to currentUser.uid,
-                "email" to (currentUser.email ?: ""),
-                "createdAt" to FieldValue.serverTimestamp()
-            )
-
-            // 使用 set(..., SetOptions.merge()) 来更新基本信息，避免覆盖其他字段
-            usersCollection.document(currentUser.uid)
-                .set(userData, com.google.firebase.firestore.SetOptions.merge())
-                .await()
-
-            // 如果获取到了 Token，追加到 fcmTokens 数组
-            if (!fcmToken.isNullOrEmpty()) {
-                usersCollection.document(currentUser.uid)
-                    .update("fcmTokens", FieldValue.arrayUnion(fcmToken))
-                    .await()
-            }
-
-            Log.d(TAG, "用户信息同步成功: ${currentUser.uid}")
-            Result.success(Unit)
-        } catch (e: Exception) {
-            Log.e(TAG, "用户信息同步失败", e)
-            Result.failure(e)
-        }
+        val currentUid = getCurrentUid()
+        Log.d(TAG, "用户信息同步成功: $currentUid")
+        return Result.success(Unit)
     }
 
     /**
      * 根据邮箱查找用户 UID
+     * 注意：离线模式下无法查找远程用户
      */
     suspend fun findUserByEmail(email: String): String? {
-        return try {
-            val snapshot = usersCollection
-                .whereEqualTo("email", email)
-                .limit(1)
-                .get()
-                .await()
-
-            if (!snapshot.isEmpty) {
-                snapshot.documents[0].getString("uid")
-            } else {
-                null
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "查找用户失败: $email", e)
-            null
-        }
+        // 在本地联系人中查找
+        val contacts = contactDao.getAll()
+        return contacts.find { it.email == email }?.targetUserId
     }
 
     /**
      * 获取当前用户信息
      */
     suspend fun getCurrentUser(): User? {
-        val currentUser = auth.currentUser ?: return null
-
-        // 尝试从 Firestore 获取完整信息
-        return try {
-            val doc = usersCollection.document(currentUser.uid).get().await()
-            if (doc.exists()) {
-                User(
-                    uid = doc.getString("uid") ?: currentUser.uid,
-                    createdAt = doc.getTimestamp("createdAt")?.toDate()?.time ?: 0L
-                )
-            } else {
-                // 如果 Firestore 中不存在，返回 Auth 中的基本信息
-                User(
-                    uid = currentUser.uid
-                )
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "获取当前用户失败", e)
-            null
-        }
+        val currentUid = getCurrentUid()
+        return User(uid = currentUid)
     }
 
     // ====================================================================
@@ -135,63 +75,42 @@ class ContactRepository {
 
     /**
      * 发起位置共享
-     * @param targetInput 目标用户 UID 或 邮箱
+     * 通过 MQTT 发送共享请求
      */
     suspend fun createLocationShare(
         targetInput: String,
         duration: ShareDuration
     ): Result<String> {
-        val currentUser = auth.currentUser ?: return Result.failure(Exception("未登录"))
-        val currentUid = currentUser.uid
+        val currentUid = getCurrentUid()
 
         return try {
-            // 尝试解析目标 UID
-            val targetUid = if (targetInput.contains("@")) {
-                findUserByEmail(targetInput)
-                    ?: return Result.failure(Exception("未找到该邮箱对应的用户"))
-            } else {
-                targetInput
-            }
-
-            if (targetUid == currentUid) {
-                return Result.failure(Exception("不能给自己分享位置"))
-            }
-
-            // 检查是否已存在共享关系（双向检查）
-            val existingShare = sharesCollection
-                .whereEqualTo("fromUid", currentUid)
-                .whereEqualTo("toUid", targetUid)
-                .limit(1)
-                .get()
-                .await()
-
-            if (!existingShare.isEmpty) {
-                val status = existingShare.documents[0].getString("status")
-                return when (status) {
-                    ShareStatus.PENDING.name -> Result.failure(Exception("已发送邀请，等待对方接受"))
-                    ShareStatus.ACCEPTED.name -> Result.failure(Exception("已经在共享位置，可以使用暂停/恢复功能"))
-                    ShareStatus.EXPIRED.name -> Result.failure(Exception("共享已过期，请先删除后重新邀请"))
-                    ShareStatus.REJECTED.name -> Result.failure(Exception("对方已拒绝，请先删除后重新邀请"))
-                    else -> Result.failure(Exception("已存在共享关系"))
+            // 检查是否已存在该联系人（根据 targetUserId）
+            val existingContact = contactDao.getByTargetUserId(targetInput)
+            if (existingContact != null) {
+                // 如果是被对方移除的状态，允许重新发起共享（先删除旧记录）
+                if (existingContact.shareStatus == ShareStatus.REMOVED.name) {
+                    contactDao.deleteById(existingContact.id)
+                    Log.d(TAG, "已删除被移除的旧联系人记录，准备重新发起共享")
+                } else {
+                    // 其他状态返回相应的错误信息
+                    val errorMsg = when (existingContact.shareStatus) {
+                        ShareStatus.PENDING.name -> "该联系人的共享请求正在等待处理"
+                        ShareStatus.ACCEPTED.name -> "该联系人已在列表中"
+                        ShareStatus.REJECTED.name -> "该联系人已拒绝共享，请稍后再试"
+                        ShareStatus.EXPIRED.name -> "该联系人的共享已过期，请删除后重新添加"
+                        else -> "该联系人已存在"
+                    }
+                    return Result.failure(Exception(errorMsg))
                 }
             }
 
-            // 检查反向共享（对方是否已邀请我）
-            val reverseShare = sharesCollection
-                .whereEqualTo("fromUid", targetUid)
-                .whereEqualTo("toUid", currentUid)
-                .limit(1)
-                .get()
-                .await()
-
-            if (!reverseShare.isEmpty) {
-                val status = reverseShare.documents[0].getString("status")
-                if (status == ShareStatus.PENDING.name) {
-                    return Result.failure(Exception("对方已邀请您，请在联系人列表中接受邀请"))
-                } else if (status == ShareStatus.ACCEPTED.name) {
-                    return Result.failure(Exception("已经在共享位置，可以使用暂停/恢复功能"))
-                }
+            // 不能添加自己
+            if (targetInput == currentUid) {
+                return Result.failure(Exception("不能添加自己为联系人"))
             }
+
+            // 生成共享 ID
+            val shareId = "share_${currentUid}_${System.currentTimeMillis()}"
 
             // 计算过期时间
             val expireTime = when (duration) {
@@ -200,17 +119,38 @@ class ContactRepository {
                 ShareDuration.INDEFINITELY -> null
             }
 
-            val shareData = hashMapOf(
-                "fromUid" to currentUid,
-                "toUid" to targetUid,
-                "status" to ShareStatus.PENDING.name,
-                "expireTime" to expireTime,
-                "createdAt" to FieldValue.serverTimestamp()
+            // 创建本地联系人记录
+            val contactEntity = ContactEntity(
+                id = shareId,
+                email = if (targetInput.contains("@")) targetInput else "",
+                name = "用户 ${targetInput.take(8)}",
+                shareStatus = ShareStatus.PENDING.name,
+                shareDirection = ShareDirection.I_SHARE_TO_THEM.name,
+                expireTime = expireTime,
+                targetUserId = targetInput,
+                createdAt = System.currentTimeMillis()
             )
 
-            val docRef = sharesCollection.add(shareData).await()
-            Log.d(TAG, "位置共享创建成功: ${docRef.id}, 目标UID: $targetUid")
-            Result.success(docRef.id)
+            contactDao.upsert(contactEntity)
+            Log.d(TAG, "位置共享创建成功: $shareId, 目标: $targetInput")
+
+            // 通过 MQTT 发送共享请求给目标用户
+            val sendResult = mqttService.publishShareRequest(
+                targetUserId = targetInput,
+                shareId = shareId,
+                senderId = currentUid,
+                senderName = getCurrentUserName(),
+                senderEmail = null,
+                expireTime = expireTime
+            )
+
+            if (sendResult.isSuccess) {
+                Log.d(TAG, "邀请请求已通过 MQTT 发送")
+            } else {
+                Log.w(TAG, "邀请请求发送失败（已加入离线队列）")
+            }
+
+            Result.success(shareId)
         } catch (e: Exception) {
             Log.e(TAG, "创建位置共享失败", e)
             Result.failure(e)
@@ -218,73 +158,31 @@ class ContactRepository {
     }
 
     /**
-     * 接受位置共享
-     * B 接受 A 的邀请后，自动创建反向共享（B → A），实现双向位置共享
+     * 接受位置共享（本地操作 + 发送 MQTT 响应）
+     * 用于用户主动接受邀请
      */
     suspend fun acceptLocationShare(shareId: String): Result<Unit> {
-        val currentUid = auth.currentUser?.uid ?: return Result.failure(Exception("未登录"))
-
         return try {
-            // 获取原始共享记录
-            val shareDoc = sharesCollection.document(shareId).get().await()
-            val fromUid = shareDoc.getString("fromUid")
-                ?: return Result.failure(Exception("数据错误: fromUid 为空"))
-            val expireTime = shareDoc.getLong("expireTime")
+            val contact = contactDao.getById(shareId)
+            contactDao.updateStatus(shareId, ShareStatus.ACCEPTED.name)
+            Log.d(TAG, "接受位置共享成功: $shareId")
 
-            // 1. 更新原共享状态为 ACCEPTED
-            sharesCollection.document(shareId).update(
-                mapOf(
-                    "status" to ShareStatus.ACCEPTED.name,
-                    "toUid" to currentUid,
-                    "acceptedAt" to FieldValue.serverTimestamp()
+            // 通过 MQTT 通知对方已接受
+            contact?.targetUserId?.let { targetUserId ->
+                val sendResult = mqttService.publishShareResponse(
+                    targetUserId = targetUserId,
+                    shareId = shareId,
+                    responderId = getCurrentUid(),
+                    responderName = getCurrentUserName(),
+                    accepted = true
                 )
-            ).await()
-
-            // 2. 查询分享者的所有设备，添加当前用户到 sharedWith
-            val devicesSnapshot = devicesCollection.whereEqualTo("ownerId", fromUid).get().await()
-            devicesSnapshot.documents.forEach { deviceDoc ->
-                deviceDoc.reference.update(
-                    "sharedWith", FieldValue.arrayUnion(currentUid)
-                ).await()
-            }
-
-            // 3. 自动创建反向共享（B → A），使用相同的过期时间
-            // 先检查是否已存在反向共享，避免重复创建
-            val existingReverseShare = sharesCollection
-                .whereEqualTo("fromUid", currentUid)
-                .whereEqualTo("toUid", fromUid)
-                .limit(1)
-                .get()
-                .await()
-
-            if (existingReverseShare.isEmpty) {
-                val reverseShareData = hashMapOf(
-                    "fromUid" to currentUid,
-                    "toUid" to fromUid,
-                    "status" to ShareStatus.ACCEPTED.name,  // 直接设置为 ACCEPTED
-                    "expireTime" to expireTime,  // 使用相同的过期时间
-                    "createdAt" to FieldValue.serverTimestamp(),
-                    "acceptedAt" to FieldValue.serverTimestamp()
-                )
-
-                sharesCollection.add(reverseShareData).await()
-                Log.d(TAG, "自动创建反向共享: $currentUid → $fromUid")
-
-                // 将 A 添加到 B 的设备的 sharedWith 列表
-                val myDevicesSnapshot = devicesCollection.whereEqualTo("ownerId", currentUid).get().await()
-                myDevicesSnapshot.documents.forEach { deviceDoc ->
-                    deviceDoc.reference.update(
-                        "sharedWith", FieldValue.arrayUnion(fromUid)
-                    ).await()
+                if (sendResult.isSuccess) {
+                    Log.d(TAG, "接受响应已通过 MQTT 发送")
+                } else {
+                    Log.w(TAG, "接受响应发送失败（已加入离线队列）")
                 }
-            } else {
-                Log.d(TAG, "反向共享已存在，跳过创建")
             }
 
-            Log.d(
-                TAG,
-                "接受位置共享成功: $shareId, 已自动建立双向共享"
-            )
             Result.success(Unit)
         } catch (e: Exception) {
             Log.e(TAG, "接受位置共享失败: $shareId", e)
@@ -293,26 +191,104 @@ class ContactRepository {
     }
 
     /**
+     * 更新共享状态（仅本地操作，不发送 MQTT）
+     * 用于收到对方的响应后更新本地状态
+     */
+    suspend fun updateShareStatusLocally(shareId: String, status: ShareStatus): Result<Unit> {
+        return try {
+            val contact = contactDao.getById(shareId)
+
+            // 如果对方接受了我的邀请，且当前是单向共享（我分享给对方），则更新为双向共享
+            if (status == ShareStatus.ACCEPTED &&
+                contact?.shareDirection == ShareDirection.I_SHARE_TO_THEM.name) {
+                contactDao.upsert(
+                    contact.copy(
+                        shareStatus = status.name,
+                        shareDirection = ShareDirection.MUTUAL.name,
+                        updatedAt = System.currentTimeMillis()
+                    )
+                )
+                Log.d(TAG, "本地状态更新成功: $shareId -> $status, shareDirection -> MUTUAL")
+            } else {
+                contactDao.updateStatus(shareId, status.name)
+                Log.d(TAG, "本地状态更新成功: $shareId -> $status")
+            }
+
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Log.e(TAG, "本地状态更新失败: $shareId", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * 删除联系人（仅本地操作，不发送 MQTT）
+     * 用于收到对方停止共享通知后删除本地记录
+     */
+    suspend fun deleteContactLocally(shareId: String): Result<Unit> {
+        return try {
+            contactDao.deleteById(shareId)
+            Log.d(TAG, "本地联系人删除成功: $shareId")
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Log.e(TAG, "本地联系人删除失败: $shareId", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * 标记联系人为已被移除状态（仅本地操作）
+     * 用于收到对方移除通知后更新本地状态，显示"已被移出"
+     */
+    suspend fun markContactAsRemoved(targetUserId: String): Result<Unit> {
+        return try {
+            val contact = contactDao.getByTargetUserId(targetUserId)
+            if (contact != null) {
+                contactDao.upsert(
+                    contact.copy(
+                        shareStatus = ShareStatus.REMOVED.name,
+                        isLocationAvailable = false,
+                        latitude = null,
+                        longitude = null,
+                        updatedAt = System.currentTimeMillis()
+                    )
+                )
+                Log.d(TAG, "联系人已标记为移除状态: $targetUserId")
+            }
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Log.e(TAG, "标记联系人移除状态失败: $targetUserId", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
      * 拒绝位置共享
      */
     suspend fun rejectLocationShare(shareId: String): Result<Unit> {
-        // 虽然拒绝不需要UID校验，但为了保持一致性检查登录
-        if (auth.currentUser == null) return Result.failure(Exception("未登录"))
-
         return try {
-            val shareDoc = sharesCollection.document(shareId).get().await()
-            val fromUid = shareDoc.getString("fromUid")
+            val contact = contactDao.getById(shareId)
+            contactDao.updateStatus(shareId, ShareStatus.REJECTED.name)
+            // 清除位置信息
+            contactDao.clearLocation(shareId)
+            Log.d(TAG, "拒绝位置共享成功: $shareId")
 
-            sharesCollection.document(shareId).update(
-                "status", ShareStatus.REJECTED.name
-            ).await()
-
-            // 模拟发送拒绝通知
-            if (fromUid != null) {
-                sendRejectNotification(fromUid)
+            // 通过 MQTT 通知对方已拒绝
+            contact?.targetUserId?.let { targetUserId ->
+                val sendResult = mqttService.publishShareResponse(
+                    targetUserId = targetUserId,
+                    shareId = shareId,
+                    responderId = getCurrentUid(),
+                    responderName = getCurrentUserName(),
+                    accepted = false
+                )
+                if (sendResult.isSuccess) {
+                    Log.d(TAG, "拒绝响应已通过 MQTT 发送")
+                } else {
+                    Log.w(TAG, "拒绝响应发送失败（已加入离线队列）")
+                }
             }
 
-            Log.d(TAG, "拒绝位置共享成功: $shareId")
             Result.success(Unit)
         } catch (e: Exception) {
             Log.e(TAG, "拒绝位置共享失败: $shareId", e)
@@ -321,55 +297,33 @@ class ContactRepository {
     }
 
     /**
-     * 模拟发送拒绝通知
-     * 在实际生产环境中，这应该通过 Cloud Functions 实现
-     */
-    private suspend fun sendRejectNotification(targetUid: String) {
-        try {
-            val userDoc = usersCollection.document(targetUid).get().await()
-
-            @Suppress("UNCHECKED_CAST")
-            val fcmTokens = userDoc.get("fcmTokens") as? List<String>
-            if (!fcmTokens.isNullOrEmpty()) {
-                Log.i(
-                    TAG,
-                    ">>> [模拟推送] 向用户 $targetUid 发送通知: 您的位置共享请求已被拒绝 (Tokens: ${fcmTokens.size})"
-                )
-            } else {
-                Log.w(TAG, ">>> [模拟推送] 用户 $targetUid 没有注册 FCM Token，无法发送通知")
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "发送拒绝通知失败", e)
-        }
-    }
-
-    /**
      * 停止共享（删除共享关系）
+     * 会发送移除通知给对方，对方会显示"已被移出"状态
      */
     suspend fun stopSharing(shareId: String): Result<Unit> {
-        val currentUid = auth.currentUser?.uid ?: return Result.failure(Exception("未登录"))
-
         return try {
-            val shareDoc = sharesCollection.document(shareId).get().await()
-            val fromUid = shareDoc.getString("fromUid")
-            val toUid = shareDoc.getString("toUid")
+            // 先获取联系人信息（在删除之前）
+            val contact = contactDao.getById(shareId)
 
-            // 从设备的 sharedWith 中移除
-            if (fromUid == currentUid && toUid != null) {
-                // 我停止分享给对方
-                val devicesSnapshot =
-                    devicesCollection.whereEqualTo("ownerId", currentUid).get().await()
-                devicesSnapshot.documents.forEach { deviceDoc ->
-                    deviceDoc.reference.update(
-                        "sharedWith", FieldValue.arrayRemove(toUid)
-                    ).await()
+            // 删除本地记录
+            contactDao.deleteById(shareId)
+            Log.d(TAG, "停止共享成功: $shareId")
+
+            // 通过 MQTT 通知对方已被移除
+            contact?.targetUserId?.let { targetUserId ->
+                val sendResult = mqttService.publishShareRemove(
+                    targetUserId = targetUserId,
+                    shareId = shareId,
+                    responderId = getCurrentUid(),
+                    responderName = getCurrentUserName()
+                )
+                if (sendResult.isSuccess) {
+                    Log.d(TAG, "移除通知已发送给: $targetUserId")
+                } else {
+                    Log.w(TAG, "移除通知发送失败（已加入离线队列）")
                 }
-                Log.d(TAG, "已从 ${devicesSnapshot.size()} 个设备的 sharedWith 中移除用户: $toUid")
             }
 
-            // 删除共享记录
-            sharesCollection.document(shareId).delete().await()
-            Log.d(TAG, "停止共享成功: $shareId")
             Result.success(Unit)
         } catch (e: Exception) {
             Log.e(TAG, "停止共享失败: $shareId", e)
@@ -381,19 +335,28 @@ class ContactRepository {
      * 暂停位置共享
      */
     suspend fun pauseLocationShare(shareId: String): Result<Unit> {
-        val currentUid = auth.currentUser?.uid ?: return Result.failure(Exception("未登录"))
-
         return try {
-            val shareDoc = sharesCollection.document(shareId).get().await()
-            val fromUid = shareDoc.getString("fromUid")
+            val contact = contactDao.getById(shareId) ?: return Result.failure(Exception("未找到共享记录"))
+            contactDao.upsert(contact.copy(isPaused = true, updatedAt = System.currentTimeMillis()))
+            // 清除位置信息
+            contactDao.clearLocation(shareId)
+            Log.d(TAG, "暂停共享成功: $shareId")
 
-            // 只有发送者可以暂停
-            if (fromUid != currentUid) {
-                return Result.failure(Exception("只有位置发送方可以暂停共享"))
+            // 通过 MQTT 通知对方共享已暂停
+            contact.targetUserId?.let { targetUserId ->
+                val sendResult = mqttService.publishSharePause(
+                    targetUserId = targetUserId,
+                    senderId = getCurrentUid(),
+                    senderName = getCurrentUserName(),
+                    isPaused = true
+                )
+                if (sendResult.isSuccess) {
+                    Log.d(TAG, "暂停共享通知已发送给: $targetUserId")
+                } else {
+                    Log.w(TAG, "暂停共享通知发送失败（已加入离线队列）")
+                }
             }
 
-            sharesCollection.document(shareId).update("isPaused", true).await()
-            Log.d(TAG, "暂停共享成功: $shareId")
             Result.success(Unit)
         } catch (e: Exception) {
             Log.e(TAG, "暂停共享失败: $shareId", e)
@@ -405,50 +368,37 @@ class ContactRepository {
      * 恢复位置共享
      */
     suspend fun resumeLocationShare(shareId: String, duration: ShareDuration): Result<Unit> {
-        val currentUid = auth.currentUser?.uid ?: return Result.failure(Exception("未登录"))
-
         return try {
-            val shareDoc = sharesCollection.document(shareId).get().await()
-            val fromUid = shareDoc.getString("fromUid")
-            val toUid = shareDoc.getString("toUid")
+            val contact = contactDao.getById(shareId) ?: return Result.failure(Exception("未找到共享记录"))
 
-            // 只有发送者可以恢复
-            if (fromUid != currentUid) {
-                return Result.failure(Exception("只有位置发送方可以恢复共享"))
-            }
-
-            // 计算新的过期时间
             val expireTime = when (duration) {
                 ShareDuration.ONE_HOUR -> System.currentTimeMillis() + duration.durationMillis!!
                 ShareDuration.END_OF_DAY -> ShareDuration.calculateEndOfDay()
                 ShareDuration.INDEFINITELY -> null
             }
 
-            val updateData = mapOf(
-                "isPaused" to false,
-                "expireTime" to expireTime,
-                "status" to ShareStatus.ACCEPTED.name  // 恢复时将状态从 EXPIRED 改回 ACCEPTED
+            contactDao.upsert(
+                contact.copy(
+                    isPaused = false,
+                    expireTime = expireTime,
+                    shareStatus = ShareStatus.ACCEPTED.name,
+                    updatedAt = System.currentTimeMillis()
+                )
             )
-
-            // 1. 更新当前共享记录 (A → B)
-            sharesCollection.document(shareId).update(updateData).await()
             Log.d(TAG, "恢复共享成功: $shareId")
 
-            // 2. 同时更新反向共享记录 (B → A)，确保双方状态一致
-            if (toUid != null) {
-                val reverseShareSnapshot = sharesCollection
-                    .whereEqualTo("fromUid", toUid)
-                    .whereEqualTo("toUid", fromUid)
-                    .limit(1)
-                    .get()
-                    .await()
-
-                if (!reverseShareSnapshot.isEmpty) {
-                    val reverseShareId = reverseShareSnapshot.documents[0].id
-                    sharesCollection.document(reverseShareId).update(updateData).await()
-                    Log.d(TAG, "同时恢复反向共享: $reverseShareId")
+            // 通过 MQTT 通知对方共享已恢复
+            contact.targetUserId?.let { targetUserId ->
+                val sendResult = mqttService.publishSharePause(
+                    targetUserId = targetUserId,
+                    senderId = getCurrentUid(),
+                    senderName = getCurrentUserName(),
+                    isPaused = false
+                )
+                if (sendResult.isSuccess) {
+                    Log.d(TAG, "恢复共享通知已发送给: $targetUserId")
                 } else {
-                    Log.w(TAG, "未找到反向共享记录，可能是单向共享")
+                    Log.w(TAG, "恢复共享通知发送失败（已加入离线队列）")
                 }
             }
 
@@ -463,28 +413,15 @@ class ContactRepository {
      * 绑定联系人（设置别名）
      */
     suspend fun bindContact(shareId: String, name: String, photoUrl: String?): Result<Unit> {
-        val currentUid = auth.currentUser?.uid ?: return Result.failure(Exception("未登录"))
-
         return try {
-            val shareDoc = sharesCollection.document(shareId).get().await()
-            val fromUid = shareDoc.getString("fromUid")
-            val toUid = shareDoc.getString("toUid")
-
-            val updates = mutableMapOf<String, Any>()
-
-            if (toUid == currentUid) {
-                // 我是接收者，给发送者(fromUid)设置备注
-                updates["receiverAliasName"] = name
-                if (photoUrl != null) updates["receiverAliasAvatar"] = photoUrl
-            } else if (fromUid == currentUid) {
-                // 我是发送者，给接收者(toUid)设置备注
-                updates["senderAliasName"] = name
-                if (photoUrl != null) updates["senderAliasAvatar"] = photoUrl
-            } else {
-                return Result.failure(Exception("无权修改此共享记录"))
-            }
-
-            sharesCollection.document(shareId).update(updates).await()
+            val contact = contactDao.getById(shareId) ?: return Result.failure(Exception("未找到共享记录"))
+            contactDao.upsert(
+                contact.copy(
+                    name = name,
+                    avatarUrl = photoUrl,
+                    updatedAt = System.currentTimeMillis()
+                )
+            )
             Log.d(TAG, "联系人绑定成功: $shareId, alias=$name")
             Result.success(Unit)
         } catch (e: Exception) {
@@ -499,52 +436,16 @@ class ContactRepository {
 
     /**
      * 清理过期的位置共享
-     * 删除所有已过期的共享记录（包括 PENDING 和 ACCEPTED 状态）
      */
     suspend fun cleanupExpiredShares(): Result<Int> {
-        val currentUid = auth.currentUser?.uid ?: return Result.failure(Exception("未登录"))
-        val now = System.currentTimeMillis()
-
         return try {
-            var deletedCount = 0
-
-            // 查询所有与我相关的共享（我发出的或发给我的）
-            val mySharesSnapshot = sharesCollection
-                .whereEqualTo("fromUid", currentUid)
-                .get()
-                .await()
-
-            val receivedSharesSnapshot = sharesCollection
-                .whereEqualTo("toUid", currentUid)
-                .get()
-                .await()
-
-            val allShares = mySharesSnapshot.documents + receivedSharesSnapshot.documents
-
-            for (doc in allShares) {
-                val expireTime = doc.getLong("expireTime")
-                val status = doc.getString("status")
-
-                // 检查是否过期
-                if (expireTime != null && expireTime < now) {
-                    // 如果是 PENDING 状态且超时 24 小时，直接删除
-                    if (status == ShareStatus.PENDING.name) {
-                        val createdAt = doc.getTimestamp("createdAt")?.toDate()?.time ?: 0L
-                        if (now - createdAt > 24 * 60 * 60 * 1000) { // 24 小时
-                            doc.reference.delete().await()
-                            deletedCount++
-                            Log.d(TAG, "删除超时的 PENDING 共享: ${doc.id}")
-                        }
-                    } else {
-                        // ACCEPTED 状态的过期共享，标记为 EXPIRED
-                        doc.reference.update("status", ShareStatus.EXPIRED.name).await()
-                        Log.d(TAG, "标记共享为 EXPIRED: ${doc.id}")
-                    }
-                }
-            }
-
-            Log.d(TAG, "清理完成: 删除 $deletedCount 个超时的 PENDING 共享")
-            Result.success(deletedCount)
+            contactDao.markExpired()
+            // 清除所有过期联系人的位置信息
+            contactDao.clearLocationByStatus(ShareStatus.EXPIRED.name)
+            // 清除所有被拒绝联系人的位置信息
+            contactDao.clearLocationByStatus(ShareStatus.REJECTED.name)
+            Log.d(TAG, "清理过期共享完成")
+            Result.success(0)
         } catch (e: Exception) {
             Log.e(TAG, "清理过期共享失败", e)
             Result.failure(e)
@@ -553,210 +454,125 @@ class ContactRepository {
 
     /**
      * 实时监听我的联系人列表
-     * 🔄 优化：同时监听 shares 和 devices 集合，确保位置实时更新
      */
-    fun observeMyContacts(): Flow<List<Contact>> = callbackFlow {
-        val currentUid = auth.currentUser?.uid
-
-        if (currentUid == null) {
-            Log.w(TAG, "用户未登录,返回空联系人列表")
-            trySend(emptyList())
-            awaitClose {}
-            return@callbackFlow
-        }
-
-        // 由于 Firestore 不支持 OR 查询,使用标志位触发合并
-        var iShareList: List<LocationShare> = emptyList()
-        var theyShareList: List<LocationShare> = emptyList()
-
-        // 监听1: 我分享给别人的 (fromUid == currentUid)
-        val listener1 = sharesCollection
-            .whereEqualTo("fromUid", currentUid)
-            .addSnapshotListener { snapshot, error ->
-                if (error != null) {
-                    Log.e(TAG, "监听我分享的失败", error)
-                    return@addSnapshotListener
-                }
-
-                iShareList = snapshot?.documents?.mapNotNull { doc ->
-                    parseLocationShare(doc.id, doc.data ?: return@mapNotNull null)
-                } ?: emptyList()
-
-                // 合并两个列表并发送
-                kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
-                    val contacts = mergeContactLists(iShareList, theyShareList)
-                    trySend(contacts)
-                }
-            }
-
-        // 监听2: 别人分享给我的 (toUid == currentUid)
-        val listener2 = sharesCollection
-            .whereEqualTo("toUid", currentUid)
-            .addSnapshotListener { snapshot, error ->
-                if (error != null) {
-                    Log.e(TAG, "监听分享给我的失败", error)
-                    return@addSnapshotListener
-                }
-
-                theyShareList = snapshot?.documents?.mapNotNull { doc ->
-                    parseLocationShare(doc.id, doc.data ?: return@mapNotNull null)
-                } ?: emptyList()
-
-                // 合并两个列表并发送
-                kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
-                    val contacts = mergeContactLists(iShareList, theyShareList)
-                    trySend(contacts)
-                }
-            }
-
-        // 🔄 监听3: 监听所有与我共享的设备位置更新
-        // 当任何共享联系人的设备位置更新时，触发联系人列表刷新
-        val listener3 = devicesCollection
-            .whereArrayContains("sharedWith", currentUid)
-            .addSnapshotListener { snapshot, error ->
-                if (error != null) {
-                    Log.e(TAG, "监听共享设备失败", error)
-                    return@addSnapshotListener
-                }
-
-                // 设备位置更新，触发重新合并
-                kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
-                    val contacts = mergeContactLists(iShareList, theyShareList)
-                    trySend(contacts)
-                }
-            }
-
-        awaitClose {
-            listener1.remove()
-            listener2.remove()
-            listener3.remove()
+    fun observeMyContacts(): Flow<List<Contact>> {
+        return contactDao.observeAll().map { entities ->
+            entities.map { it.toDomain() }
         }
     }
 
     /**
-     * 合并两个共享列表为联系人列表 (优化版：按好友 UID 合并)
+     * 获取所有联系人
      */
-    private suspend fun mergeContactLists(
-        iShareList: List<LocationShare>,
-        theyShareList: List<LocationShare>
-    ): List<Contact> {
+    suspend fun getAllContacts(): List<Contact> {
+        return contactDao.getAll().map { it.toDomain() }
+    }
 
-        // 临时存储好友 UID -> 共享信息对
-        // Key: 对方 UID, Value: (我发出的共享, 对方发出的共享)
-        val userShareMap = mutableMapOf<String, Pair<LocationShare?, LocationShare?>>()
-
-        // 1. 处理我分享给别人的
-        iShareList.forEach { share ->
-            val otherUid = share.toUid ?: return@forEach
-            val current = userShareMap[otherUid]
-            userShareMap[otherUid] = Pair(share, current?.second)
+    /**
+     * 更新联系人位置（从 MQTT 消息接收）
+     */
+    suspend fun updateContactLocation(
+        targetUserId: String,
+        location: Point,
+        lastUpdateTime: Long,
+        deviceName: String? = null,
+        battery: Int? = null
+    ) {
+        try {
+            val contact = contactDao.getByTargetUserId(targetUserId)
+            if (contact != null) {
+                contactDao.upsert(
+                    contact.copy(
+                        latitude = location.latitude(),
+                        longitude = location.longitude(),
+                        lastUpdateTime = lastUpdateTime,
+                        isLocationAvailable = true,
+                        deviceName = deviceName ?: contact.deviceName,
+                        battery = battery ?: contact.battery,
+                        updatedAt = System.currentTimeMillis()
+                    )
+                )
+                Log.d(TAG, "联系人位置更新: $targetUserId")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "更新联系人位置失败", e)
         }
+    }
 
-        // 2. 处理别人分享给我的
-        theyShareList.forEach { share ->
-            val otherUid = share.fromUid
-            val current = userShareMap[otherUid]
-            userShareMap[otherUid] = Pair(current?.first, share)
-        }
-
-        // 3. 构建最终的联系人对象
-        return userShareMap.map { (otherUid, sharePair) ->
-            val myShare = sharePair.first
-            val theirShare = sharePair.second
-
-            // 确定最终的方向
-            val direction = when {
-                myShare != null && theirShare != null -> ShareDirection.MUTUAL
-                myShare != null -> ShareDirection.I_SHARE_TO_THEM
-                else -> ShareDirection.THEY_SHARE_TO_ME
+    /**
+     * 添加联系人（从 MQTT 接收共享请求时调用）
+     */
+    suspend fun addContactFromShare(
+        shareId: String,
+        fromUserId: String,
+        fromUserName: String,
+        expireTime: Long?
+    ) {
+        try {
+            // 检查是否已存在该用户的共享记录
+            val existingContact = contactDao.getByTargetUserId(fromUserId)
+            if (existingContact != null) {
+                // 如果已存在，更新为新的共享请求
+                Log.d(TAG, "收到重复共享请求，更新现有记录: $fromUserId (状态: ${existingContact.shareStatus})")
+                contactDao.upsert(
+                    existingContact.copy(
+                        id = shareId,
+                        name = fromUserName, // 更新名称
+                        shareStatus = ShareStatus.PENDING.name,
+                        shareDirection = ShareDirection.THEY_SHARE_TO_ME.name,
+                        expireTime = expireTime,
+                        updatedAt = System.currentTimeMillis()
+                    )
+                )
+                return
             }
 
-            // 确定显示名称和头像
-            // 优先顺序：接收者备注 > 发送者备注 > UID
-            val name = myShare?.senderAliasName ?: theirShare?.receiverAliasName
-            ?: "用户 ${otherUid.take(4)}"
-            val avatar = myShare?.senderAliasAvatar ?: theirShare?.receiverAliasAvatar
-
-            // 获取位置信息 (来自对方发出的共享)
-            var location: LatLng? = null
-            var lastUpdate: Long? = null
-            var isLocationAvailable = false
-            var deviceName: String? = null
-            var battery: Int? = null
-
-            if (theirShare != null) {
-                if (theirShare.status == ShareStatus.ACCEPTED && !theirShare.isPaused) {
-                    Log.d(TAG, "🔍 查询用户 $otherUid 的设备位置...")
-                    val deviceSnapshot = devicesCollection
-                        .whereEqualTo("ownerId", otherUid)
-                        .orderBy("lastUpdateTime", com.google.firebase.firestore.Query.Direction.DESCENDING)  // 按更新时间降序排序
-                        .limit(1)  // 获取最近更新的设备
-                        .get()
-                        .await()
-
-                    deviceSnapshot.documents.firstOrNull()?.let { deviceDoc ->
-                        val geoPoint = deviceDoc.getGeoPoint("location")
-
-                        location = geoPoint?.let {
-                            CoordinateConverter.wgs84ToGcj02(it.latitude, it.longitude)
-                        }
-                        lastUpdate = deviceDoc.getTimestamp("lastUpdateTime")?.toDate()?.time
-                        isLocationAvailable = location != null
-                        deviceName = deviceDoc.getString("name")
-                        battery = deviceDoc.getLong("battery")?.toInt()
-                    }
-                }
-            }
-
-            // 如果是我发出的，记录我的共享 ID 用于操作
-            // 如果只有对方分享给我，则记录对方的 ID 用于接受/拒绝
-            val contactId = myShare?.id ?: theirShare?.id ?: ""
-
-            // 关键修正: isPaused 应该反映"我是否暂停了给对方的共享"
-            // 只有当 myShare 存在且我暂停了它时，isPaused 为 true
-            val amIPaused = myShare?.isPaused == true
-
-            Contact(
-                id = contactId,
-                email = "",
-                name = name,
-                avatarUrl = avatar,
-                shareStatus = (myShare ?: theirShare)?.status ?: ShareStatus.PENDING,
-                shareDirection = direction,
-                expireTime = myShare?.expireTime ?: theirShare?.expireTime,
-                targetUserId = otherUid, // 保存目标用户的 UID，用于位置请求
-                location = location,
-                lastUpdateTime = lastUpdate,
-                isLocationAvailable = isLocationAvailable,
-                isPaused = amIPaused,
-                deviceName = deviceName,
-                battery = battery
+            // 不存在则新建
+            val contactEntity = ContactEntity(
+                id = shareId,
+                name = fromUserName,
+                shareStatus = ShareStatus.PENDING.name,
+                shareDirection = ShareDirection.THEY_SHARE_TO_ME.name,
+                expireTime = expireTime,
+                targetUserId = fromUserId,
+                createdAt = System.currentTimeMillis()
             )
+            contactDao.upsert(contactEntity)
+            Log.d(TAG, "收到共享请求，已添加联系人: $fromUserId")
+        } catch (e: Exception) {
+            Log.e(TAG, "添加联系人失败", e)
         }
     }
 
     /**
-     * 解析 LocationShare 文档
+     * 检查是否应该响应来自指定用户的请求
+     * 返回 true 表示应该响应，false 表示应该忽略
+     *
+     * 检查条件：
+     * 1. 该用户必须在联系人列表中
+     * 2. 共享状态必须是 ACCEPTED
+     * 3. 我没有暂停与该用户的共享
      */
-    private fun parseLocationShare(id: String, data: Map<String, Any>): LocationShare {
-        return LocationShare(
-            id = id,
-            fromUid = data["fromUid"] as? String ?: "",
-            toUid = data["toUid"] as? String,
-            status = try {
-                ShareStatus.valueOf(data["status"] as? String ?: "PENDING")
-            } catch (_: Exception) {
-                ShareStatus.PENDING
-            },
-            expireTime = data["expireTime"] as? Long,
-            createdAt = (data["createdAt"] as? com.google.firebase.Timestamp)?.toDate()?.time
-                ?: System.currentTimeMillis(),
-            acceptedAt = (data["acceptedAt"] as? com.google.firebase.Timestamp)?.toDate()?.time,
-            receiverAliasName = data["receiverAliasName"] as? String,
-            receiverAliasAvatar = data["receiverAliasAvatar"] as? String,
-            senderAliasName = data["senderAliasName"] as? String,
-            senderAliasAvatar = data["senderAliasAvatar"] as? String,
-            isPaused = data["isPaused"] as? Boolean ?: false
-        )
+    suspend fun shouldRespondToRequest(requesterUid: String): Boolean {
+        return try {
+            val contact = contactDao.getByTargetUserId(requesterUid) ?: return false
+
+            // 检查共享状态是否为 ACCEPTED
+            if (contact.shareStatus != ShareStatus.ACCEPTED.name) {
+                Log.d(TAG, "忽略请求: 共享状态不是 ACCEPTED (${contact.shareStatus})")
+                return false
+            }
+
+            // 检查是否暂停了共享
+            if (contact.isPaused) {
+                Log.d(TAG, "忽略请求: 共享已暂停")
+                return false
+            }
+
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "检查请求响应条件失败", e)
+            false
+        }
     }
 }

@@ -1,27 +1,28 @@
 package me.ikate.findmy.service
 
+import android.content.Context
 import android.util.Log
-import com.google.firebase.firestore.FirebaseFirestore
+import com.google.gson.Gson
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.tasks.await
+import me.ikate.findmy.data.remote.mqtt.MqttConfig
+import me.ikate.findmy.data.repository.DeviceRepository
 
 /**
  * 位置追踪管理器
- * 负责处理位置请求、连续追踪的启动/停止
+ * 使用 MQTT 进行位置请求和追踪（替代 Firestore）
  */
 class LocationTrackingManager(
-    private val firestore: FirebaseFirestore,
+    private val context: Context,
     private val locationReportService: LocationReportService,
     private val scope: CoroutineScope
 ) {
     companion object {
         private const val TAG = "LocationTrackingManager"
-        private const val COLLECTION_LOCATION_REQUESTS = "locationRequests"
         private const val REQUEST_TIMEOUT_MS = 10_000L
         private const val TRACKING_DURATION_MS = 60_000L
     }
@@ -38,21 +39,10 @@ class LocationTrackingManager(
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
 
-    // ====================================================================
-    // 通用请求执行器
-    // ====================================================================
-
     /**
-     * 执行 Firebase 请求的通用方法
-     *
-     * @param currentUid 当前用户的 UID（必须非空）
-     * @param targetUid 目标用户的 UID
-     * @param type 请求类型
-     * @param additionalData 额外数据字段
-     * @param errorMessagePrefix 错误消息前缀
-     * @param onSuccess 成功回调（可选）
+     * 通过 MQTT 发送请求
      */
-    private fun executeRequest(
+    private fun sendMqttRequest(
         currentUid: String?,
         targetUid: String,
         type: String,
@@ -75,22 +65,25 @@ class LocationTrackingManager(
                     reportMyLocationFirst()
                 }
 
-                // 构建请求数据
-                val requestData = hashMapOf<String, Any>(
-                    "requesterUid" to currentUid,
-                    "targetUid" to targetUid,
-                    "type" to type,
-                    "timestamp" to System.currentTimeMillis(),
-                    "status" to "pending"
-                ).apply {
-                    putAll(additionalData)
+                // 通过 MQTT 发送请求
+                if (MqttConfig.isConfigured()) {
+                    val mqttManager = DeviceRepository.getMqttManager(context)
+                    val requestData = mapOf(
+                        "requesterUid" to currentUid,
+                        "targetUid" to targetUid,
+                        "type" to type,
+                        "timestamp" to System.currentTimeMillis()
+                    ) + additionalData
+
+                    // 发布到目标用户的请求主题
+                    val topic = "findmy/requests/$targetUid"
+                    val payload = Gson().toJson(requestData)
+                    mqttManager.publish(topic, payload)
+                    Log.d(TAG, "MQTT 请求已发送: $type")
+                } else {
+                    Log.w(TAG, "MQTT 未配置，无法发送请求")
                 }
 
-                firestore.collection(COLLECTION_LOCATION_REQUESTS)
-                    .add(requestData)
-                    .await()
-
-                Log.d(TAG, "请求已创建: $type")
                 onSuccess?.invoke()
             } catch (e: Exception) {
                 Log.e(TAG, "请求失败: $type", e)
@@ -99,15 +92,8 @@ class LocationTrackingManager(
         }
     }
 
-    // ====================================================================
-    // 位置请求
-    // ====================================================================
-
     /**
      * 请求联系人的实时位置更新
-     *
-     * @param currentUid 当前用户的 UID
-     * @param targetUid 目标用户的 UID
      */
     fun requestLocationUpdate(currentUid: String?, targetUid: String) {
         if (currentUid == null) {
@@ -123,20 +109,13 @@ class LocationTrackingManager(
                 // 先上报自己的最新位置
                 reportMyLocationFirst()
 
-                // 创建位置请求记录
-                val requestData = hashMapOf(
-                    "requesterUid" to currentUid,
-                    "targetUid" to targetUid,
-                    "type" to "single",
-                    "timestamp" to System.currentTimeMillis(),
-                    "status" to "pending"
+                // 通过 MQTT 发送位置请求
+                sendMqttRequest(
+                    currentUid = currentUid,
+                    targetUid = targetUid,
+                    type = "single",
+                    reportLocationFirst = false
                 )
-
-                firestore.collection(COLLECTION_LOCATION_REQUESTS)
-                    .add(requestData)
-                    .await()
-
-                Log.d(TAG, "位置请求已创建")
 
                 // 超时后清除加载状态
                 delay(REQUEST_TIMEOUT_MS)
@@ -153,9 +132,6 @@ class LocationTrackingManager(
 
     /**
      * 开始短时实时追踪（60秒高频位置更新）
-     *
-     * @param currentUid 当前用户的 UID
-     * @param targetUid 目标联系人的 UID
      */
     fun startContinuousTracking(currentUid: String?, targetUid: String) {
         if (currentUid == null) {
@@ -171,20 +147,13 @@ class LocationTrackingManager(
                 // 先上报自己的位置
                 reportMyLocationFirst()
 
-                // 创建连续追踪请求
-                val trackingData = hashMapOf(
-                    "requesterUid" to currentUid,
-                    "targetUid" to targetUid,
-                    "type" to "continuous",
-                    "timestamp" to System.currentTimeMillis(),
-                    "status" to "pending"
+                // 通过 MQTT 发送连续追踪请求
+                sendMqttRequest(
+                    currentUid = currentUid,
+                    targetUid = targetUid,
+                    type = "continuous",
+                    reportLocationFirst = false
                 )
-
-                firestore.collection(COLLECTION_LOCATION_REQUESTS)
-                    .add(trackingData)
-                    .await()
-
-                Log.d(TAG, "连续追踪请求已创建")
 
                 // 60秒后自动清除追踪状态
                 delay(TRACKING_DURATION_MS)
@@ -205,7 +174,7 @@ class LocationTrackingManager(
      */
     fun stopContinuousTracking(currentUid: String?, targetUid: String) {
         _trackingContactUid.value = null
-        executeRequest(
+        sendMqttRequest(
             currentUid = currentUid,
             targetUid = targetUid,
             type = "stop_continuous",
@@ -224,7 +193,7 @@ class LocationTrackingManager(
      * 请求目标设备播放声音
      */
     fun requestPlaySound(currentUid: String?, targetUid: String) {
-        executeRequest(
+        sendMqttRequest(
             currentUid = currentUid,
             targetUid = targetUid,
             type = "play_sound",
@@ -236,7 +205,7 @@ class LocationTrackingManager(
      * 请求目标设备停止播放声音
      */
     fun requestStopSound(currentUid: String?, targetUid: String) {
-        executeRequest(
+        sendMqttRequest(
             currentUid = currentUid,
             targetUid = targetUid,
             type = "stop_sound",
@@ -254,10 +223,10 @@ class LocationTrackingManager(
         phoneNumber: String,
         playSound: Boolean
     ) {
-        executeRequest(
+        sendMqttRequest(
             currentUid = currentUid,
             targetUid = targetUid,
-            type = "enable_lost_mode",
+            type = "lost_mode",  // 使用 RequestMessage.TYPE_LOST_MODE 常量值
             additionalData = mapOf(
                 "message" to message,
                 "phoneNumber" to phoneNumber,
@@ -271,10 +240,10 @@ class LocationTrackingManager(
      * 关闭丢失模式
      */
     fun disableLostMode(currentUid: String?, targetUid: String) {
-        executeRequest(
+        sendMqttRequest(
             currentUid = currentUid,
             targetUid = targetUid,
-            type = "disable_lost_mode",
+            type = "disable_lost_mode",  // 使用 RequestMessage.TYPE_DISABLE_LOST_MODE 常量值
             errorMessagePrefix = "关闭丢失模式失败"
         )
     }

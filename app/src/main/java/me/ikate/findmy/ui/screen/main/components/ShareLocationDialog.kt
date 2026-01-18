@@ -1,7 +1,10 @@
 package me.ikate.findmy.ui.screen.main.components
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -9,17 +12,14 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.Icon
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.RadioButton
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -35,21 +35,22 @@ import androidx.compose.ui.unit.dp
 import me.ikate.findmy.data.model.ShareDuration
 
 /**
- * 位置共享对话框
- * 用于发起位置共享，输入对方邮箱并选择共享时长
+ * 位置共享对话框（紧凑版）
+ * 用于发起位置共享，输入对方 UID 并选择共享时长
  *
  * @param isLoading 是否正在发送
  * @param errorMessage 错误消息
  * @param onDismiss 关闭对话框回调
- * @param onConfirm 确认回调 (email, duration)
+ * @param onConfirm 确认回调 (uid, duration)
  * @param modifier 修饰符
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ShareLocationDialog(
     isLoading: Boolean = false,
     errorMessage: String? = null,
     onDismiss: () -> Unit,
-    onConfirm: (email: String, duration: ShareDuration) -> Unit,
+    onConfirm: (uid: String, duration: ShareDuration) -> Unit,
     modifier: Modifier = Modifier
 ) {
     var targetUid by remember { mutableStateOf("") }
@@ -65,127 +66,127 @@ fun ShareLocationDialog(
 
     AlertDialog(
         onDismissRequest = { if (!isLoading) onDismiss() },
-        icon = {
-            Icon(
-                imageVector = Icons.Default.LocationOn,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(32.dp)
-            )
-        },
         title = {
             Text(
-                "共享我的位置",
-                style = MaterialTheme.typography.headlineSmall,
-                fontWeight = FontWeight.Bold
+                "添加联系人",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold
             )
         },
         text = {
             Column(
                 modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 // UID 输入
                 OutlinedTextField(
                     value = targetUid,
                     onValueChange = {
                         targetUid = it
-                        localError = null  // 清除错误
+                        localError = null
                     },
                     label = { Text("对方 UID") },
-                    placeholder = { Text("请输入对方的 UID") },
+                    placeholder = { Text("粘贴对方的 UID") },
                     singleLine = true,
                     isError = localError != null,
-                    supportingText = localError?.let {
-                        {
-                            Text(
-                                it,
-                                color = MaterialTheme.colorScheme.error,
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                        }
-                    },
+                    supportingText = if (localError != null) {
+                        { Text(localError!!, color = MaterialTheme.colorScheme.error) }
+                    } else null,
                     enabled = !isLoading,
-                    shape = RoundedCornerShape(12.dp),
+                    shape = RoundedCornerShape(10.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
+                    ),
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                // 时长选择
-                Text(
-                    text = "共享时长",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
+                // 时长选择（水平 Chips）
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = "共享时长",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
 
-                ShareDuration.entries.forEach { duration ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .selectable(
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        ShareDuration.entries.forEach { duration ->
+                            FilterChip(
                                 selected = selectedDuration == duration,
                                 onClick = { if (!isLoading) selectedDuration = duration },
-                                enabled = !isLoading
+                                label = {
+                                    Text(
+                                        text = duration.shortName,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        fontWeight = if (selectedDuration == duration)
+                                            FontWeight.Medium else FontWeight.Normal
+                                    )
+                                },
+                                enabled = !isLoading,
+                                shape = RoundedCornerShape(8.dp),
+                                border = if (selectedDuration == duration) {
+                                    BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary)
+                                } else {
+                                    FilterChipDefaults.filterChipBorder(
+                                        enabled = true,
+                                        selected = false,
+                                        borderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
+                                    )
+                                },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                                    selectedLabelColor = MaterialTheme.colorScheme.primary
+                                )
                             )
-                            .padding(vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        RadioButton(
-                            selected = selectedDuration == duration,
-                            onClick = { if (!isLoading) selectedDuration = duration },
-                            enabled = !isLoading
-                        )
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Text(
-                            text = duration.displayName,
-                            style = MaterialTheme.typography.bodyLarge,
-                            fontWeight = if (selectedDuration == duration) FontWeight.Medium else FontWeight.Normal
-                        )
+                        }
                     }
                 }
             }
         },
         confirmButton = {
-            FilledTonalButton(
+            TextButton(
                 onClick = {
-                    // UID 验证
                     when {
-                        targetUid.isBlank() -> {
-                            localError = "请输入对方的 UID"
-                        }
-
-                        else -> {
-                            onConfirm(targetUid.trim(), selectedDuration)
-                        }
+                        targetUid.isBlank() -> localError = "请输入对方的 UID"
+                        else -> onConfirm(targetUid.trim(), selectedDuration)
                     }
                 },
-                enabled = !isLoading,
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.height(40.dp)
+                enabled = !isLoading && targetUid.isNotBlank()
             ) {
                 if (isLoading) {
                     CircularProgressIndicator(
-                        modifier = Modifier.size(20.dp),
-                        strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                        modifier = Modifier.size(16.dp),
+                        strokeWidth = 2.dp
                     )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("发送中...")
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("发送中")
                 } else {
-                    Text("发送", fontWeight = FontWeight.SemiBold)
+                    Text("发送邀请", fontWeight = FontWeight.SemiBold)
                 }
             }
         },
         dismissButton = {
             TextButton(
                 onClick = onDismiss,
-                enabled = !isLoading,
-                shape = RoundedCornerShape(12.dp)
+                enabled = !isLoading
             ) {
                 Text("取消")
             }
         },
-        shape = RoundedCornerShape(24.dp),
+        shape = RoundedCornerShape(20.dp),
         modifier = modifier
     )
 }
+
+/**
+ * ShareDuration 扩展属性 - 短名称
+ */
+private val ShareDuration.shortName: String
+    get() = when (this) {
+        ShareDuration.ONE_HOUR -> "1小时"
+        ShareDuration.END_OF_DAY -> "今天"
+        ShareDuration.INDEFINITELY -> "始终"
+    }

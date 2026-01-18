@@ -1,5 +1,8 @@
 package me.ikate.findmy.ui.screen.main.components
 
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -19,17 +22,15 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.launch
 
 /**
  * 底部面板的三种状态
@@ -53,6 +54,7 @@ enum class SheetValue {
  * @param modifier 修饰符
  * @param backgroundContent 背景内容（通常是地图）
  * @param initialValue 初始状态（默认为半展开）
+ * @param maxExpandedFraction 最大展开比例（0-1），默认 0.75 即 75% 屏幕高度
  * @param onSheetValueChange 面板状态变化回调
  * @param onOffsetChange 面板偏移量变化回调（用于地图 Padding 联动）
  */
@@ -62,19 +64,21 @@ fun CustomBottomSheet(
     modifier: Modifier = Modifier,
     backgroundContent: @Composable BoxScope.() -> Unit = {},
     initialValue: SheetValue = SheetValue.HalfExpanded,
+    maxExpandedFraction: Float = 0.75f,
     onSheetValueChange: (SheetValue) -> Unit = {},
     onOffsetChange: (Float) -> Unit = {}
 ) {
     val density = LocalDensity.current
+    val scope = rememberCoroutineScope()
 
     BoxWithConstraints(modifier = modifier) {
         // 获取父容器最大高度 (px)
         val maxHeightPx = constraints.maxHeight.toFloat()
 
         // 计算三个锚点的偏移量（从屏幕底部向上的距离，单位：像素）
-        val collapsedOffset = maxHeightPx * 0.06f   // 折叠态：20%
-        val halfExpandedOffset = maxHeightPx * 0.35f // 半展开态：50%
-        val expandedOffset = maxHeightPx * 0.85f   // 全展开态：95%
+        val collapsedOffset = maxHeightPx * 0.06f   // 折叠态：6%
+        val halfExpandedOffset = maxHeightPx * 0.35f // 半展开态：35%
+        val expandedOffset = maxHeightPx * maxExpandedFraction.coerceIn(0.4f, 0.95f) // 全展开态：受限于参数
 
         // 当前偏移量
         val initialOffsetValue = when (initialValue) {
@@ -86,9 +90,11 @@ fun CustomBottomSheet(
         // 防御性检查：确保初始值不是 NaN
         val safeInitialOffset = if (initialOffsetValue.isNaN()) 0f else initialOffsetValue
 
-        var currentOffset by remember(maxHeightPx) {
-            mutableFloatStateOf(safeInitialOffset)
+        // 使用 Animatable 实现弹簧动画
+        val offsetAnimatable = remember(maxHeightPx) {
+            Animatable(safeInitialOffset)
         }
+        val currentOffset = offsetAnimatable.value
 
         // 初始化时通知偏移量
         LaunchedEffect(currentOffset) {
@@ -115,19 +121,22 @@ fun CustomBottomSheet(
                 .pointerInput(maxHeightPx) {
                     detectVerticalDragGestures(
                         onDragEnd = {
-                            // 拖拽结束，根据当前位置吸附到最近的锚点
-                            if (currentOffset.isNaN()) {
-                                currentOffset = safeInitialOffset
+                            // 拖拽结束，根据当前位置吸附到最近的锚点（带弹簧动画）
+                            val currentValue = offsetAnimatable.value
+                            if (currentValue.isNaN()) {
+                                scope.launch {
+                                    offsetAnimatable.snapTo(safeInitialOffset)
+                                }
                                 onSheetValueChange(initialValue)
                                 onOffsetChange(safeInitialOffset)
                                 return@detectVerticalDragGestures
                             }
 
                             val targetOffset = when {
-                                currentOffset < (collapsedOffset + halfExpandedOffset) / 2 ->
+                                currentValue < (collapsedOffset + halfExpandedOffset) / 2 ->
                                     collapsedOffset
 
-                                currentOffset < (halfExpandedOffset + expandedOffset) / 2 ->
+                                currentValue < (halfExpandedOffset + expandedOffset) / 2 ->
                                     halfExpandedOffset
 
                                 else -> expandedOffset
@@ -135,20 +144,29 @@ fun CustomBottomSheet(
 
                             val finalOffset =
                                 if (targetOffset.isNaN()) safeInitialOffset else targetOffset
-                            currentOffset = finalOffset
 
                             val newState = when (finalOffset) {
                                 collapsedOffset -> SheetValue.Collapsed
                                 halfExpandedOffset -> SheetValue.HalfExpanded
                                 else -> SheetValue.Expanded
                             }
+
+                            // 使用弹簧动画吸附到锚点
+                            scope.launch {
+                                offsetAnimatable.animateTo(
+                                    targetValue = finalOffset,
+                                    animationSpec = spring(
+                                        dampingRatio = Spring.DampingRatioMediumBouncy,
+                                        stiffness = Spring.StiffnessMedium
+                                    )
+                                )
+                            }
                             onSheetValueChange(newState)
-                            onOffsetChange(finalOffset)
                         },
                         onVerticalDrag = { _, dragAmount ->
                             val safeDragAmount = if (dragAmount.isNaN()) 0f else dragAmount
 
-                            var newOffset = currentOffset - safeDragAmount
+                            var newOffset = offsetAnimatable.value - safeDragAmount
                             if (newOffset.isNaN()) {
                                 newOffset = safeInitialOffset
                             }
@@ -156,8 +174,10 @@ fun CustomBottomSheet(
                                 collapsedOffset,
                                 expandedOffset
                             )
-                            currentOffset = newOffset
-                            onOffsetChange(newOffset)
+                            // 拖拽时直接更新，无动画
+                            scope.launch {
+                                offsetAnimatable.snapTo(newOffset)
+                            }
                         }
                     )
                 },
