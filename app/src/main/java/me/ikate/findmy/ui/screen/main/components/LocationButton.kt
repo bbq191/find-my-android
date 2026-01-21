@@ -3,8 +3,8 @@ package me.ikate.findmy.ui.screen.main.components
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.MyLocation
-import androidx.compose.material.icons.outlined.LocationOn
+import androidx.compose.material.icons.filled.NearMe
+import androidx.compose.material.icons.outlined.NearMe
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.Icon
@@ -16,8 +16,8 @@ import me.ikate.findmy.ui.theme.MapThemeColors
 
 /**
  * 定位按钮组件
- * 显示在地图右下角，用于控制地图中心定位到用户位置
- * 支持主题颜色同步
+ * 显示在地图右上角，用于控制地图中心定位到用户位置
+ * 仿 iOS Find My 风格：统一使用箭头图标，通过实心/空心区分状态
  *
  * @param isLocationCentered 地图中心是否在用户位置（true = 实心箭头，false = 空心箭头）
  * @param onClick 点击事件回调
@@ -44,9 +44,9 @@ fun LocationButton(
     ) {
         Icon(
             imageVector = if (isLocationCentered) {
-                Icons.Filled.MyLocation
+                Icons.Filled.NearMe  // 实心箭头：已定位
             } else {
-                Icons.Outlined.LocationOn
+                Icons.Outlined.NearMe  // 空心箭头：未定位
             },
             contentDescription = if (isLocationCentered) {
                 "已定位到当前位置"

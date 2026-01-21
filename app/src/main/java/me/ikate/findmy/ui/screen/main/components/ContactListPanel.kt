@@ -42,7 +42,9 @@ import me.ikate.findmy.data.model.Contact
 import me.ikate.findmy.data.model.Device
 import me.ikate.findmy.data.model.ShareDuration
 import me.ikate.findmy.data.model.User
+import me.ikate.findmy.service.TrackingState
 import me.ikate.findmy.ui.dialog.AppIconSelectionDialog
+import me.ikate.findmy.ui.dialog.FindDeviceDialog
 import me.ikate.findmy.ui.dialog.MyUidDialog
 import me.ikate.findmy.ui.dialog.RemoveContactDialog
 import me.ikate.findmy.ui.dialog.ResumeShareDialog
@@ -58,6 +60,7 @@ fun ContactListPanel(
     contacts: List<Contact>,
     requestingLocationFor: String? = null,
     trackingContactUid: String? = null,
+    trackingStates: Map<String, TrackingState> = emptyMap(),
     onContactClick: (Contact) -> Unit,
     onAddContactClick: () -> Unit,
     onNavigate: (Contact) -> Unit = {},
@@ -67,13 +70,13 @@ fun ContactListPanel(
     onRemoveContact: (Contact) -> Unit = {},
     onAcceptShare: (Contact) -> Unit = {},
     onRejectShare: (Contact) -> Unit = {},
-    onRequestLocationUpdate: (String) -> Unit = {},
-    onStartContinuousTracking: (String) -> Unit = {},
-    onStopContinuousTracking: (String) -> Unit = {},
+    onRefreshAndTrack: (String) -> Unit = {},
+    onStopTracking: (String) -> Unit = {},
     onPlaySound: (String) -> Unit = {},
     onStopSound: () -> Unit = {},
     isRinging: Boolean = false,
-    onLostModeClick: (Contact) -> Unit = {},
+    ringingContactUid: String? = null,
+    onLostModeClick: (Contact, String, String, Boolean) -> Unit = { _, _, _, _ -> },
     onGeofenceClick: (Contact) -> Unit = {},
     geofenceContactIds: Set<String> = emptySet(),
     modifier: Modifier = Modifier
@@ -83,6 +86,7 @@ fun ContactListPanel(
     var showIconDialog by remember { mutableStateOf(false) }
     var contactToResume by remember { mutableStateOf<Contact?>(null) }
     var contactToRemove by remember { mutableStateOf<Contact?>(null) }
+    var contactForFindDevice by remember { mutableStateOf<Contact?>(null) }
     var expandedContactId by remember { mutableStateOf<String?>(null) }
 
     // Dialogs
@@ -105,6 +109,23 @@ fun ContactListPanel(
             contactToRemove = null
         }
     )
+
+    // FindDeviceDialog
+    contactForFindDevice?.let { contact ->
+        val contactIsRinging = ringingContactUid == contact.targetUserId
+        FindDeviceDialog(
+            contact = contact,
+            isRinging = contactIsRinging,
+            onDismiss = { contactForFindDevice = null },
+            onPlaySound = {
+                contact.targetUserId?.let { onPlaySound(it) }
+            },
+            onStopSound = onStopSound,
+            onEnableLostMode = { message, phone, playSound ->
+                onLostModeClick(contact, message, phone, playSound)
+            }
+        )
+    }
 
     Column(
         modifier = modifier
@@ -138,8 +159,17 @@ fun ContactListPanel(
             expandedContactId = expandedContactId,
             requestingLocationFor = requestingLocationFor,
             trackingContactUid = trackingContactUid,
+            trackingStates = trackingStates,
             onContactClick = { contact ->
+                // 点击联系人卡片：定位到地图
                 onContactClick(contact)
+            },
+            onAvatarClick = { contact ->
+                // 点击头像：开始追踪
+                contact.targetUserId?.let { onRefreshAndTrack(it) }
+            },
+            onExpandClick = { contact ->
+                // 点击展开按钮（已废弃）
                 expandedContactId = if (expandedContactId == contact.id) null else contact.id
             },
             onNavigate = onNavigate,
@@ -149,13 +179,11 @@ fun ContactListPanel(
             onRemoveClick = { contactToRemove = it },
             onAcceptShare = onAcceptShare,
             onRejectShare = onRejectShare,
-            onRequestLocationUpdate = onRequestLocationUpdate,
-            onStartContinuousTracking = onStartContinuousTracking,
-            onStopContinuousTracking = onStopContinuousTracking,
+            onStopTracking = onStopTracking,
+            onFindDeviceClick = { contactForFindDevice = it },
             onPlaySound = onPlaySound,
             onStopSound = onStopSound,
-            isRinging = isRinging,
-            onLostModeClick = onLostModeClick,
+            ringingContactUid = ringingContactUid,
             onGeofenceClick = onGeofenceClick,
             geofenceContactIds = geofenceContactIds
         )
@@ -301,7 +329,10 @@ private fun ContactList(
     expandedContactId: String?,
     requestingLocationFor: String?,
     trackingContactUid: String?,
-    onContactClick: (Contact) -> Unit,
+    trackingStates: Map<String, TrackingState>,
+    onContactClick: (Contact) -> Unit,  // 点击卡片：定位追踪
+    onAvatarClick: (Contact) -> Unit,   // 点击头像：开始追踪
+    onExpandClick: (Contact) -> Unit,   // 点击展开按钮（已废弃）
     onNavigate: (Contact) -> Unit,
     onPauseShare: (Contact) -> Unit,
     onResumeClick: (Contact) -> Unit,
@@ -309,13 +340,11 @@ private fun ContactList(
     onRemoveClick: (Contact) -> Unit,
     onAcceptShare: (Contact) -> Unit,
     onRejectShare: (Contact) -> Unit,
-    onRequestLocationUpdate: (String) -> Unit,
-    onStartContinuousTracking: (String) -> Unit,
-    onStopContinuousTracking: (String) -> Unit,
+    onStopTracking: (String) -> Unit,
+    onFindDeviceClick: (Contact) -> Unit,
     onPlaySound: (String) -> Unit,
     onStopSound: () -> Unit,
-    isRinging: Boolean,
-    onLostModeClick: (Contact) -> Unit,
+    ringingContactUid: String?,
     onGeofenceClick: (Contact) -> Unit,
     geofenceContactIds: Set<String>
 ) {
@@ -327,6 +356,9 @@ private fun ContactList(
                 val isExpanded = expandedContactId == contact.id
                 val isRequesting = requestingLocationFor == contact.targetUserId
                 val isTracking = trackingContactUid == contact.targetUserId
+                val contactTrackingState = contact.targetUserId?.let {
+                    trackingStates[it]
+                } ?: TrackingState.IDLE
 
                 ContactListItem(
                     contact = contact,
@@ -334,7 +366,14 @@ private fun ContactList(
                     isExpanded = isExpanded,
                     isRequestingLocation = isRequesting,
                     isTracking = isTracking,
+                    trackingState = contactTrackingState,
                     onClick = { onContactClick(contact) },
+                    onAvatarClick = { onAvatarClick(contact) },
+                    onExpandClick = { onExpandClick(contact) },
+                    onStopTracking = {
+                        contact.targetUserId?.let { onStopTracking(it) }
+                    },
+                    onFindDeviceClick = { onFindDeviceClick(contact) },
                     onNavigate = { onNavigate(contact) },
                     onPauseClick = { onPauseShare(contact) },
                     onResumeClick = { onResumeClick(contact) },
@@ -342,23 +381,11 @@ private fun ContactList(
                     onRemoveClick = { onRemoveClick(contact) },
                     onAcceptClick = { onAcceptShare(contact) },
                     onRejectClick = { onRejectShare(contact) },
-                    onRequestLocationUpdate = {
-                        contact.targetUserId?.let { onRequestLocationUpdate(it) }
-                    },
-                    onStartContinuousTracking = {
-                        contact.targetUserId?.let { onStartContinuousTracking(it) }
-                    },
-                    onStopContinuousTracking = {
-                        contact.targetUserId?.let { onStopContinuousTracking(it) }
-                    },
                     onPlaySound = {
                         contact.targetUserId?.let { onPlaySound(it) }
                     },
                     onStopSound = onStopSound,
-                    isRinging = isRinging,
-                    onLostModeClick = {
-                        onLostModeClick(contact)
-                    },
+                    isRinging = ringingContactUid == contact.targetUserId,
                     onGeofenceClick = {
                         onGeofenceClick(contact)
                     },

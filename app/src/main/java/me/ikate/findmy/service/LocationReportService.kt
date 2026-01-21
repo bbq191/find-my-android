@@ -1,6 +1,5 @@
 package me.ikate.findmy.service
 
-import android.annotation.SuppressLint
 import android.content.Context
 import android.os.BatteryManager
 import android.os.Build
@@ -8,31 +7,29 @@ import me.ikate.findmy.data.model.Device
 import me.ikate.findmy.data.model.DeviceType
 import me.ikate.findmy.data.repository.AuthRepository
 import me.ikate.findmy.data.repository.DeviceRepository
+import me.ikate.findmy.util.DeviceIdProvider
 
 /**
  * 位置上报服务
- * 使用高德定位 SDK 获取当前设备位置，通过 MQTT 同步到服务器
+ * 使用腾讯定位 SDK 获取当前设备位置，通过 MQTT 同步到服务器
  *
  * 注意：
- * - 高德定位返回 GCJ-02 坐标，AmapLocationService 内部已转换为 WGS-84
+ * - 腾讯定位返回 GCJ-02 坐标，与腾讯地图一致，无需坐标转换
  * - 使用前需要确保已调用 PrivacyManager.initPrivacy() 初始化隐私合规
  * - 数据存储在本地 Room 数据库，通过 MQTT 实时同步
  */
 class LocationReportService(private val context: Context) {
 
-    private val amapLocationService = AmapLocationService(context)
+    private val tencentLocationService = TencentLocationService(context)
     private val deviceRepository = DeviceRepository(context)
 
     /**
      * 获取当前设备ID
      * 使用 Android ID 作为设备唯一标识
+     * 委托给 DeviceIdProvider 统一管理
      */
-    @SuppressLint("HardwareIds")
     private fun getDeviceId(): String {
-        return android.provider.Settings.Secure.getString(
-            context.contentResolver,
-            android.provider.Settings.Secure.ANDROID_ID
-        )
+        return DeviceIdProvider.getDeviceId(context)
     }
 
     /**
@@ -83,40 +80,46 @@ class LocationReportService(private val context: Context) {
 
     /**
      * 获取当前位置并上报
-     * 使用高德定位 SDK 获取高精度位置，保存到本地并通过 MQTT 同步
+     * 使用腾讯定位 SDK 获取高精度位置，保存到本地并通过 MQTT 同步
      *
      * @param timeout 定位超时时间（毫秒），默认 20 秒
      * @return 上报结果，包含设备信息
      */
     suspend fun reportCurrentLocation(timeout: Long = 20000L): Result<Device> {
+        android.util.Log.i(TAG, "========== [位置上报服务] 开始上报 ==========")
         return try {
-            // 使用高德定位获取位置（内部已转换为 WGS-84）
-            val locationResult = amapLocationService.getLocation(timeout)
+            // 使用腾讯定位获取位置（GCJ-02 坐标）
+            android.util.Log.i(TAG, "[位置上报服务] 步骤1: 获取当前位置...")
+            val locationResult = tencentLocationService.getLocation(timeout)
 
             if (!locationResult.isSuccess) {
                 val errorMsg = "定位失败: ${locationResult.errorInfo} (错误码: ${locationResult.errorCode})"
-                android.util.Log.e("LocationReportService", errorMsg)
+                android.util.Log.e(TAG, "[位置上报服务] ✗ $errorMsg")
                 return Result.failure(Exception(errorMsg))
             }
 
-            val point = locationResult.point
-            if (point.latitude().isNaN() || point.longitude().isNaN()) {
+            val latLng = locationResult.latLng
+            if (latLng.latitude.isNaN() || latLng.longitude.isNaN()) {
+                android.util.Log.e(TAG, "[位置上报服务] ✗ 坐标无效")
                 return Result.failure(Exception("无法获取位置信息，请确保已开启定位服务且信号良好"))
             }
 
+            android.util.Log.i(TAG, "[位置上报服务] ✓ 定位成功")
+            android.util.Log.i(TAG, "[位置上报服务] 坐标: (${latLng.latitude}, ${latLng.longitude})")
+            android.util.Log.i(TAG, "[位置上报服务] 定位类型: ${getLocationTypeName(locationResult.locationType)}")
+            android.util.Log.i(TAG, "[位置上报服务] 精度: ${locationResult.accuracy}m")
+
             val currentUserId = AuthRepository.getUserId(context)
+            android.util.Log.i(TAG, "[位置上报服务] 步骤2: 构建设备对象...")
+            android.util.Log.i(TAG, "[位置上报服务] 用户ID: $currentUserId")
+            android.util.Log.i(TAG, "[位置上报服务] 设备ID: ${getDeviceId()}")
 
-            android.util.Log.d(
-                "LocationReportService",
-                "🔐 当前用户ID: $currentUserId, 设备ID: ${getDeviceId()}"
-            )
-
-            // 创建设备对象（坐标已是 WGS-84，Mapbox 直接使用）
+            // 创建设备对象（GCJ-02 坐标，与腾讯地图一致）
             val device = Device(
                 id = getDeviceId(),
                 name = getDeviceName(),
                 ownerId = currentUserId,
-                location = point,
+                location = latLng,
                 battery = getBatteryLevel(),
                 lastUpdateTime = System.currentTimeMillis(),
                 isOnline = true,
@@ -127,22 +130,22 @@ class LocationReportService(private val context: Context) {
             )
 
             // 保存到本地数据库并通过 MQTT 同步
+            android.util.Log.i(TAG, "[位置上报服务] 步骤3: 保存并同步到 MQTT...")
             deviceRepository.saveDevice(device)
 
-            android.util.Log.d(
-                "LocationReportService",
-                "✅ 位置上报成功: ${device.name} (ownerId=$currentUserId) at (${point.latitude()}, ${point.longitude()})"
-            )
-            android.util.Log.d(
-                "LocationReportService",
-                "📍 定位类型: ${getLocationTypeName(locationResult.locationType)}, 精度: ${locationResult.accuracy}m"
-            )
+            android.util.Log.i(TAG, "[位置上报服务] ✓ 位置上报成功")
+            android.util.Log.i(TAG, "[位置上报服务] 设备名: ${device.name}")
+            android.util.Log.i(TAG, "[位置上报服务] 电量: ${device.battery}%")
 
             Result.success(device)
         } catch (e: Exception) {
-            android.util.Log.e("LocationReportService", "位置上报失败", e)
+            android.util.Log.e(TAG, "[位置上报服务] ✗ 位置上报失败: ${e.message}", e)
             Result.failure(e)
         }
+    }
+
+    companion object {
+        private const val TAG = "LocationReportService"
     }
 
     /**
@@ -150,12 +153,12 @@ class LocationReportService(private val context: Context) {
      */
     private fun getLocationTypeName(type: Int): String {
         return when (type) {
-            AmapLocationService.LOCATION_TYPE_GPS -> "GPS"
-            AmapLocationService.LOCATION_TYPE_NETWORK -> "网络"
-            AmapLocationService.LOCATION_TYPE_WIFI -> "WiFi"
-            AmapLocationService.LOCATION_TYPE_CELL -> "基站"
-            AmapLocationService.LOCATION_TYPE_OFFLINE -> "离线"
-            AmapLocationService.LOCATION_TYPE_LAST -> "缓存"
+            TencentLocationService.LOCATION_TYPE_GPS -> "GPS"
+            TencentLocationService.LOCATION_TYPE_NETWORK -> "网络"
+            TencentLocationService.LOCATION_TYPE_WIFI -> "WiFi"
+            TencentLocationService.LOCATION_TYPE_CELL -> "基站"
+            TencentLocationService.LOCATION_TYPE_OFFLINE -> "离线"
+            TencentLocationService.LOCATION_TYPE_LAST -> "缓存"
             else -> "未知($type)"
         }
     }
@@ -164,6 +167,6 @@ class LocationReportService(private val context: Context) {
      * 释放资源
      */
     fun destroy() {
-        amapLocationService.destroy()
+        tencentLocationService.destroy()
     }
 }

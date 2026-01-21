@@ -12,7 +12,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
-import me.ikate.findmy.push.GeTuiManager
 import me.ikate.findmy.ui.components.PrivacyPolicyDialog
 import me.ikate.findmy.ui.screen.main.MainScreen
 import me.ikate.findmy.ui.theme.FindmyTheme
@@ -38,7 +37,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        // 初始化隐私合规（高德定位 SDK 要求）
+        // 初始化隐私合规（腾讯定位 SDK 要求）
         // 返回 true 表示需要显示隐私弹窗
         showPrivacyDialog = PrivacyManager.initPrivacy(this)
 
@@ -56,8 +55,7 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        // 绑定用户到个推（用于定向推送）
-        GeTuiManager.bindUser(this)
+        // FCM Token 会在 FCMMessagingService 中自动获取和保存
 
         setContent {
             FindmyTheme {

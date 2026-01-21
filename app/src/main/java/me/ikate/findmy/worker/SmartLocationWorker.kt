@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
+import me.ikate.findmy.domain.location.SmartLocator
 import me.ikate.findmy.service.LocationReportService
 import me.ikate.findmy.service.SmartLocationConfig
 
@@ -154,6 +155,8 @@ class SmartLocationWorker(
      * 执行位置上报
      */
     private suspend fun reportLocation(timeout: Long): Result {
+        val triggerReason = inputData.getString(KEY_TRIGGER_REASON) ?: "periodic"
+
         return try {
             val locationReportService = LocationReportService(applicationContext)
             val result = locationReportService.reportCurrentLocation(timeout)
@@ -164,19 +167,36 @@ class SmartLocationWorker(
                     // 保存上报位置用于后续比较
                     SmartLocationConfig.saveLastLocation(
                         applicationContext,
-                        location.latitude(),
-                        location.longitude()
+                        location.latitude,
+                        location.longitude
                     )
 
                     // 保存当前 WiFi BSSID
                     val currentBssid = SmartLocationConfig.getCurrentWifiBssid(applicationContext)
                     SmartLocationConfig.saveLastWifiBssid(applicationContext, currentBssid)
+
+                    // 通知 SmartLocator 上报成功
+                    try {
+                        val smartLocator = SmartLocator.getInstance(applicationContext)
+                        val reason = parseTriggerReason(triggerReason)
+                        smartLocator.recordReportSuccess(location.latitude, location.longitude, reason)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "通知 SmartLocator 失败", e)
+                    }
                 }
 
                 // 如果设备提供了速度信息，保存用于活动推断
                 device?.speed?.let { speed ->
                     if (speed >= 0) {
                         SmartLocationConfig.saveLastSpeed(applicationContext, speed)
+
+                        // 使用 SmartLocator 进行 GPS 速度校准
+                        try {
+                            val smartLocator = SmartLocator.getInstance(applicationContext)
+                            smartLocator.calibrateWithGpsSpeed(speed)
+                        } catch (e: Exception) {
+                            Log.w(TAG, "GPS 速度校准失败", e)
+                        }
 
                         // 使用速度更新活动类型
                         val inferredActivity = SmartLocationConfig.inferActivityFromSpeed(speed)
@@ -200,6 +220,17 @@ class SmartLocationWorker(
         } catch (e: Exception) {
             Log.e(TAG, "智能位置上报异常", e)
             Result.failure()
+        }
+    }
+
+    /**
+     * 解析触发原因
+     */
+    private fun parseTriggerReason(reason: String): SmartLocator.TriggerReason {
+        return try {
+            SmartLocator.TriggerReason.valueOf(reason.uppercase())
+        } catch (e: Exception) {
+            SmartLocator.TriggerReason.PERIODIC
         }
     }
 

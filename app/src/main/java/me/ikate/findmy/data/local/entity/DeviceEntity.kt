@@ -4,7 +4,7 @@ import androidx.room.Entity
 import androidx.room.PrimaryKey
 import me.ikate.findmy.data.model.Device
 import me.ikate.findmy.data.model.DeviceType
-import me.ikate.findmy.data.model.pointOf
+import me.ikate.findmy.data.model.latLngOf
 
 /**
  * 设备实体（Room 数据库表）
@@ -34,7 +34,7 @@ data class DeviceEntity(
         id = id,
         name = name,
         ownerId = ownerId,
-        location = pointOf(latitude, longitude),
+        location = latLngOf(latitude, longitude),
         battery = battery,
         lastUpdateTime = lastUpdateTime,
         isOnline = isOnline,
@@ -56,8 +56,8 @@ data class DeviceEntity(
             id = device.id,
             name = device.name,
             ownerId = device.ownerId,
-            latitude = device.location.latitude(),
-            longitude = device.location.longitude(),
+            latitude = device.location.latitude,
+            longitude = device.location.longitude,
             battery = device.battery,
             lastUpdateTime = device.lastUpdateTime,
             isOnline = device.isOnline,

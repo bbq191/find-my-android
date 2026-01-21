@@ -5,7 +5,7 @@ import androidx.room.PrimaryKey
 import me.ikate.findmy.data.model.Contact
 import me.ikate.findmy.data.model.ShareDirection
 import me.ikate.findmy.data.model.ShareStatus
-import me.ikate.findmy.data.model.pointOf
+import me.ikate.findmy.data.model.latLngOf
 
 /**
  * 联系人实体（Room 数据库表）
@@ -60,7 +60,7 @@ data class ContactEntity(
         expireTime = expireTime,
         targetUserId = targetUserId,
         location = if (latitude != null && longitude != null) {
-            pointOf(latitude, longitude)
+            latLngOf(latitude, longitude)
         } else null,
         lastUpdateTime = lastUpdateTime,
         isLocationAvailable = isLocationAvailable,
@@ -82,8 +82,8 @@ data class ContactEntity(
             shareDirection = contact.shareDirection.name,
             expireTime = contact.expireTime,
             targetUserId = contact.targetUserId,
-            latitude = contact.location?.latitude(),
-            longitude = contact.location?.longitude(),
+            latitude = contact.location?.latitude,
+            longitude = contact.location?.longitude,
             lastUpdateTime = contact.lastUpdateTime,
             isLocationAvailable = contact.isLocationAvailable,
             isPaused = contact.isPaused,

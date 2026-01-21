@@ -6,6 +6,7 @@ import android.content.Context
 import androidx.core.app.NotificationCompat
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
+import me.ikate.findmy.R
 import me.ikate.findmy.service.LocationReportService
 
 /**
@@ -95,7 +96,7 @@ class LocationReportWorker(
         notificationManager.createNotificationChannel(debugChannel)
 
         val notification = NotificationCompat.Builder(applicationContext, debugChannelId)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle("🔍 $title")
             .setContentText(message)
             .setStyle(NotificationCompat.BigTextStyle().bigText(message))

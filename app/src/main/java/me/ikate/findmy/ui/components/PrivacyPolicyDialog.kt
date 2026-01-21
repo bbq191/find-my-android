@@ -18,7 +18,7 @@ import androidx.compose.ui.unit.dp
 
 /**
  * 隐私政策弹窗
- * 用于满足高德等 SDK 的隐私合规要求
+ * 用于满足腾讯等 SDK 的隐私合规要求
  * 首次启动时向用户展示隐私政策说明
  */
 @Composable
@@ -65,7 +65,7 @@ fun PrivacyPolicyDialog(
 
                 PrivacySection(
                     title = "位置信息",
-                    content = "我们使用高德定位 SDK 获取您的位置信息，用于在地图上显示您的位置并与好友共享。位置数据通过加密通道传输。"
+                    content = "我们使用腾讯定位 SDK 获取您的位置信息，用于在地图上显示您的位置并与好友共享。位置数据通过加密通道传输。"
                 )
 
                 PrivacySection(
@@ -75,15 +75,15 @@ fun PrivacyPolicyDialog(
 
                 PrivacySection(
                     title = "推送服务",
-                    content = "我们使用个推推送服务向您发送位置更新通知和好友请求，即使应用在后台也能及时收到消息。"
+                    content = "我们使用 Firebase Cloud Messaging 向您发送位置更新通知和好友请求，即使应用在后台也能及时收到消息。"
                 )
 
                 PrivacySection(
                     title = "第三方 SDK",
                     content = "本应用集成了以下第三方 SDK：\n" +
-                            "• 高德定位 SDK - 提供精准定位服务\n" +
-                            "• Mapbox SDK - 提供地图显示服务\n" +
-                            "• 个推推送 SDK - 提供消息推送服务"
+                            "• 腾讯定位 SDK - 提供精准定位服务\n" +
+                            "• 腾讯地图 SDK - 提供地图显示服务\n" +
+                            "• Firebase Cloud Messaging - 提供消息推送服务"
                 )
 
                 PrivacySection(

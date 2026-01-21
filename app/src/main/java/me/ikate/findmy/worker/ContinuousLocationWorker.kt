@@ -11,6 +11,7 @@ import androidx.work.CoroutineWorker
 import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
 import kotlinx.coroutines.delay
+import me.ikate.findmy.R
 import me.ikate.findmy.service.LocationReportService
 
 /**
@@ -150,7 +151,7 @@ class ContinuousLocationWorker(
 
         // 创建通知
         val notification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_dialog_map)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle("正在共享位置")
             .setContentText("实时更新中（约60秒）")
             .setOngoing(true) // 持续通知，不可滑动删除
@@ -185,7 +186,7 @@ class ContinuousLocationWorker(
         notificationManager.createNotificationChannel(debugChannel)
 
         val notification = NotificationCompat.Builder(applicationContext, debugChannelId)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle("🔍 $title")
             .setContentText(message)
             .setStyle(NotificationCompat.BigTextStyle().bigText(message))

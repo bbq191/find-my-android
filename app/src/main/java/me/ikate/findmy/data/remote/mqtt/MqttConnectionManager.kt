@@ -80,6 +80,14 @@ class MqttConnectionManager(
     private var reconnectAttempt = 0
     private var isReconnecting = false
 
+    // 连接锁，防止重复连接
+    @Volatile
+    private var isConnecting = false
+    private val connectLock = Any()
+
+    // 等待连接完成的回调列表
+    private val pendingConnectCallbacks = mutableListOf<(Result<Unit>) -> Unit>()
+
     /**
      * 连接到 MQTT Broker
      */
@@ -90,6 +98,43 @@ class MqttConnectionManager(
 
         if (_connectionState.value == ConnectionState.Connected) {
             return@withContext Result.success(Unit)
+        }
+
+        // 使用同步块防止并发连接
+        val shouldWait = synchronized(connectLock) {
+            if (isConnecting) {
+                Log.d(TAG, "MQTT 连接已在进行中，等待连接完成...")
+                true
+            } else {
+                isConnecting = true
+                false
+            }
+        }
+
+        // 如果连接正在进行中，等待连接完成
+        if (shouldWait) {
+            return@withContext suspendCancellableCoroutine { continuation ->
+                synchronized(connectLock) {
+                    // 再次检查，可能在等待锁期间连接已完成
+                    if (_connectionState.value == ConnectionState.Connected) {
+                        continuation.resume(Result.success(Unit))
+                        return@suspendCancellableCoroutine
+                    }
+                    if (!isConnecting) {
+                        // 连接已结束但未成功，返回当前状态
+                        val state = _connectionState.value
+                        if (state is ConnectionState.Error) {
+                            continuation.resume(Result.failure(state.throwable ?: Exception(state.message)))
+                        } else {
+                            continuation.resume(Result.failure(Exception("连接状态异常")))
+                        }
+                        return@suspendCancellableCoroutine
+                    }
+                    pendingConnectCallbacks.add { result ->
+                        continuation.resume(result)
+                    }
+                }
+            }
         }
 
         _connectionState.value = ConnectionState.Connecting
@@ -129,6 +174,8 @@ class MqttConnectionManager(
                         Log.d(TAG, "MQTT 连接成功")
                         _connectionState.value = ConnectionState.Connected
                         reconnectAttempt = 0
+                        notifyPendingCallbacks(Result.success(Unit))
+                        isConnecting = false
                         continuation.resume(Unit)
                     }
 
@@ -138,9 +185,10 @@ class MqttConnectionManager(
                             exception?.message ?: "连接失败",
                             exception
                         )
-                        continuation.resumeWithException(
-                            exception ?: Exception("MQTT 连接失败")
-                        )
+                        val error = exception ?: Exception("MQTT 连接失败")
+                        notifyPendingCallbacks(Result.failure(error))
+                        isConnecting = false
+                        continuation.resumeWithException(error)
                     }
                 })
             }
@@ -149,7 +197,25 @@ class MqttConnectionManager(
         } catch (e: Exception) {
             Log.e(TAG, "MQTT 连接异常", e)
             _connectionState.value = ConnectionState.Error(e.message ?: "连接异常", e)
+            notifyPendingCallbacks(Result.failure(e))
+            isConnecting = false
             Result.failure(e)
+        }
+    }
+
+    /**
+     * 通知所有等待连接完成的回调
+     */
+    private fun notifyPendingCallbacks(result: Result<Unit>) {
+        synchronized(connectLock) {
+            pendingConnectCallbacks.forEach { callback ->
+                try {
+                    callback(result)
+                } catch (e: Exception) {
+                    Log.e(TAG, "通知回调失败", e)
+                }
+            }
+            pendingConnectCallbacks.clear()
         }
     }
 
@@ -196,10 +262,23 @@ class MqttConnectionManager(
         qos: Int = 1,
         retained: Boolean = false
     ): Result<Unit> = withContext(Dispatchers.IO) {
+        Log.i(TAG, "[MQTT发布] 准备发布消息...")
+        Log.i(TAG, "[MQTT发布] 主题: $topic")
+        Log.i(TAG, "[MQTT发布] QoS: $qos, 保留: $retained")
+        Log.d(TAG, "[MQTT发布] 内容: ${payload.take(150)}")
+
         val client = mqttClient
-        if (client == null || !client.isConnected) {
+        if (client == null) {
+            Log.e(TAG, "[MQTT发布] ✗ 客户端为空")
+            return@withContext Result.failure(Exception("MQTT 客户端为空"))
+        }
+
+        if (!client.isConnected) {
+            Log.e(TAG, "[MQTT发布] ✗ MQTT 未连接")
             return@withContext Result.failure(Exception("MQTT 未连接"))
         }
+
+        Log.i(TAG, "[MQTT发布] MQTT 连接状态: 已连接")
 
         try {
             val message = MqttMessage(payload.toByteArray(Charsets.UTF_8)).apply {
@@ -210,12 +289,12 @@ class MqttConnectionManager(
             suspendCancellableCoroutine { continuation ->
                 client.publish(topic, message, null, object : IMqttActionListener {
                     override fun onSuccess(asyncActionToken: IMqttToken?) {
-                        Log.d(TAG, "消息发布成功: $topic")
+                        Log.i(TAG, "[MQTT发布] ✓ 消息发布成功: $topic")
                         continuation.resume(Unit)
                     }
 
                     override fun onFailure(asyncActionToken: IMqttToken?, exception: Throwable?) {
-                        Log.e(TAG, "消息发布失败: $topic", exception)
+                        Log.e(TAG, "[MQTT发布] ✗ 消息发布失败: $topic", exception)
                         continuation.resumeWithException(
                             exception ?: Exception("发布失败")
                         )
@@ -224,7 +303,7 @@ class MqttConnectionManager(
             }
             Result.success(Unit)
         } catch (e: Exception) {
-            Log.e(TAG, "发布消息异常", e)
+            Log.e(TAG, "[MQTT发布] ✗ 发布消息异常: ${e.message}", e)
             Result.failure(e)
         }
     }
@@ -347,9 +426,13 @@ class MqttConnectionManager(
             override fun messageArrived(topic: String?, message: MqttMessage?) {
                 if (topic != null && message != null) {
                     val payload = String(message.payload, Charsets.UTF_8)
-                    Log.d(TAG, "收到消息: $topic -> ${payload.take(100)}")
+                    Log.i(TAG, "========== [MQTT接收] 收到消息 ==========")
+                    Log.i(TAG, "[MQTT接收] 主题: $topic")
+                    Log.i(TAG, "[MQTT接收] QoS: ${message.qos}, 保留: ${message.isRetained}")
+                    Log.d(TAG, "[MQTT接收] 内容: ${payload.take(150)}")
 
                     scope.launch {
+                        Log.d(TAG, "[MQTT接收] 发送到 messageFlow...")
                         _messageFlow.emit(
                             ReceivedMessage(
                                 topic = topic,
@@ -358,7 +441,10 @@ class MqttConnectionManager(
                                 retained = message.isRetained
                             )
                         )
+                        Log.d(TAG, "[MQTT接收] ✓ 消息已分发")
                     }
+                } else {
+                    Log.w(TAG, "[MQTT接收] 收到空消息: topic=$topic, message=$message")
                 }
             }
 

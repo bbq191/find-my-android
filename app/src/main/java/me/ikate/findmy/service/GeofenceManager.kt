@@ -1,22 +1,25 @@
 package me.ikate.findmy.service
 
-import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 import android.util.Log
 import androidx.core.content.edit
-import com.amap.api.fence.GeoFence
-import com.amap.api.fence.GeoFenceClient
-import com.amap.api.fence.GeoFenceListener
-import com.amap.api.location.DPoint
-import com.mapbox.geojson.Point
+import com.tencent.tencentmap.mapsdk.maps.model.LatLng
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import me.ikate.findmy.util.CoordinateConverter
+import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.sin
+import kotlin.math.sqrt
 
 /**
  * 地理围栏配置数据类
@@ -26,7 +29,7 @@ data class GeofenceData(
     val contactId: String,
     val contactName: String,
     val locationName: String,
-    val latitude: Double,  // WGS-84 坐标（用于 Mapbox 显示）
+    val latitude: Double,  // GCJ-02 坐标（腾讯坐标系）
     val longitude: Double,
     val radiusMeters: Float,
     val notifyOnEnter: Boolean,
@@ -36,10 +39,10 @@ data class GeofenceData(
 /**
  * 地理围栏管理器
  *
- * 使用高德 GeoFence SDK 实现电子围栏功能
+ * 使用基于位置的距离检测实现电子围栏功能
  * 注意：
- * - 输入坐标为 WGS-84（Mapbox 坐标系）
- * - 内部会转换为 GCJ-02（高德坐标系）进行围栏注册
+ * - 输入坐标为 GCJ-02（腾讯坐标系）
+ * - 通过定期检查联系人位置与围栏中心的距离来判断进入/离开
  */
 class GeofenceManager(private val context: Context) {
 
@@ -49,83 +52,33 @@ class GeofenceManager(private val context: Context) {
         private const val KEY_GEOFENCES = "geofence_list"
         private const val NOTIFICATION_STATE_PREFS = "geofence_notification_state"
         private const val STATE_KEY_PREFIX = "last_state_"
+        private const val EARTH_RADIUS_METERS = 6371000.0
 
         // 广播 Action
         const val ACTION_GEOFENCE_TRIGGERED = "me.ikate.findmy.GEOFENCE_TRIGGERED"
+
+        // 围栏事件类型常量
+        const val GEOFENCE_TRANSITION_ENTER = 1
+        const val GEOFENCE_TRANSITION_EXIT = 2
+        const val GEOFENCE_TRANSITION_DWELL = 4
     }
 
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-
-    // 高德围栏客户端
-    private var geoFenceClient: GeoFenceClient? = null
+    private val statePrefs = context.getSharedPreferences(NOTIFICATION_STATE_PREFS, Context.MODE_PRIVATE)
 
     // 当前激活的围栏
     private val _activeGeofences = MutableStateFlow<List<GeofenceData>>(emptyList())
     val activeGeofences: StateFlow<List<GeofenceData>> = _activeGeofences.asStateFlow()
 
-    // 围栏创建中的回调映射
-    private val pendingCallbacks = mutableMapOf<String, Pair<() -> Unit, (String) -> Unit>>()
+    // 上次检测到的围栏状态 (geofenceId -> isInside)
+    private val lastKnownStates = mutableMapOf<String, Boolean>()
 
-    // 已创建的围栏对象映射（用于移除）
-    private val createdFences = mutableMapOf<String, GeoFence>()
+    // 协程作用域
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     init {
         loadGeofences()
-        initGeoFenceClient()
-    }
-
-    /**
-     * 初始化高德围栏客户端
-     */
-    private fun initGeoFenceClient() {
-        try {
-            geoFenceClient = GeoFenceClient(context).apply {
-                // 设置围栏触发动作：进入、离开、停留
-                setActivateAction(
-                    GeoFenceClient.GEOFENCE_IN or
-                    GeoFenceClient.GEOFENCE_OUT or
-                    GeoFenceClient.GEOFENCE_STAYED
-                )
-
-                // 创建 PendingIntent 用于接收围栏触发事件
-                createPendingIntent(ACTION_GEOFENCE_TRIGGERED)
-
-                // 设置围栏创建监听器
-                setGeoFenceListener(object : GeoFenceListener {
-                    override fun onGeoFenceCreateFinished(
-                        geoFenceList: List<GeoFence>?,
-                        errorCode: Int,
-                        customId: String?
-                    ) {
-                        if (errorCode == GeoFence.ADDGEOFENCE_SUCCESS) {
-                            Log.d(TAG, "围栏创建成功: $customId, 数量: ${geoFenceList?.size}")
-                            // 保存创建的围栏对象（用于后续移除）
-                            geoFenceList?.forEach { fence ->
-                                fence.customId?.let { id ->
-                                    createdFences[id] = fence
-                                }
-                            }
-                            customId?.let { id ->
-                                pendingCallbacks.remove(id)?.first?.invoke()
-                            }
-                        } else {
-                            Log.e(TAG, "围栏创建失败: $customId, 错误码: $errorCode")
-                            customId?.let { id ->
-                                pendingCallbacks.remove(id)?.second?.invoke(
-                                    getErrorMessage(errorCode)
-                                )
-                            }
-                        }
-                    }
-                })
-            }
-            Log.d(TAG, "高德围栏客户端初始化成功")
-
-            // 重新注册已保存的围栏
-            reRegisterGeofences()
-        } catch (e: Exception) {
-            Log.e(TAG, "高德围栏客户端初始化失败", e)
-        }
+        loadLastKnownStates()
     }
 
     /**
@@ -134,7 +87,7 @@ class GeofenceManager(private val context: Context) {
      * @param contactId 联系人ID
      * @param contactName 联系人名称
      * @param locationName 位置名称
-     * @param center WGS-84 坐标（Mapbox）
+     * @param center GCJ-02 坐标（腾讯坐标系）
      * @param radiusMeters 围栏半径（米）
      * @param notifyOnEnter 进入时通知
      * @param notifyOnExit 离开时通知
@@ -145,33 +98,27 @@ class GeofenceManager(private val context: Context) {
         contactId: String,
         contactName: String,
         locationName: String,
-        center: Point,
+        center: LatLng,
         radiusMeters: Float,
         notifyOnEnter: Boolean,
         notifyOnExit: Boolean,
         onSuccess: () -> Unit,
         onFailure: (String) -> Unit
     ) {
-        val client = geoFenceClient
-        if (client == null) {
-            onFailure("围栏服务未初始化")
-            return
-        }
-
         // 生成唯一ID
         val geofenceId = "geofence_${contactId}_${System.currentTimeMillis()}"
 
         // 先移除该联系人的旧围栏
         removeGeofenceInternal(contactId)
 
-        // 保存围栏数据（使用 WGS-84 坐标）
+        // 保存围栏数据（GCJ-02 坐标）
         val geofenceData = GeofenceData(
             id = geofenceId,
             contactId = contactId,
             contactName = contactName,
             locationName = locationName,
-            latitude = center.latitude(),
-            longitude = center.longitude(),
+            latitude = center.latitude,
+            longitude = center.longitude,
             radiusMeters = radiusMeters,
             notifyOnEnter = notifyOnEnter,
             notifyOnExit = notifyOnExit
@@ -183,31 +130,67 @@ class GeofenceManager(private val context: Context) {
         _activeGeofences.value = currentList
         saveGeofences()
 
-        // 转换坐标：WGS-84 → GCJ-02
-        val gcj02Point = CoordinateConverter.wgs84ToGcj02(
-            center.latitude(),
-            center.longitude()
+        Log.d(TAG, "围栏创建成功: $geofenceId, 位置: (${center.latitude}, ${center.longitude}), 半径: ${radiusMeters}m")
+        onSuccess()
+    }
+
+    /**
+     * 检查联系人位置是否触发围栏事件
+     * 应在联系人位置更新时调用
+     *
+     * @param contactId 联系人ID
+     * @param contactLocation 联系人当前位置 (GCJ-02)
+     */
+    fun checkGeofenceForContact(contactId: String, contactLocation: LatLng) {
+        val geofence = _activeGeofences.value.find { it.contactId == contactId } ?: return
+
+        val distance = calculateDistance(
+            geofence.latitude, geofence.longitude,
+            contactLocation.latitude, contactLocation.longitude
         )
 
-        // 创建高德围栏中心点
-        val amapCenter = DPoint(gcj02Point.latitude(), gcj02Point.longitude())
+        val isInside = distance <= geofence.radiusMeters
+        val wasInside = lastKnownStates[geofence.id]
 
-        // 注册回调
-        pendingCallbacks[geofenceId] = Pair(onSuccess, onFailure)
+        Log.d(TAG, "检查围栏: ${geofence.locationName}, 距离: ${distance.toInt()}m, 半径: ${geofence.radiusMeters.toInt()}m, 内部: $isInside, 之前: $wasInside")
 
-        // 添加圆形围栏
-        try {
-            client.addGeoFence(
-                amapCenter,
-                radiusMeters,
-                geofenceId  // customId 用于标识围栏
-            )
-            Log.d(TAG, "正在创建围栏: $geofenceId, 中心: ${gcj02Point.latitude()}, ${gcj02Point.longitude()}, 半径: $radiusMeters")
-        } catch (e: Exception) {
-            Log.e(TAG, "添加围栏异常", e)
-            pendingCallbacks.remove(geofenceId)
-            onFailure("添加围栏失败: ${e.message}")
+        // 第一次检测，初始化状态
+        if (wasInside == null) {
+            lastKnownStates[geofence.id] = isInside
+            saveLastKnownStates()
+            return
         }
+
+        // 检测状态变化
+        if (isInside != wasInside) {
+            lastKnownStates[geofence.id] = isInside
+            saveLastKnownStates()
+
+            if (isInside && geofence.notifyOnEnter) {
+                // 进入围栏
+                Log.d(TAG, "联系人 ${geofence.contactName} 进入围栏: ${geofence.locationName}")
+                sendGeofenceEvent(geofence, GEOFENCE_TRANSITION_ENTER)
+            } else if (!isInside && geofence.notifyOnExit) {
+                // 离开围栏
+                Log.d(TAG, "联系人 ${geofence.contactName} 离开围栏: ${geofence.locationName}")
+                sendGeofenceEvent(geofence, GEOFENCE_TRANSITION_EXIT)
+            }
+        }
+    }
+
+    /**
+     * 发送围栏事件广播
+     */
+    private fun sendGeofenceEvent(geofence: GeofenceData, transitionType: Int) {
+        val intent = Intent(ACTION_GEOFENCE_TRIGGERED).apply {
+            setPackage(context.packageName)
+            putExtra("fence_id", geofence.id)
+            putExtra("contact_id", geofence.contactId)
+            putExtra("contact_name", geofence.contactName)
+            putExtra("location_name", geofence.locationName)
+            putExtra("transition_type", transitionType)
+        }
+        context.sendBroadcast(intent)
     }
 
     /**
@@ -221,16 +204,10 @@ class GeofenceManager(private val context: Context) {
     private fun removeGeofenceInternal(contactId: String) {
         val geofenceToRemove = _activeGeofences.value.find { it.contactId == contactId }
         if (geofenceToRemove != null) {
-            // 从高德客户端移除（使用保存的 GeoFence 对象）
-            val fence = createdFences.remove(geofenceToRemove.id)
-            if (fence != null) {
-                geoFenceClient?.removeGeoFence(fence)
-                Log.d(TAG, "已移除围栏: ${geofenceToRemove.id}")
-            } else {
-                Log.w(TAG, "未找到围栏对象，可能尚未创建完成: ${geofenceToRemove.id}")
-            }
-            // 清除该围栏的通知状态记录
+            // 清除状态记录
+            lastKnownStates.remove(geofenceToRemove.id)
             clearNotificationState(geofenceToRemove.id)
+            Log.d(TAG, "已移除围栏: ${geofenceToRemove.id}")
         }
 
         // 更新列表
@@ -238,14 +215,14 @@ class GeofenceManager(private val context: Context) {
         currentList.removeAll { it.contactId == contactId }
         _activeGeofences.value = currentList
         saveGeofences()
+        saveLastKnownStates()
     }
 
     /**
      * 移除所有地理围栏
      */
     fun removeAllGeofences(onComplete: () -> Unit = {}) {
-        geoFenceClient?.removeGeoFence()
-        createdFences.clear()
+        lastKnownStates.clear()
         _activeGeofences.value = emptyList()
         saveGeofences()
         clearAllNotificationStates()
@@ -257,7 +234,6 @@ class GeofenceManager(private val context: Context) {
      * 清除指定围栏的通知状态记录
      */
     private fun clearNotificationState(geofenceId: String) {
-        val statePrefs = context.getSharedPreferences(NOTIFICATION_STATE_PREFS, Context.MODE_PRIVATE)
         statePrefs.edit { remove(STATE_KEY_PREFIX + geofenceId) }
         Log.d(TAG, "已清除围栏通知状态: $geofenceId")
     }
@@ -266,7 +242,6 @@ class GeofenceManager(private val context: Context) {
      * 清除所有围栏的通知状态记录
      */
     private fun clearAllNotificationStates() {
-        val statePrefs = context.getSharedPreferences(NOTIFICATION_STATE_PREFS, Context.MODE_PRIVATE)
         statePrefs.edit { clear() }
         Log.d(TAG, "已清除所有围栏通知状态")
     }
@@ -283,40 +258,6 @@ class GeofenceManager(private val context: Context) {
      */
     fun getGeofenceById(geofenceId: String): GeofenceData? {
         return _activeGeofences.value.find { it.id == geofenceId }
-    }
-
-    /**
-     * 重新注册已保存的围栏
-     */
-    private fun reRegisterGeofences() {
-        val client = geoFenceClient ?: return
-        val geofences = _activeGeofences.value
-
-        if (geofences.isEmpty()) {
-            Log.d(TAG, "没有需要重新注册的围栏")
-            return
-        }
-
-        Log.d(TAG, "正在重新注册 ${geofences.size} 个围栏")
-
-        geofences.forEach { geofence ->
-            // 转换坐标
-            val gcj02Point = CoordinateConverter.wgs84ToGcj02(
-                geofence.latitude,
-                geofence.longitude
-            )
-            val amapCenter = DPoint(gcj02Point.latitude(), gcj02Point.longitude())
-
-            try {
-                client.addGeoFence(
-                    amapCenter,
-                    geofence.radiusMeters,
-                    geofence.id
-                )
-            } catch (e: Exception) {
-                Log.e(TAG, "重新注册围栏失败: ${geofence.id}", e)
-            }
-        }
     }
 
     /**
@@ -373,27 +314,52 @@ class GeofenceManager(private val context: Context) {
     }
 
     /**
-     * 获取错误信息
+     * 保存上次已知状态
      */
-    private fun getErrorMessage(errorCode: Int): String {
-        return when (errorCode) {
-            GeoFence.ERROR_CODE_INVALID_PARAMETER -> "参数无效"
-            GeoFence.ERROR_CODE_FAILURE_CONNECTION -> "网络连接失败"
-            GeoFence.ERROR_CODE_FAILURE_AUTH -> "认证失败，请检查高德 API Key"
-            GeoFence.ERROR_CODE_FAILURE_PARSER -> "解析失败"
-            GeoFence.ERROR_CODE_UNKNOWN -> "未知错误"
-            else -> "错误码: $errorCode"
+    private fun saveLastKnownStates() {
+        val json = JSONObject()
+        lastKnownStates.forEach { (id, isInside) ->
+            json.put(id, isInside)
         }
+        statePrefs.edit { putString("last_known_states", json.toString()) }
+    }
+
+    /**
+     * 加载上次已知状态
+     */
+    private fun loadLastKnownStates() {
+        val jsonString = statePrefs.getString("last_known_states", null) ?: return
+        try {
+            val json = JSONObject(jsonString)
+            json.keys().forEach { key ->
+                lastKnownStates[key] = json.getBoolean(key)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "加载上次已知状态失败", e)
+        }
+    }
+
+    /**
+     * 计算两点之间的距离（米）
+     * 使用 Haversine 公式
+     */
+    private fun calculateDistance(
+        lat1: Double, lon1: Double,
+        lat2: Double, lon2: Double
+    ): Double {
+        val dLat = Math.toRadians(lat2 - lat1)
+        val dLon = Math.toRadians(lon2 - lon1)
+        val a = sin(dLat / 2) * sin(dLat / 2) +
+                cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2)) *
+                sin(dLon / 2) * sin(dLon / 2)
+        val c = 2 * atan2(sqrt(a), sqrt(1 - a))
+        return EARTH_RADIUS_METERS * c
     }
 
     /**
      * 释放资源
      */
     fun destroy() {
-        geoFenceClient?.removeGeoFence()
-        geoFenceClient = null
-        pendingCallbacks.clear()
-        createdFences.clear()
         Log.d(TAG, "围栏管理器已销毁")
     }
 }

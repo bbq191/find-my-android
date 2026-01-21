@@ -1,10 +1,15 @@
 package me.ikate.findmy.ui
 
+import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
+import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
 import me.ikate.findmy.service.LostModeService
 import androidx.compose.foundation.background
@@ -24,7 +29,6 @@ import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -40,13 +44,22 @@ import me.ikate.findmy.ui.theme.FindmyTheme
 
 /**
  * 丢失模式全屏 Activity
- * 显示丢失信息和联系方式，不需要 SYSTEM_ALERT_WINDOW 权限
+ * 显示丢失信息和联系方式
+ *
+ * 特性：
+ * - 显示在锁屏之上
+ * - 禁用返回键
+ * - 当用户按 HOME 键离开后，服务会重新显示此界面
+ * - 只有通过身份验证或远程解锁才能关闭
  */
 class LostModeActivity : ComponentActivity() {
 
     companion object {
         private const val EXTRA_MESSAGE = "message"
         private const val EXTRA_PHONE = "phone"
+
+        // 远程关闭丢失模式的广播 Action
+        const val ACTION_CLOSE_LOST_MODE = "me.ikate.findmy.ACTION_CLOSE_LOST_MODE"
 
         fun createIntent(
             context: Context,
@@ -65,11 +78,54 @@ class LostModeActivity : ComponentActivity() {
     private var message: String = "此设备已丢失"
     private var phoneNumber: String = ""
 
+    // 关闭丢失模式的广播接收器
+    private val closeReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context, intent: Intent) {
+            if (intent.action == ACTION_CLOSE_LOST_MODE) {
+                finish()
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // 禁用返回键，必须通过身份验证才能退出
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                // 不执行任何操作，禁用返回键
+            }
+        })
+
+        // 设置窗口标志：显示在锁屏之上、保持屏幕常亮
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(true)
+            setTurnScreenOn(true)
+        }
+
+        // FLAG_KEEP_SCREEN_ON 未被弃用，始终添加
+        // 旧版 API 需要使用已弃用的标志
+        @Suppress("DEPRECATION")
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O_MR1) {
+            window.addFlags(
+                WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED or
+                WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON or
+                WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON or
+                WindowManager.LayoutParams.FLAG_DISMISS_KEYGUARD
+            )
+        } else {
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+
         message = intent.getStringExtra(EXTRA_MESSAGE) ?: "此设备已丢失"
         phoneNumber = intent.getStringExtra(EXTRA_PHONE) ?: ""
+
+        // 注册关闭广播接收器（Android 14+ 需要指定导出标志）
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            registerReceiver(closeReceiver, IntentFilter(ACTION_CLOSE_LOST_MODE), Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            registerReceiver(closeReceiver, IntentFilter(ACTION_CLOSE_LOST_MODE))
+        }
 
         setContent {
             FindmyTheme(darkTheme = true) {
@@ -83,12 +139,37 @@ class LostModeActivity : ComponentActivity() {
         }
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        // 更新显示内容
+        message = intent.getStringExtra(EXTRA_MESSAGE) ?: message
+        phoneNumber = intent.getStringExtra(EXTRA_PHONE) ?: phoneNumber
+    }
+
     override fun onResume() {
         super.onResume()
         // 检查丢失模式是否已关闭，如果已关闭则自动退出
         if (!LostModeService.isEnabled(this)) {
             finish()
         }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        try {
+            unregisterReceiver(closeReceiver)
+        } catch (e: Exception) {
+            // 忽略
+        }
+    }
+
+    /**
+     * 当用户按 HOME 键时调用
+     * 不阻止，但服务会在屏幕解锁后重新显示此界面
+     */
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        // 服务会监听 ACTION_USER_PRESENT 并重新显示界面
     }
 
     private fun dialPhone(phone: String) {
@@ -105,10 +186,6 @@ class LostModeActivity : ComponentActivity() {
         startActivity(intent)
     }
 
-    @Deprecated("Deprecated in Java")
-    override fun onBackPressed() {
-        // 禁用返回键，必须通过身份验证才能退出
-    }
 }
 
 @Composable

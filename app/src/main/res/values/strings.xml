@@ -1,4 +1,3 @@
 <resources>
     <string name="app_name">Find My</string>
-    <!-- Mapbox Access Token 从 local.properties 动态读取，通过 build.gradle.kts 的 resValue 注入 -->
 </resources>

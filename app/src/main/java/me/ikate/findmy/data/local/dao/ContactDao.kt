@@ -112,9 +112,22 @@ interface ContactDao {
     suspend fun updateStatus(id: String, status: String, updatedAt: Long = System.currentTimeMillis())
 
     /**
-     * 清理过期的联系人
+     * 获取即将过期但尚未标记的联系人（用于通知对方）
+     * 返回 expireTime < currentTime 且 shareStatus != EXPIRED 的联系人
      */
-    @Query("UPDATE contacts SET shareStatus = 'EXPIRED' WHERE expireTime IS NOT NULL AND expireTime < :currentTime")
+    @Query("""
+        SELECT * FROM contacts
+        WHERE expireTime IS NOT NULL
+        AND expireTime < :currentTime
+        AND shareStatus != 'EXPIRED'
+    """)
+    suspend fun getExpiringContacts(currentTime: Long = System.currentTimeMillis()): List<ContactEntity>
+
+    /**
+     * 标记过期的联系人（同时设置 isPaused = true）
+     * 过期是一种特殊的暂停
+     */
+    @Query("UPDATE contacts SET shareStatus = 'EXPIRED', isPaused = 1 WHERE expireTime IS NOT NULL AND expireTime < :currentTime")
     suspend fun markExpired(currentTime: Long = System.currentTimeMillis())
 
     /**
@@ -154,6 +167,16 @@ interface ContactDao {
     suspend fun updatePauseStatusByTargetUserId(
         targetUserId: String,
         isPaused: Boolean,
+        updatedAt: Long = System.currentTimeMillis()
+    )
+
+    /**
+     * 根据目标用户 ID 更新为过期状态
+     * 过期是一种特殊的暂停，同时设置 shareStatus=EXPIRED 和 isPaused=true
+     */
+    @Query("UPDATE contacts SET shareStatus = 'EXPIRED', isPaused = 1, updatedAt = :updatedAt WHERE targetUserId = :targetUserId")
+    suspend fun updateExpiredStatusByTargetUserId(
+        targetUserId: String,
         updatedAt: Long = System.currentTimeMillis()
     )
 

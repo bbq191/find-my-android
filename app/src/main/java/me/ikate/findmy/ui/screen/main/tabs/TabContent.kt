@@ -13,6 +13,7 @@ import me.ikate.findmy.data.model.Contact
 import me.ikate.findmy.data.model.Device
 import me.ikate.findmy.data.model.ShareDuration
 import me.ikate.findmy.data.model.User
+import me.ikate.findmy.service.TrackingState
 import me.ikate.findmy.ui.navigation.FindMyTab
 
 /**
@@ -27,6 +28,7 @@ fun TabContent(
     contacts: List<Contact>,
     requestingLocationFor: String?,
     trackingContactUid: String?,
+    trackingStates: Map<String, TrackingState>,
     geofenceContactIds: Set<String>,
     onContactClick: (Contact) -> Unit,
     onAddContactClick: () -> Unit,
@@ -37,13 +39,13 @@ fun TabContent(
     onRemoveContact: (Contact) -> Unit,
     onAcceptShare: (Contact) -> Unit,
     onRejectShare: (Contact) -> Unit,
-    onRequestLocationUpdate: (String) -> Unit,
-    onStartContinuousTracking: (String) -> Unit,
-    onStopContinuousTracking: (String) -> Unit,
+    onRefreshAndTrack: (String) -> Unit,
+    onStopTracking: (String) -> Unit,
     onPlaySound: (String) -> Unit,
     onStopSound: () -> Unit,
     isRinging: Boolean,
-    onLostModeClick: (Contact) -> Unit,
+    ringingContactUid: String?,
+    onLostModeClick: (Contact, String, String, Boolean) -> Unit,
     onGeofenceClick: (Contact) -> Unit,
     // Devices Tab 参数
     devices: List<Device>,
@@ -87,6 +89,7 @@ fun TabContent(
                 contacts = contacts,
                 requestingLocationFor = requestingLocationFor,
                 trackingContactUid = trackingContactUid,
+                trackingStates = trackingStates,
                 geofenceContactIds = geofenceContactIds,
                 onContactClick = onContactClick,
                 onAddContactClick = onAddContactClick,
@@ -97,12 +100,12 @@ fun TabContent(
                 onRemoveContact = onRemoveContact,
                 onAcceptShare = onAcceptShare,
                 onRejectShare = onRejectShare,
-                onRequestLocationUpdate = onRequestLocationUpdate,
-                onStartContinuousTracking = onStartContinuousTracking,
-                onStopContinuousTracking = onStopContinuousTracking,
+                onRefreshAndTrack = onRefreshAndTrack,
+                onStopTracking = onStopTracking,
                 onPlaySound = onPlaySound,
                 onStopSound = onStopSound,
                 isRinging = isRinging,
+                ringingContactUid = ringingContactUid,
                 onLostModeClick = onLostModeClick,
                 onGeofenceClick = onGeofenceClick
             )
@@ -119,6 +122,8 @@ fun TabContent(
                 onStopSound = onStopSoundOnDevice,
                 onLostMode = onLostModeOnDevice
             )
+
+            FindMyTab.HISTORY -> HistoryTab()
 
             FindMyTab.ME -> MeTab(
                 currentUser = currentUser,

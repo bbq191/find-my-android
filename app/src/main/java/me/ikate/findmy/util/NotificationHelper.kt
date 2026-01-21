@@ -11,7 +11,9 @@ import android.os.Build
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import me.ikate.findmy.BuildConfig
 import me.ikate.findmy.MainActivity
+import me.ikate.findmy.R
 
 /**
  * 通知帮助类
@@ -22,6 +24,29 @@ object NotificationHelper {
     private const val CHANNEL_ID_SHARE_REQUEST = "location_share_requests"
     private const val CHANNEL_ID_LOCATION_UPDATE = "location_updates"
     private const val CHANNEL_ID_GEOFENCE = "geofence_alerts"
+
+    /**
+     * 创建主 Activity 的 PendingIntent
+     * 统一处理 FLAG_IMMUTABLE 和 FLAG_UPDATE_CURRENT
+     *
+     * @param context 上下文
+     * @param requestCode 请求码（用于区分不同的 PendingIntent）
+     * @return PendingIntent
+     */
+    private fun createMainActivityPendingIntent(
+        context: Context,
+        requestCode: Int
+    ): PendingIntent {
+        val intent = Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+        }
+        return PendingIntent.getActivity(
+            context,
+            requestCode,
+            intent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+    }
 
     /**
      * 创建通知渠道（Android 8.0+）
@@ -96,19 +121,10 @@ object NotificationHelper {
             return
         }
 
-        // 点击通知打开应用
-        val intent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-        }
-        val pendingIntent = PendingIntent.getActivity(
-            context,
-            shareId.hashCode(),
-            intent,
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
+        val pendingIntent = createMainActivityPendingIntent(context, shareId.hashCode())
 
         val notification = NotificationCompat.Builder(context, CHANNEL_ID_SHARE_REQUEST)
-            .setSmallIcon(android.R.drawable.ic_dialog_info) // 使用系统图标
+            .setSmallIcon(R.drawable.ic_notification) // 使用系统图标
             .setContentTitle("新的位置共享邀请")
             .setContentText("$senderName 邀请您查看位置")
             .setPriority(NotificationCompat.PRIORITY_HIGH)
@@ -139,18 +155,10 @@ object NotificationHelper {
             return
         }
 
-        val intent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-        }
-        val pendingIntent = PendingIntent.getActivity(
-            context,
-            "accepted_$accepterName".hashCode(),
-            intent,
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
+        val pendingIntent = createMainActivityPendingIntent(context, "accepted_$accepterName".hashCode())
 
         val notification = NotificationCompat.Builder(context, CHANNEL_ID_SHARE_REQUEST)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle("位置共享邀请已被接受")
             .setContentText("$accepterName 接受了您的位置共享邀请")
             .setPriority(NotificationCompat.PRIORITY_HIGH)
@@ -181,18 +189,10 @@ object NotificationHelper {
             return
         }
 
-        val intent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-        }
-        val pendingIntent = PendingIntent.getActivity(
-            context,
-            "paused_$contactName".hashCode(),
-            intent,
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
+        val pendingIntent = createMainActivityPendingIntent(context, "paused_$contactName".hashCode())
 
         val notification = NotificationCompat.Builder(context, CHANNEL_ID_SHARE_REQUEST)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle("位置共享已暂停")
             .setContentText("$contactName 暂停了与您的位置共享")
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
@@ -223,18 +223,10 @@ object NotificationHelper {
             return
         }
 
-        val intent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-        }
-        val pendingIntent = PendingIntent.getActivity(
-            context,
-            "resumed_$contactName".hashCode(),
-            intent,
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
+        val pendingIntent = createMainActivityPendingIntent(context, "resumed_$contactName".hashCode())
 
         val notification = NotificationCompat.Builder(context, CHANNEL_ID_SHARE_REQUEST)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle("位置共享已恢复")
             .setContentText("$contactName 恢复了与您的位置共享")
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
@@ -245,6 +237,40 @@ object NotificationHelper {
         try {
             NotificationManagerCompat.from(context)
                 .notify("resumed_$contactName".hashCode(), notification)
+        } catch (e: SecurityException) {
+            android.util.Log.e("NotificationHelper", "显示通知失败：没有权限", e)
+        }
+    }
+
+    /**
+     * 显示共享过期通知
+     * 当位置共享到期时显示（过期是一种特殊的暂停，任一方可恢复）
+     * @param context 上下文
+     * @param contactName 联系人名称
+     */
+    fun showShareExpiredNotification(
+        context: Context,
+        contactName: String
+    ) {
+        if (!hasNotificationPermission(context)) {
+            android.util.Log.w("NotificationHelper", "没有通知权限，跳过显示通知")
+            return
+        }
+
+        val pendingIntent = createMainActivityPendingIntent(context, "expired_$contactName".hashCode())
+
+        val notification = NotificationCompat.Builder(context, CHANNEL_ID_SHARE_REQUEST)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle("位置共享已过期")
+            .setContentText("与 $contactName 的位置共享已到期，可点击续期")
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent)
+            .build()
+
+        try {
+            NotificationManagerCompat.from(context)
+                .notify("expired_$contactName".hashCode(), notification)
         } catch (e: SecurityException) {
             android.util.Log.e("NotificationHelper", "显示通知失败：没有权限", e)
         }
@@ -265,19 +291,10 @@ object NotificationHelper {
             return
         }
 
-        // 点击通知打开应用
-        val intent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-        }
-        val pendingIntent = PendingIntent.getActivity(
-            context,
-            "removed_$removerName".hashCode(),
-            intent,
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
+        val pendingIntent = createMainActivityPendingIntent(context, "removed_$removerName".hashCode())
 
         val notification = NotificationCompat.Builder(context, CHANNEL_ID_SHARE_REQUEST)
-            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle("位置共享已停止")
             .setContentText("$removerName 已将您移出联系人列表")
             .setPriority(NotificationCompat.PRIORITY_HIGH)
@@ -308,16 +325,10 @@ object NotificationHelper {
             return
         }
 
-        val intent = Intent(context, MainActivity::class.java)
-        val pendingIntent = PendingIntent.getActivity(
-            context,
-            contactName.hashCode(),
-            intent,
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
+        val pendingIntent = createMainActivityPendingIntent(context, contactName.hashCode())
 
         val notification = NotificationCompat.Builder(context, CHANNEL_ID_LOCATION_UPDATE)
-            .setSmallIcon(android.R.drawable.ic_dialog_map)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle("$contactName 更新了位置")
             .setContentText(address)
             .setPriority(NotificationCompat.PRIORITY_LOW)
@@ -342,12 +353,16 @@ object NotificationHelper {
     /**
      * 发送调试通知
      * 用于验证 FCM 消息接收、Worker 启动等状态
+     * 仅在 DEBUG 构建时生效
      *
      * @param context 上下文
      * @param title 通知标题
      * @param message 通知内容
      */
     fun sendDebugNotification(context: Context, title: String, message: String) {
+        // 仅在 DEBUG 模式下发送调试通知
+        if (!BuildConfig.DEBUG) return
+
         val notificationManager =
             context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
@@ -364,7 +379,7 @@ object NotificationHelper {
         }
 
         val notification = NotificationCompat.Builder(context, CHANNEL_ID_DEBUG)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
             .setContentText(message)
             .setStyle(NotificationCompat.BigTextStyle().bigText(message))
@@ -396,7 +411,7 @@ object NotificationHelper {
         channelId: String = CHANNEL_ID_LOCATION_UPDATE
     ): android.app.Notification {
         return NotificationCompat.Builder(context, channelId)
-            .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
             .setContentText(message)
             .setPriority(NotificationCompat.PRIORITY_LOW)
@@ -475,7 +490,7 @@ object NotificationHelper {
         }
 
         return NotificationCompat.Builder(context, CHANNEL_ID_LOST_MODE)
-            .setSmallIcon(android.R.drawable.ic_lock_lock)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle("设备已丢失")
             .setContentText(notificationText)
             .setStyle(NotificationCompat.BigTextStyle().bigText(notificationText))
@@ -524,24 +539,10 @@ object NotificationHelper {
             return
         }
 
-        val intent = Intent(context, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
-        }
-        val pendingIntent = PendingIntent.getActivity(
-            context,
-            title.hashCode(),
-            intent,
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        )
-
-        val iconRes = if (isEntering) {
-            android.R.drawable.ic_menu_myplaces
-        } else {
-            android.R.drawable.ic_menu_directions
-        }
+        val pendingIntent = createMainActivityPendingIntent(context, title.hashCode())
 
         val notification = NotificationCompat.Builder(context, CHANNEL_ID_GEOFENCE)
-            .setSmallIcon(iconRes)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle(title)
             .setContentText(message)
             .setStyle(NotificationCompat.BigTextStyle().bigText(message))

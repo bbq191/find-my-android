@@ -11,6 +11,7 @@ import com.google.accompanist.permissions.ExperimentalPermissionsApi
 import com.google.accompanist.permissions.isGranted
 import com.google.accompanist.permissions.rememberPermissionState
 import com.google.accompanist.permissions.shouldShowRationale
+import me.ikate.findmy.ui.components.BatteryOptimizationGuideDialog
 import me.ikate.findmy.ui.components.ContactsPermissionDialog
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -38,12 +39,15 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.BatterySaver
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.PhonelinkLock
+import me.ikate.findmy.service.FindMyDeviceAdminReceiver
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -118,6 +122,8 @@ fun MeTab(
     }
 
     var showAboutDialog by remember { mutableStateOf(false) }
+    var showLostModeSettingsDialog by remember { mutableStateOf(false) }
+    var showBatteryOptimizationDialog by remember { mutableStateOf(false) }
 
     // 用于从通讯录选择联系人的临时状态
     var pendingContactName by remember { mutableStateOf<String?>(null) }
@@ -176,6 +182,23 @@ fun MeTab(
     if (showAboutDialog) {
         AboutDialog(
             onDismiss = { showAboutDialog = false }
+        )
+    }
+
+    // 丢失模式设置对话框
+    if (showLostModeSettingsDialog) {
+        LostModeSettingsDialog(
+            onDismiss = { showLostModeSettingsDialog = false }
+        )
+    }
+
+    // 电池优化引导对话框
+    if (showBatteryOptimizationDialog) {
+        BatteryOptimizationGuideDialog(
+            onDismiss = { showBatteryOptimizationDialog = false },
+            onDontShowAgain = {
+                // 可以保存到 SharedPreferences 避免重复显示
+            }
         )
     }
 
@@ -250,6 +273,8 @@ fun MeTab(
                         }
                         context.startActivity(intent)
                     },
+                    onBatteryOptimizationClick = { showBatteryOptimizationDialog = true },
+                    onLostModeSettingsClick = { showLostModeSettingsDialog = true },
                     onAboutClick = { showAboutDialog = true }
                 )
             }
@@ -463,6 +488,8 @@ private fun SettingsSection(
     onAppIconClick: () -> Unit,
     onNotificationsClick: () -> Unit,
     onPrivacyClick: () -> Unit,
+    onBatteryOptimizationClick: () -> Unit,
+    onLostModeSettingsClick: () -> Unit,
     onAboutClick: () -> Unit
 ) {
     var showLicensesDialog by remember { mutableStateOf(false) }
@@ -508,6 +535,26 @@ private fun SettingsSection(
                 title = "隐私设置",
                 subtitle = "管理位置共享权限",
                 onClick = onPrivacyClick
+            )
+            HorizontalDivider(
+                modifier = Modifier.padding(start = 56.dp),
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+            )
+            SettingsItem(
+                icon = Icons.Default.BatterySaver,
+                title = "电池优化",
+                subtitle = "确保后台定位稳定运行",
+                onClick = onBatteryOptimizationClick
+            )
+            HorizontalDivider(
+                modifier = Modifier.padding(start = 56.dp),
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+            )
+            SettingsItem(
+                icon = Icons.Default.PhonelinkLock,
+                title = "丢失模式设置",
+                subtitle = "管理设备管理员和悬浮窗权限",
+                onClick = onLostModeSettingsClick
             )
             HorizontalDivider(
                 modifier = Modifier.padding(start = 56.dp),
@@ -1141,19 +1188,14 @@ private fun LicensesDialog(
             license = "Apache License 2.0"
         ),
         License(
-            name = "Mapbox Maps SDK",
-            author = "Mapbox",
-            license = "Mapbox Terms of Service"
+            name = "腾讯地图 SDK",
+            author = "腾讯",
+            license = "腾讯位置服务协议"
         ),
         License(
-            name = "高德定位 SDK",
-            author = "高德",
-            license = "高德开放平台服务协议"
-        ),
-        License(
-            name = "高德地理围栏 SDK",
-            author = "高德",
-            license = "高德开放平台服务协议"
+            name = "腾讯定位 SDK",
+            author = "腾讯",
+            license = "腾讯位置服务协议"
         ),
         License(
             name = "Eclipse Paho MQTT",
@@ -1166,9 +1208,14 @@ private fun LicensesDialog(
             license = "Apache License 2.0"
         ),
         License(
-            name = "个推推送 SDK",
-            author = "个推",
-            license = "个推服务协议"
+            name = "Firebase Cloud Messaging",
+            author = "Google",
+            license = "Firebase Terms of Service"
+        ),
+        License(
+            name = "Firebase Firestore",
+            author = "Google",
+            license = "Firebase Terms of Service"
         ),
         License(
             name = "Coil",
@@ -1178,6 +1225,11 @@ private fun LicensesDialog(
         License(
             name = "Accompanist Permissions",
             author = "Google",
+            license = "Apache License 2.0"
+        ),
+        License(
+            name = "Koin",
+            author = "Insert Koin",
             license = "Apache License 2.0"
         ),
         License(
@@ -1199,6 +1251,16 @@ private fun LicensesDialog(
             name = "Biometric",
             author = "Google",
             license = "Apache License 2.0"
+        ),
+        License(
+            name = "Security Crypto",
+            author = "Google",
+            license = "Apache License 2.0"
+        ),
+        License(
+            name = "Google Play Services Location",
+            author = "Google",
+            license = "Google Play Services Terms"
         ),
         License(
             name = "Gson",
@@ -1295,4 +1357,234 @@ private fun LicensesDialog(
         },
         shape = RoundedCornerShape(16.dp)
     )
+}
+
+/**
+ * 丢失模式设置对话框
+ * 显示设备管理员和悬浮窗权限状态，并引导用户开启
+ */
+@Composable
+private fun LostModeSettingsDialog(
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+
+    // 权限状态
+    var isDeviceAdminEnabled by remember {
+        mutableStateOf(FindMyDeviceAdminReceiver.isAdminActive(context))
+    }
+    var isOverlayEnabled by remember {
+        mutableStateOf(Settings.canDrawOverlays(context))
+    }
+
+    // 刷新权限状态
+    val refreshPermissions = {
+        isDeviceAdminEnabled = FindMyDeviceAdminReceiver.isAdminActive(context)
+        isOverlayEnabled = Settings.canDrawOverlays(context)
+    }
+
+    // 当对话框重新获得焦点时刷新状态
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        onDispose { }
+    }
+
+    AlertDialog(
+        onDismissRequest = {
+            refreshPermissions()
+            onDismiss()
+        },
+        title = {
+            Text(
+                text = "丢失模式设置",
+                fontWeight = FontWeight.SemiBold
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Text(
+                    text = "丢失模式需要以下权限才能正常工作。开启后，当设备被标记为丢失时，可以锁定屏幕并显示联系信息。",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                // 设备管理员权限
+                PermissionItem(
+                    title = "设备管理员",
+                    description = "用于锁定屏幕，防止他人使用设备",
+                    isEnabled = isDeviceAdminEnabled,
+                    onEnableClick = {
+                        val intent = FindMyDeviceAdminReceiver.requestActivation(context)
+                        context.startActivity(intent)
+                    }
+                )
+
+                // 悬浮窗权限
+                PermissionItem(
+                    title = "悬浮窗权限",
+                    description = "用于在锁屏上显示丢失模式界面",
+                    isEnabled = isOverlayEnabled,
+                    onEnableClick = {
+                        val intent = Intent(
+                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            Uri.parse("package:${context.packageName}")
+                        )
+                        context.startActivity(intent)
+                    }
+                )
+
+                // 刷新按钮
+                TextButton(
+                    onClick = { refreshPermissions() },
+                    modifier = Modifier.align(Alignment.CenterHorizontally)
+                ) {
+                    Text("刷新权限状态")
+                }
+
+                // 权限说明
+                if (!isDeviceAdminEnabled || !isOverlayEnabled) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
+                        ),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Info,
+                                contentDescription = null,
+                                modifier = Modifier.size(20.dp),
+                                tint = MaterialTheme.colorScheme.error
+                            )
+                            Text(
+                                text = "未开启的权限可能导致丢失模式功能受限",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = {
+                refreshPermissions()
+                onDismiss()
+            }) {
+                Text(
+                    text = "完成",
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+        },
+        shape = RoundedCornerShape(16.dp)
+    )
+}
+
+/**
+ * 权限项组件
+ */
+@Composable
+private fun PermissionItem(
+    title: String,
+    description: String,
+    isEnabled: Boolean,
+    onEnableClick: () -> Unit
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isEnabled) {
+                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+            } else {
+                MaterialTheme.colorScheme.surfaceContainerHigh
+            }
+        ),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // 状态图标
+            Surface(
+                modifier = Modifier.size(40.dp),
+                shape = CircleShape,
+                color = if (isEnabled) {
+                    MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.1f)
+                }
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = if (isEnabled) Icons.Default.Check else Icons.Default.PhonelinkLock,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                        tint = if (isEnabled) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.width(12.dp))
+
+            // 标题和描述
+            Column(modifier = Modifier.weight(1f)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.Medium
+                    )
+                    if (isEnabled) {
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
+                        ) {
+                            Text(
+                                text = "已开启",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            // 开启按钮
+            if (!isEnabled) {
+                TextButton(onClick = onEnableClick) {
+                    Text(
+                        text = "开启",
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+        }
+    }
 }

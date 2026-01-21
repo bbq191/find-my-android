@@ -34,6 +34,10 @@ import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Tablet
 import androidx.compose.material.icons.filled.Watch
+import androidx.compose.material.icons.outlined.Laptop
+import androidx.compose.material.icons.outlined.PhoneAndroid
+import androidx.compose.material.icons.outlined.Tablet
+import androidx.compose.material.icons.outlined.Watch
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -232,24 +236,43 @@ fun DeviceCard(
 
 @Composable
 private fun DeviceIcon(deviceType: DeviceType) {
+    // 使用 Outlined 风格图标（线框风格，更接近 Apple 设计）
     val icon = when (deviceType) {
-        DeviceType.PHONE -> Icons.Default.PhoneAndroid
-        DeviceType.TABLET -> Icons.Default.Tablet
-        DeviceType.WATCH -> Icons.Default.Watch
-        else -> Icons.Default.PhoneAndroid
+        DeviceType.PHONE -> Icons.Outlined.PhoneAndroid
+        DeviceType.TABLET -> Icons.Outlined.Tablet
+        DeviceType.WATCH -> Icons.Outlined.Watch
+        DeviceType.AIRTAG -> Icons.Default.LocationOn  // AirTag 使用定位图标
+        DeviceType.OTHER -> Icons.Outlined.Laptop
+    }
+
+    // 根据设备类型设置不同的主题色
+    val iconTint = when (deviceType) {
+        DeviceType.PHONE -> MaterialTheme.colorScheme.primary
+        DeviceType.TABLET -> MaterialTheme.colorScheme.tertiary
+        DeviceType.WATCH -> MaterialTheme.colorScheme.secondary
+        DeviceType.AIRTAG -> MaterialTheme.colorScheme.primary
+        DeviceType.OTHER -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+
+    val containerColor = when (deviceType) {
+        DeviceType.PHONE -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
+        DeviceType.TABLET -> MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.4f)
+        DeviceType.WATCH -> MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.4f)
+        DeviceType.AIRTAG -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
+        DeviceType.OTHER -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
     }
 
     Surface(
         modifier = Modifier.size(56.dp),
         shape = CircleShape,
-        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
+        color = containerColor
     ) {
         Box(contentAlignment = Alignment.Center) {
             Icon(
                 imageVector = icon,
-                contentDescription = null,
+                contentDescription = deviceType.name,
                 modifier = Modifier.size(28.dp),
-                tint = MaterialTheme.colorScheme.primary
+                tint = iconTint
             )
         }
     }

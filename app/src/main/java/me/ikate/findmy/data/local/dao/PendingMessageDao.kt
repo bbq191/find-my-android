@@ -107,4 +107,22 @@ interface PendingMessageDao {
      */
     @Query("UPDATE pending_messages SET status = 'PENDING' WHERE status = 'SENDING'")
     suspend fun resetSendingToPending()
+
+    /**
+     * 删除重试次数超过指定次数的失败消息
+     */
+    @Query("DELETE FROM pending_messages WHERE status = 'FAILED' OR retryCount >= :maxRetries")
+    suspend fun deleteFailedMessages(maxRetries: Int)
+
+    /**
+     * 获取失败消息数量
+     */
+    @Query("SELECT COUNT(*) FROM pending_messages WHERE status = 'FAILED'")
+    suspend fun getFailedCount(): Int
+
+    /**
+     * 获取所有消息（用于调试）
+     */
+    @Query("SELECT * FROM pending_messages ORDER BY createdAt DESC")
+    suspend fun getAllMessages(): List<PendingMessageEntity>
 }

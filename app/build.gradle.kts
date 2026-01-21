@@ -1,12 +1,13 @@
 import java.util.Properties
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 plugins {
     alias(libs.plugins.android.application)
-    // Removed kotlin.android - using AGP 9.0 built-in Kotlin support
-    // The kotlin.compose plugin is still required for Compose compiler
-    // See: https://blog.jetbrains.com/kotlin/2026/01/update-your-projects-for-agp9/
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
+    alias(libs.plugins.google.services)
 }
 
 // 读取 local.properties
@@ -16,6 +17,15 @@ val localProperties = Properties().apply {
         load(localPropertiesFile.inputStream())
     }
 }
+
+// 动态生成版本号（基于日期）
+// versionCode: YYYYMMDD 格式，如 20260121
+// versionName: YYYY.MM.DD 格式，如 2026.01.21
+val buildDate = Date()
+val versionCodeFormat = SimpleDateFormat("yyyyMMdd", Locale.getDefault())
+val versionNameFormat = SimpleDateFormat("yyyy.MM.dd", Locale.getDefault())
+val generatedVersionCode = versionCodeFormat.format(buildDate).toInt()
+val generatedVersionName = versionNameFormat.format(buildDate)
 
 android {
     namespace = "me.ikate.findmy"
@@ -30,8 +40,8 @@ android {
         applicationId = "me.ikate.findmy"
         minSdk = 36
         targetSdk = 36
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = generatedVersionCode
+        versionName = generatedVersionName
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
@@ -39,13 +49,12 @@ android {
             abiFilters.add("x86_64")
         }
 
-        // Mapbox Access Token (运行时使用)
-        val mapboxToken = localProperties.getProperty("MAPBOX_ACCESS_TOKEN", "")
-        resValue("string", "mapbox_access_token", mapboxToken)
-
-        // 高德定位 API Key
-        val amapKey = localProperties.getProperty("AMAP_API_KEY", "")
-        manifestPlaceholders["AMAP_API_KEY"] = amapKey
+        // 腾讯地图 API Key 和签名密钥
+        val tencentMapKey = localProperties.getProperty("TENCENT_MAP_KEY", "")
+        val tencentMapSk = localProperties.getProperty("TENCENT_MAP_SK", "")
+        manifestPlaceholders["TENCENT_MAP_KEY"] = tencentMapKey
+        buildConfigField("String", "TENCENT_MAP_KEY", "\"$tencentMapKey\"")
+        buildConfigField("String", "TENCENT_MAP_SK", "\"$tencentMapSk\"")
 
         // MQTT 配置 (EMQX Cloud)
         val mqttBrokerUrl = localProperties.getProperty("MQTT_BROKER_URL", "")
@@ -55,15 +64,14 @@ android {
         buildConfigField("String", "MQTT_USERNAME", "\"$mqttUsername\"")
         buildConfigField("String", "MQTT_PASSWORD", "\"$mqttPassword\"")
 
-        // 个推推送配置
-        val getuiAppId = localProperties.getProperty("GETUI_APP_ID", "")
-        val getuiAppKey = localProperties.getProperty("GETUI_APP_KEY", "")
-        val getuiAppSecret = localProperties.getProperty("GETUI_APP_SECRET", "")
-        manifestPlaceholders["GETUI_APP_ID"] = getuiAppId
-        manifestPlaceholders["GETUI_APP_KEY"] = getuiAppKey
-        manifestPlaceholders["GETUI_APP_SECRET"] = getuiAppSecret
-        buildConfigField("String", "GETUI_APP_ID", "\"$getuiAppId\"")
-        buildConfigField("String", "GETUI_APP_KEY", "\"$getuiAppKey\"")
+        // 推送 Webhook URL (Cloudflare Worker) - 已弃用，保留兼容
+        val pushWebhookUrl = localProperties.getProperty("PUSH_WEBHOOK_URL", "")
+        buildConfigField("String", "PUSH_WEBHOOK_URL", "\"$pushWebhookUrl\"")
+
+        // Firebase Cloud Functions URL
+        // 格式: https://asia-northeast1-{project-id}.cloudfunctions.net
+        val firebaseFunctionsUrl = localProperties.getProperty("FIREBASE_FUNCTIONS_URL", "")
+        buildConfigField("String", "FIREBASE_FUNCTIONS_URL", "\"$firebaseFunctionsUrl\"")
     }
 
     signingConfigs {
@@ -109,6 +117,14 @@ tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach 
     }
 }
 
+configurations.all {
+    resolutionStrategy {
+        // 强制使用存在的 concurrent-futures 版本
+        force("androidx.concurrent:concurrent-futures:1.3.0")
+        force("androidx.concurrent:concurrent-futures-ktx:1.3.0")
+    }
+}
+
 dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
@@ -123,12 +139,9 @@ dependencies {
     // ViewModel Compose
     implementation(libs.androidx.lifecycle.viewmodel.compose)
 
-    // Mapbox Maps SDK
-    implementation(libs.mapbox.maps)
-    implementation(libs.mapbox.compose)
-
-    // 高德定位 SDK
-    implementation(libs.amap.location)
+    // 腾讯地图 SDK（地图 + 定位）
+    implementation(libs.tencent.map.vector.sdk)
+    implementation(libs.tencent.location.sdk)
 
     // 权限处理
     implementation(libs.accompanist.permissions)
@@ -136,7 +149,10 @@ dependencies {
     // 图片加载
     implementation(libs.coil.compose)
 
-    // Firebase 已完全移除，使用 MQTT + Room + 个推 替代
+    // Firebase 推送 (FCM) + Firestore
+    implementation(platform(libs.firebase.bom))
+    implementation(libs.firebase.messaging)
+    implementation(libs.firebase.firestore)
 
     // WorkManager
     implementation(libs.androidx.work.runtime.ktx)
@@ -158,9 +174,12 @@ dependencies {
     // JSON 序列化
     implementation(libs.gson)
 
-    // 个推推送
-    implementation(libs.getui.sdk)
-    implementation(libs.getui.core)
+    // Koin 依赖注入
+    implementation(libs.koin.android)
+    implementation(libs.koin.androidx.compose)
+
+    // Google Play Services (Activity Recognition)
+    implementation(libs.play.services.location)
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

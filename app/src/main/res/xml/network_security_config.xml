@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- 允许腾讯地图 SDK 的网络请求 -->
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+
+    <!-- 腾讯地图相关域名 -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="true">qq.com</domain>
+        <domain includeSubdomains="true">gtimg.com</domain>
+        <domain includeSubdomains="true">myqcloud.com</domain>
+    </domain-config>
+</network-security-config>

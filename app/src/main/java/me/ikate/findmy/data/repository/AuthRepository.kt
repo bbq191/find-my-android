@@ -2,10 +2,10 @@ package me.ikate.findmy.data.repository
 
 import android.annotation.SuppressLint
 import android.content.Context
-import android.provider.Settings
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import me.ikate.findmy.util.DeviceIdProvider
 
 /**
  * 简化认证仓库
@@ -21,20 +21,12 @@ class AuthRepository(private val context: Context? = null) {
     companion object {
         private const val TAG = "AuthRepository"
 
-        @Volatile
-        private var cachedUserId: String? = null
-
         /**
          * 获取用户 ID（静态方法，便于各处调用）
+         * 委托给 DeviceIdProvider 统一管理
          */
-        @SuppressLint("HardwareIds")
         fun getUserId(context: Context): String {
-            return cachedUserId ?: synchronized(this) {
-                cachedUserId ?: Settings.Secure.getString(
-                    context.contentResolver,
-                    Settings.Secure.ANDROID_ID
-                ).also { cachedUserId = it }
-            }
+            return DeviceIdProvider.getDeviceId(context)
         }
     }
 

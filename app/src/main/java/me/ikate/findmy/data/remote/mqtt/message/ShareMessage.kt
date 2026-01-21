@@ -128,7 +128,11 @@ enum class ShareResponseType {
 
 /**
  * 共享暂停状态消息
- * 用于通知对方共享已暂停/恢复
+ * 用于通知对方共享已暂停/恢复/过期
+ *
+ * 过期是一种特殊的暂停：
+ * - isPaused = true, isExpired = true 表示共享已过期
+ * - 过期后任一方都可以恢复共享
  */
 data class SharePauseMessage(
     @SerializedName("type")
@@ -142,6 +146,9 @@ data class SharePauseMessage(
 
     @SerializedName("isPaused")
     val isPaused: Boolean,
+
+    @SerializedName("isExpired")
+    val isExpired: Boolean = false,  // 是否因过期而暂停
 
     @SerializedName("timestamp")
     val timestamp: Long = System.currentTimeMillis()
@@ -163,7 +170,8 @@ data class SharePauseMessage(
             return SharePauseMessage(
                 senderId = senderId,
                 senderName = senderName,
-                isPaused = true
+                isPaused = true,
+                isExpired = false
             )
         }
 
@@ -171,7 +179,20 @@ data class SharePauseMessage(
             return SharePauseMessage(
                 senderId = senderId,
                 senderName = senderName,
-                isPaused = false
+                isPaused = false,
+                isExpired = false
+            )
+        }
+
+        /**
+         * 创建过期消息（过期是一种特殊的暂停）
+         */
+        fun expired(senderId: String, senderName: String): SharePauseMessage {
+            return SharePauseMessage(
+                senderId = senderId,
+                senderName = senderName,
+                isPaused = true,
+                isExpired = true
             )
         }
     }

@@ -64,6 +64,15 @@ object MqttConfig {
     /** 共享暂停状态主题前缀 (用于通知暂停/恢复共享) */
     const val TOPIC_SHARE_PAUSE_PREFIX = "findmy/share/pause/"
 
+    /** FCM Token 主题前缀 (用于上报 FCM Token 到服务器) */
+    const val TOPIC_FCM_TOKEN_PREFIX = "findmy/fcm_token/"
+
+    /** 围栏事件主题前缀 (用于通知围栏触发事件) */
+    const val TOPIC_GEOFENCE_EVENT_PREFIX = "findmy/geofence/events/"
+
+    /** 围栏同步主题前缀 (用于围栏配置同步) */
+    const val TOPIC_GEOFENCE_SYNC_PREFIX = "findmy/geofence/sync/"
+
     /**
      * 获取用户的位置主题
      * @param userId 用户 ID
@@ -123,6 +132,30 @@ object MqttConfig {
      * @return 暂停状态主题，如 "findmy/share/pause/uid123"
      */
     fun getSharePauseTopic(userId: String): String = "$TOPIC_SHARE_PAUSE_PREFIX$userId"
+
+    /**
+     * 获取用户的 FCM Token 上报主题
+     * 用于将设备的 FCM Token 上报到服务器
+     * @param userId 用户 ID
+     * @return FCM Token 主题，如 "findmy/fcm_token/uid123"
+     */
+    fun getFcmTokenTopic(userId: String): String = "$TOPIC_FCM_TOKEN_PREFIX$userId"
+
+    /**
+     * 获取用户的围栏事件接收主题
+     * 用户订阅此主题来接收联系人的围栏触发事件
+     * @param userId 用户 ID
+     * @return 围栏事件主题，如 "findmy/geofence/events/uid123"
+     */
+    fun getGeofenceEventTopic(userId: String): String = "$TOPIC_GEOFENCE_EVENT_PREFIX$userId"
+
+    /**
+     * 获取用户的围栏同步接收主题
+     * 用户订阅此主题来接收围栏配置同步通知
+     * @param userId 用户 ID
+     * @return 围栏同步主题，如 "findmy/geofence/sync/uid123"
+     */
+    fun getGeofenceSyncTopic(userId: String): String = "$TOPIC_GEOFENCE_SYNC_PREFIX$userId"
 
     /**
      * 生成客户端 ID

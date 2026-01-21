@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<device-admin xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-policies>
+        <!-- 强制锁定屏幕 -->
+        <force-lock />
+        <!-- 监控密码输入失败次数 -->
+        <watch-login />
+        <!-- 重置密码（Android 8.0+ 受限） -->
+        <reset-password />
+    </uses-policies>
+</device-admin>

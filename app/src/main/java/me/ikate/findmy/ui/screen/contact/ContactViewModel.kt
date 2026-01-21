@@ -1,12 +1,10 @@
 package me.ikate.findmy.ui.screen.contact
 
-import android.annotation.SuppressLint
 import android.app.Application
-import android.provider.Settings
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.mapbox.geojson.Point
+import com.tencent.tencentmap.mapsdk.maps.model.LatLng
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -25,6 +23,7 @@ import me.ikate.findmy.data.repository.DeviceRepository
 import me.ikate.findmy.service.GeofenceManager
 import me.ikate.findmy.service.LocationReportService
 import me.ikate.findmy.service.LocationTrackingManager
+import me.ikate.findmy.util.DeviceIdProvider
 import me.ikate.findmy.util.NotificationHelper
 import me.ikate.findmy.util.PermissionGuideHelper
 import me.ikate.findmy.util.ReverseGeocodeHelper
@@ -33,7 +32,12 @@ import me.ikate.findmy.util.ReverseGeocodeHelper
  * 联系人功能 ViewModel
  * 管理联系人列表、位置共享操作和 UI 状态
  */
-class ContactViewModel(application: Application) : AndroidViewModel(application) {
+class ContactViewModel(
+    application: Application,
+    private val authRepository: AuthRepository,
+    private val contactRepository: ContactRepository,
+    private val deviceRepository: DeviceRepository
+) : AndroidViewModel(application) {
 
     companion object {
         private const val TAG = "ContactViewModel"
@@ -50,9 +54,6 @@ class ContactViewModel(application: Application) : AndroidViewModel(application)
         // 迁移旧的非加密数据
         me.ikate.findmy.util.SecurePreferences.migrateFromPlainPrefs(context, "user_profile")
     }
-    private val authRepository = AuthRepository(context)
-    private val contactRepository = ContactRepository(context)
-    private val deviceRepository = DeviceRepository(context)
     private val locationReportService = LocationReportService(context)
     private val geofenceManager = GeofenceManager(context)
 
@@ -109,6 +110,7 @@ class ContactViewModel(application: Application) : AndroidViewModel(application)
     // 追踪状态（委托给 TrackingManager）
     val requestingLocationFor: StateFlow<String?> = trackingManager.requestingLocationFor
     val trackingContactUid: StateFlow<String?> = trackingManager.trackingContactUid
+    val trackingStates: StateFlow<Map<String, me.ikate.findmy.service.TrackingState>> = trackingManager.trackingStates
 
     // 响铃状态 - 跟踪正在请求响铃的联系人
     private val _ringingContactUid = MutableStateFlow<String?>(null)
@@ -202,12 +204,8 @@ class ContactViewModel(application: Application) : AndroidViewModel(application)
     // 设备监听
     // ====================================================================
 
-    @SuppressLint("HardwareIds")
     private fun observeMyDevice() {
-        val androidId = Settings.Secure.getString(
-            context.contentResolver,
-            Settings.Secure.ANDROID_ID
-        )
+        val androidId = DeviceIdProvider.getDeviceId(context)
 
         viewModelScope.launch {
             deviceRepository.observeDevices().collect { devices ->
@@ -222,12 +220,12 @@ class ContactViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    private fun fetchMyAddress(point: Point) {
+    private fun fetchMyAddress(latLng: LatLng) {
         viewModelScope.launch {
             ReverseGeocodeHelper.getAddressFromLocation(
                 context = context,
-                latitude = point.latitude(),
-                longitude = point.longitude()
+                latitude = latLng.latitude,
+                longitude = latLng.longitude
             ) { address ->
                 _myAddress.value = address
             }
@@ -240,7 +238,12 @@ class ContactViewModel(application: Application) : AndroidViewModel(application)
 
     private fun observeContacts() {
         viewModelScope.launch {
+            Log.i(TAG, "[联系人监听] 开始监听联系人列表变化...")
             contactRepository.observeMyContacts().collect { contactList ->
+                Log.i(TAG, "[联系人监听] 收到联系人列表更新，数量: ${contactList.size}")
+                contactList.forEach { contact ->
+                    Log.d(TAG, "[联系人监听] - ${contact.name}: 状态=${contact.shareStatus}, 位置=${contact.location != null}, 更新时间=${contact.lastUpdateTime}")
+                }
                 detectAndNotifyNewInvitations(contactList)
                 // 订阅已接受共享的联系人的位置主题（应用启动时恢复订阅）
                 subscribeToAcceptedContacts(contactList)
@@ -256,9 +259,10 @@ class ContactViewModel(application: Application) : AndroidViewModel(application)
     private fun subscribeToAcceptedContacts(contactList: List<Contact>) {
         viewModelScope.launch {
             contactList.forEach { contact ->
-                // 只订阅已接受共享且对方共享给我的联系人
+                // 只订阅已接受共享且对方共享给我的联系人（包括双向共享）
                 if (contact.shareStatus == ShareStatus.ACCEPTED &&
-                    contact.shareDirection == ShareDirection.THEY_SHARE_TO_ME &&
+                    (contact.shareDirection == ShareDirection.THEY_SHARE_TO_ME ||
+                     contact.shareDirection == ShareDirection.MUTUAL) &&
                     !contact.isPaused) {
                     contact.targetUserId?.let { targetUserId ->
                         mqttService.subscribeToUser(targetUserId)
@@ -371,25 +375,36 @@ class ContactViewModel(application: Application) : AndroidViewModel(application)
     }
 
     /**
-     * 监听 MQTT 共享暂停/恢复状态
+     * 监听 MQTT 共享暂停/恢复/过期状态
+     * 过期是一种特殊的暂停：isExpired=true
      */
     private fun observeSharePauseStatus() {
         viewModelScope.launch {
             mqttService.sharePauseUpdates.collect { pauseMessage ->
-                Log.d(TAG, "收到共享暂停状态: ${pauseMessage.senderName} -> isPaused=${pauseMessage.isPaused}")
+                Log.d(TAG, "收到共享暂停状态: ${pauseMessage.senderName} -> isPaused=${pauseMessage.isPaused}, isExpired=${pauseMessage.isExpired}")
 
-                if (pauseMessage.isPaused) {
-                    // 对方暂停了共享，显示通知
-                    NotificationHelper.showSharePausedNotification(
-                        context = context,
-                        contactName = pauseMessage.senderName
-                    )
-                } else {
-                    // 对方恢复了共享，显示通知
-                    NotificationHelper.showShareResumedNotification(
-                        context = context,
-                        contactName = pauseMessage.senderName
-                    )
+                when {
+                    pauseMessage.isExpired -> {
+                        // 共享已过期（特殊的暂停），显示过期通知
+                        NotificationHelper.showShareExpiredNotification(
+                            context = context,
+                            contactName = pauseMessage.senderName
+                        )
+                    }
+                    pauseMessage.isPaused -> {
+                        // 对方暂停了共享，显示通知
+                        NotificationHelper.showSharePausedNotification(
+                            context = context,
+                            contactName = pauseMessage.senderName
+                        )
+                    }
+                    else -> {
+                        // 对方恢复了共享，显示通知
+                        NotificationHelper.showShareResumedNotification(
+                            context = context,
+                            contactName = pauseMessage.senderName
+                        )
+                    }
                 }
             }
         }
@@ -645,6 +660,46 @@ class ContactViewModel(application: Application) : AndroidViewModel(application)
 
     fun stopContinuousTracking(targetUid: String) {
         trackingManager.stopContinuousTracking(_currentUser.value?.uid, targetUid)
+    }
+
+    /**
+     * 获取指定联系人的追踪状态
+     */
+    fun getTrackingState(targetUid: String): me.ikate.findmy.service.TrackingState {
+        return trackingManager.getTrackingState(targetUid)
+    }
+
+    /**
+     * 标记追踪成功（当收到位置更新时调用）
+     */
+    fun markTrackingSuccess(targetUid: String) {
+        trackingManager.markTrackingSuccess(targetUid)
+    }
+
+    /**
+     * 刷新并追踪（点击头像触发）
+     * 如果已在追踪则停止，否则刷新并开始追踪
+     *
+     * 注意：执行前会检查定位权限和电池优化权限
+     */
+    fun refreshAndTrack(targetUid: String) {
+        Log.i(TAG, "========================================")
+        Log.i(TAG, "[ContactViewModel] 刷新追踪被调用")
+        Log.i(TAG, "[ContactViewModel] targetUid: $targetUid")
+        Log.i(TAG, "[ContactViewModel] currentUser.uid: ${_currentUser.value?.uid}")
+        Log.i(TAG, "========================================")
+
+        val hasPermission = checkAndGuidePermissions {
+            Log.i(TAG, "[ContactViewModel] 权限检查通过（回调），执行 trackingManager.refreshAndTrack")
+            trackingManager.refreshAndTrack(_currentUser.value?.uid, targetUid)
+        }
+
+        if (hasPermission) {
+            Log.i(TAG, "[ContactViewModel] 权限检查通过（立即），执行 trackingManager.refreshAndTrack")
+            trackingManager.refreshAndTrack(_currentUser.value?.uid, targetUid)
+        } else {
+            Log.w(TAG, "[ContactViewModel] 权限检查未通过，等待用户授权")
+        }
     }
 
     // ====================================================================

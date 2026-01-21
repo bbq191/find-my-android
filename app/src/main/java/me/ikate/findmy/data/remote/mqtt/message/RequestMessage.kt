@@ -37,6 +37,8 @@ data class RequestMessage(
         // 请求类型常量
         const val TYPE_SINGLE = "single"           // 单次位置请求
         const val TYPE_CONTINUOUS = "continuous"   // 持续追踪
+        const val TYPE_STOP_TRACKING = "stop_tracking"  // 停止追踪
+        const val TYPE_HEARTBEAT = "heartbeat"     // 心跳消息（保持追踪会话）
         const val TYPE_PLAY_SOUND = "play_sound"   // 播放声音
         const val TYPE_STOP_SOUND = "stop_sound"   // 停止声音
         const val TYPE_LOST_MODE = "lost_mode"     // 丢失模式

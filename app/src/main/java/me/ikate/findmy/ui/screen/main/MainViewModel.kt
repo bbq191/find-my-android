@@ -1,6 +1,5 @@
 package me.ikate.findmy.ui.screen.main
 
-import android.annotation.SuppressLint
 import android.app.Application
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
@@ -11,13 +10,14 @@ import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.workDataOf
-import com.mapbox.maps.MapboxMap
+import com.tencent.tencentmap.mapsdk.maps.TencentMap
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import me.ikate.findmy.data.model.Device
-import me.ikate.findmy.data.model.pointOf
+import me.ikate.findmy.data.model.latLngOf
 import me.ikate.findmy.data.remote.mqtt.LocationMqttService
 import me.ikate.findmy.data.remote.mqtt.MqttConfig
 import me.ikate.findmy.data.remote.mqtt.MqttConnectionManager
@@ -25,12 +25,12 @@ import me.ikate.findmy.data.remote.mqtt.message.RequestMessage
 import me.ikate.findmy.data.repository.AuthRepository
 import me.ikate.findmy.data.repository.ContactRepository
 import me.ikate.findmy.data.repository.DeviceRepository
-import me.ikate.findmy.push.GeTuiMessageHandler
+import me.ikate.findmy.push.FCMMessageHandler
 import me.ikate.findmy.service.ActivityRecognitionManager
 import me.ikate.findmy.service.LocationReportService
 import me.ikate.findmy.service.SmartLocationConfig
 import me.ikate.findmy.ui.screen.main.components.SheetValue
-import me.ikate.findmy.util.MapCameraHelper
+import me.ikate.findmy.util.TencentMapCameraHelper
 import me.ikate.findmy.worker.LocationReportWorker
 import me.ikate.findmy.worker.SmartLocationWorker
 import java.util.concurrent.TimeUnit
@@ -39,23 +39,19 @@ import java.util.concurrent.TimeUnit
  * MainViewModel - 主屏幕状态管理
  * 负责管理地图状态、定位状态、设备选中状态等
  */
-class MainViewModel(application: Application) : AndroidViewModel(application) {
+class MainViewModel(
+    application: Application,
+    private val authRepository: AuthRepository,
+    private val deviceRepository: DeviceRepository,
+    private val contactRepository: ContactRepository
+) : AndroidViewModel(application) {
 
-    // 地图实例 (Mapbox)
-    private val _mapboxMap = MutableStateFlow<MapboxMap?>(null)
-    val mapboxMap: StateFlow<MapboxMap?> = _mapboxMap.asStateFlow()
+    // 地图实例 (腾讯地图)
+    private val _tencentMap = MutableStateFlow<TencentMap?>(null)
+    val tencentMap: StateFlow<TencentMap?> = _tencentMap.asStateFlow()
 
-    // 高德定位服务
-    private val amapLocationService = me.ikate.findmy.service.AmapLocationService(application)
-
-    // 认证仓库
-    private val authRepository = AuthRepository(application.applicationContext)
-
-    // 设备数据仓库
-    private val deviceRepository = DeviceRepository(application.applicationContext)
-
-    // 联系人仓库（用于检查共享状态）
-    private val contactRepository = ContactRepository(application.applicationContext)
+    // 腾讯定位服务
+    private val tencentLocationService = me.ikate.findmy.service.TencentLocationService(application)
 
     // 位置上报服务
     private val locationReportService = LocationReportService(application)
@@ -68,6 +64,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // 智能位置上报是否已启动
     private var isSmartLocationStarted = false
+
+    // 实时位置监听 Job（用于追踪自己时的连续定位）
+    private var realtimeLocationJob: Job? = null
+
+    // 当前设备的实时位置（用于地图显示，比数据库更新更快）
+    private val _currentDeviceRealtimeLocation = MutableStateFlow<com.tencent.tencentmap.mapsdk.maps.model.LatLng?>(null)
+    val currentDeviceRealtimeLocation: StateFlow<com.tencent.tencentmap.mapsdk.maps.model.LatLng?> = _currentDeviceRealtimeLocation.asStateFlow()
+
+    // 当前设备实时朝向
+    private val _currentDeviceBearing = MutableStateFlow(0f)
+    val currentDeviceBearing: StateFlow<Float> = _currentDeviceBearing.asStateFlow()
 
     // 定位按钮状态：true = 地图中心在用户位置（实心箭头）, false = 不在（空心箭头）
     private val _isLocationCentered = MutableStateFlow(false)
@@ -86,6 +93,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // 是否已完成首次自动定位
     private var hasInitialCentered = false
+
+    // 正在追踪的目标 ID（设备 ID 或联系人 ID，null 表示不追踪）
+    private val _trackingTargetId = MutableStateFlow<String?>(null)
+    val trackingTargetId: StateFlow<String?> = _trackingTargetId.asStateFlow()
+
+    // 是否正在实时追踪当前设备（用于平滑移动地图）- 保留兼容
+    private val _isTrackingCurrentDevice = MutableStateFlow(false)
+    val isTrackingCurrentDevice: StateFlow<Boolean> = _isTrackingCurrentDevice.asStateFlow()
 
     // MQTT 连接状态
     private val _mqttConnectionState = MutableStateFlow<MqttConnectionManager.ConnectionState>(
@@ -126,12 +141,189 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /**
      * 尝试首次自动定位
      * 需在获取权限且地图加载完成后调用
+     *
+     * 像 iOS Find My 一样：
+     * - 有联系人时：用合适的比例显示所有点位（当前设备 + 联系人）
+     * - 没有联系人时：用合适的比例显示自己的设备
+     *
+     * @param hasContacts 是否有联系人好友
+     * @param contacts 联系人列表（用于计算边界）
+     * @param screenWidthPx 屏幕宽度（像素）
+     * @param screenHeightPx 屏幕高度（像素）
+     * @param bottomSheetHeightPx 底部面板高度（像素）
      */
-    fun attemptInitialLocationCenter() {
-        if (!hasInitialCentered && _mapboxMap.value != null) {
-            onLocationButtonClick()
+    fun attemptInitialLocationCenter(
+        hasContacts: Boolean = false,
+        contacts: List<me.ikate.findmy.data.model.Contact> = emptyList(),
+        screenWidthPx: Int = 0,
+        screenHeightPx: Int = 0,
+        bottomSheetHeightPx: Int = 0
+    ) {
+        if (!hasInitialCentered && _tencentMap.value != null) {
+            if (hasContacts && contacts.isNotEmpty()) {
+                // 有联系人时，缩放显示所有标签（当前设备 + 联系人）
+                zoomToShowAllMarkers(contacts, screenWidthPx, screenHeightPx, bottomSheetHeightPx)
+            } else {
+                // 没有联系人时，用合适的比例显示自己的设备
+                zoomToCurrentLocation()
+                startTrackingCurrentDevice()
+            }
             hasInitialCentered = true
         }
+    }
+
+    /**
+     * 重置初始化状态
+     * 用于在联系人数据加载完成后重新触发缩放
+     */
+    fun resetInitialCentered() {
+        hasInitialCentered = false
+    }
+
+    /**
+     * 缩放地图以显示所有标签（当前设备 + 联系人）
+     * 使用智能缩放，确保点位不贴边，美观显示
+     */
+    private fun zoomToShowAllMarkers(
+        contacts: List<me.ikate.findmy.data.model.Contact>,
+        screenWidthPx: Int,
+        screenHeightPx: Int,
+        bottomSheetHeightPx: Int
+    ) {
+        val map = _tencentMap.value ?: return
+
+        // 如果有屏幕尺寸信息，使用智能缩放
+        if (screenWidthPx > 0 && screenHeightPx > 0) {
+            TencentMapCameraHelper.zoomToShowAllSmartly(
+                map = map,
+                devices = _devices.value,
+                contacts = contacts,
+                screenWidthPx = screenWidthPx,
+                screenHeightPx = screenHeightPx,
+                bottomSheetHeightPx = bottomSheetHeightPx,
+                isInitial = true
+            )
+        } else {
+            // 降级使用旧方法
+            TencentMapCameraHelper.zoomToShowAll(map, _devices.value, contacts)
+        }
+    }
+
+    /**
+     * 缩放地图到当前位置
+     * 使用腾讯定位获取当前位置，并以合适的缩放级别显示
+     */
+    private fun zoomToCurrentLocation() {
+        val map = _tencentMap.value ?: return
+
+        viewModelScope.launch {
+            val result = tencentLocationService.getLocation(timeout = 10000L)
+            if (result.isSuccess) {
+                // 立即跳转到当前位置
+                TencentMapCameraHelper.jumpToLocation(map, result.latLng, zoom = DEFAULT_SINGLE_DEVICE_ZOOM)
+                updateLocationCenteredState(true)
+            } else {
+                Log.e(TAG, "初始定位失败: ${result.errorInfo}")
+            }
+        }
+    }
+
+    /**
+     * 开始追踪指定目标（设备或联系人）
+     * 地图会跟随目标位置平滑移动
+     *
+     * 像 iOS Find My 一样：
+     * - 追踪自己时启动实时定位，地图点位实时跟随移动
+     * - 追踪他人时依赖 MQTT 位置更新
+     *
+     * @param targetId 目标 ID（设备 ID 或联系人 ID）
+     */
+    fun startTracking(targetId: String) {
+        _trackingTargetId.value = targetId
+        Log.d(TAG, "开始追踪目标: $targetId")
+
+        // 如果追踪的是自己的设备，启动实时定位
+        val currentDeviceId = me.ikate.findmy.util.DeviceIdProvider.getDeviceId(getApplication())
+        if (targetId == currentDeviceId) {
+            startRealtimeLocationUpdates()
+        }
+    }
+
+    /**
+     * 停止追踪
+     */
+    fun stopTracking() {
+        val wasTrackingCurrentDevice = _trackingTargetId.value ==
+            me.ikate.findmy.util.DeviceIdProvider.getDeviceId(getApplication())
+
+        _trackingTargetId.value = null
+        Log.d(TAG, "停止追踪")
+
+        // 如果之前在追踪自己，停止实时定位以节省电量
+        if (wasTrackingCurrentDevice) {
+            stopRealtimeLocationUpdates()
+        }
+    }
+
+    /**
+     * 启动实时位置更新
+     * 像 iOS Find My 一样，查看自己位置时地图点位实时跟随移动
+     */
+    private fun startRealtimeLocationUpdates() {
+        if (realtimeLocationJob?.isActive == true) {
+            Log.d(TAG, "实时定位已在运行中")
+            return
+        }
+
+        Log.d(TAG, "启动实时位置更新（像 iOS Find My 一样）")
+        realtimeLocationJob = viewModelScope.launch {
+            tencentLocationService.getLocationUpdates(
+                interval = 2000L // 每2秒更新一次，平衡精度和电量
+            ).collect { locationResult ->
+                if (locationResult.isSuccess) {
+                    val latLng = locationResult.latLng
+                    if (!latLng.latitude.isNaN() && !latLng.longitude.isNaN()) {
+                        // 更新实时位置（用于地图显示）
+                        _currentDeviceRealtimeLocation.value = latLng
+                        _currentDeviceBearing.value = locationResult.bearing
+
+                        Log.d(TAG, "实时位置更新: (${latLng.latitude}, ${latLng.longitude}), 朝向: ${locationResult.bearing}")
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * 停止实时位置更新
+     */
+    private fun stopRealtimeLocationUpdates() {
+        realtimeLocationJob?.cancel()
+        realtimeLocationJob = null
+        _currentDeviceRealtimeLocation.value = null
+        Log.d(TAG, "停止实时位置更新")
+    }
+
+    /**
+     * 开始实时追踪当前设备
+     * 地图会跟随设备位置平滑移动
+     * 像 iOS Find My 一样，启动实时定位让点位跟随移动
+     */
+    fun startTrackingCurrentDevice() {
+        _isTrackingCurrentDevice.value = true
+        val currentDeviceId = me.ikate.findmy.util.DeviceIdProvider.getDeviceId(getApplication())
+        _trackingTargetId.value = currentDeviceId
+        startRealtimeLocationUpdates()
+        Log.d(TAG, "开始实时追踪当前设备")
+    }
+
+    /**
+     * 停止实时追踪当前设备
+     */
+    fun stopTrackingCurrentDevice() {
+        _isTrackingCurrentDevice.value = false
+        stopRealtimeLocationUpdates()
+        Log.d(TAG, "停止实时追踪当前设备")
     }
 
     /**
@@ -188,6 +380,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             } else {
                                 Log.e(TAG, "订阅暂停状态主题失败")
                             }
+                            // 订阅围栏主题（事件 + 同步）
+                            val geofenceResult = mqttService.subscribeToGeofenceTopics(userId)
+                            if (geofenceResult.isSuccess) {
+                                Log.d(TAG, "已订阅围栏主题")
+                            } else {
+                                Log.e(TAG, "订阅围栏主题失败")
+                            }
                             // 刷新离线消息队列
                             val sentCount = mqttService.flushPendingMessages()
                             if (sentCount > 0) {
@@ -233,8 +432,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      */
     private fun observeRequests(mqttService: LocationMqttService) {
         viewModelScope.launch {
+            Log.i(TAG, "[请求监听] 开始监听 MQTT 请求消息...")
             mqttService.requestUpdates.collect { request ->
-                Log.d(TAG, "收到请求: type=${request.type}, from=${request.requesterUid}")
+                Log.i(TAG, "========== [请求监听] 收到请求 ==========")
+                Log.i(TAG, "[请求监听] 类型: ${request.type}")
+                Log.i(TAG, "[请求监听] 来自: ${request.requesterUid}")
+                Log.i(TAG, "[请求监听] 目标: ${request.targetUid}")
                 handleRequest(request)
             }
         }
@@ -249,27 +452,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      */
     private fun handleRequest(request: RequestMessage) {
         viewModelScope.launch {
+            Log.i(TAG, "[处理请求] 开始处理请求: type=${request.type}")
+
             // 检查是否应该响应该请求
+            Log.d(TAG, "[处理请求] 步骤1: 检查共享状态...")
             val shouldRespond = contactRepository.shouldRespondToRequest(request.requesterUid)
             if (!shouldRespond) {
-                Log.d(TAG, "忽略来自 ${request.requesterUid} 的请求: 共享已暂停或无效")
+                Log.w(TAG, "[处理请求] ✗ 忽略请求: 共享已暂停或无效 (from=${request.requesterUid})")
                 return@launch
             }
+            Log.i(TAG, "[处理请求] ✓ 共享状态有效，将响应请求")
 
             when (request.type) {
                 RequestMessage.TYPE_SINGLE -> {
                     // 单次位置请求 - 立即上报位置
-                    Log.d(TAG, "收到位置请求，正在上报位置...")
+                    Log.i(TAG, "[处理请求] → 单次位置请求，正在上报位置...")
                     reportLocationNow()
+                    Log.i(TAG, "[处理请求] ✓ 位置上报完成")
                 }
                 RequestMessage.TYPE_CONTINUOUS -> {
                     // 持续追踪请求 - 触发连续上报
-                    Log.d(TAG, "收到持续追踪请求，开始连续上报...")
+                    Log.i(TAG, "[处理请求] → 持续追踪请求，开始上报位置...")
                     reportLocationNow()
+                    Log.i(TAG, "[处理请求] ✓ 位置上报完成")
                 }
                 RequestMessage.TYPE_PLAY_SOUND -> {
                     // 播放声音请求 - 直接调用 SoundPlaybackService
-                    Log.d(TAG, "收到播放声音请求，来自: ${request.requesterUid}")
+                    Log.i(TAG, "[处理请求] → 播放声音请求，来自: ${request.requesterUid}")
                     me.ikate.findmy.service.SoundPlaybackService.startPlaying(
                         context = getApplication(),
                         requesterUid = request.requesterUid
@@ -277,12 +486,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 RequestMessage.TYPE_STOP_SOUND -> {
                     // 停止声音 - 直接调用 SoundPlaybackService
-                    Log.d(TAG, "收到停止声音请求")
+                    Log.i(TAG, "[处理请求] → 停止声音请求")
                     me.ikate.findmy.service.SoundPlaybackService.stopPlaying(getApplication())
                 }
                 RequestMessage.TYPE_LOST_MODE -> {
                     // 丢失模式 - 直接调用 LostModeService
-                    Log.d(TAG, "收到丢失模式请求: message=${request.message}, phone=${request.phoneNumber}, playSound=${request.playSound}")
+                    Log.i(TAG, "[处理请求] → 丢失模式请求: message=${request.message}, phone=${request.phoneNumber}, playSound=${request.playSound}")
                     me.ikate.findmy.service.LostModeService.enable(
                         context = getApplication(),
                         message = request.message ?: "此设备已丢失",
@@ -293,21 +502,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 RequestMessage.TYPE_DISABLE_LOST_MODE -> {
                     // 关闭丢失模式
-                    Log.d(TAG, "收到关闭丢失模式请求")
+                    Log.i(TAG, "[处理请求] → 关闭丢失模式请求")
                     me.ikate.findmy.service.LostModeService.disable(getApplication())
                 }
                 else -> {
-                    Log.w(TAG, "未知请求类型: ${request.type}")
+                    Log.w(TAG, "[处理请求] ✗ 未知请求类型: ${request.type}")
                 }
             }
         }
     }
 
     /**
-     * 设置地图实例 (Mapbox)
+     * 设置地图实例 (腾讯地图)
      */
-    fun setMapboxMap(map: MapboxMap) {
-        _mapboxMap.value = map
+    fun setTencentMap(map: TencentMap) {
+        _tencentMap.value = map
     }
 
     /**
@@ -319,17 +528,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * 点击定位按钮 - 移动地图到用户当前位置
-     * 使用高德定位获取位置，内部已转换为 WGS-84
+     * 使用腾讯定位获取位置（GCJ-02 坐标，与腾讯地图一致）
      * 注册用户会自动上报位置，匿名用户不上报
      */
     fun onLocationButtonClick() {
-        val map = mapboxMap.value ?: return
+        val map = tencentMap.value ?: return
 
-        // 使用高德定位获取位置（内部已转换为 WGS-84）
+        // 使用腾讯定位获取位置（GCJ-02 坐标）
         viewModelScope.launch {
-            val result = amapLocationService.getLocation(timeout = 10000L)
+            val result = tencentLocationService.getLocation(timeout = 10000L)
             if (result.isSuccess) {
-                MapCameraHelper.animateToLocation(map, result.point, zoom = 15.0)
+                // 立即跳转到当前位置（不使用动画，避免与其他动画冲突）
+                TencentMapCameraHelper.jumpToLocation(map, result.latLng, zoom = DEFAULT_SINGLE_DEVICE_ZOOM)
                 updateLocationCenteredState(true)
 
                 // 只有注册用户点击重定位时才上报位置，匿名用户不上报
@@ -371,13 +581,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun reportLocationNow() {
         viewModelScope.launch {
+            Log.i(TAG, "[位置上报] 开始上报当前位置...")
             val result = locationReportService.reportCurrentLocation()
             result.fold(
                 onSuccess = {
-                    Log.d(TAG, "位置上报成功")
+                    Log.i(TAG, "[位置上报] ✓ 位置上报成功")
                 },
                 onFailure = { error ->
-                    Log.e(TAG, "位置上报失败", error)
+                    Log.e(TAG, "[位置上报] ✗ 位置上报失败: ${error.message}", error)
                 }
             )
         }
@@ -440,41 +651,80 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * 启动活动识别监听
-     * 基于传感器的活动识别，不依赖 Google Play Services
+     *
+     * 混合策略：
+     * 1. 优先使用 Google Activity Recognition API（更准确）
+     * 2. 降级方案：基于加速度传感器实现（不依赖 GMS）
+     *
+     * Google API 需要 ACTIVITY_RECOGNITION 权限（Android 10+）
      */
     fun startActivityRecognition() {
         if (isSmartLocationStarted) return
 
-        // 检查传感器是否可用
-        if (!activityRecognitionManager.isSensorAvailable()) {
-            Log.w(TAG, "加速度传感器不可用，使用 GPS 速度推断活动类型")
-            isSmartLocationStarted = true
-            return
-        }
-
         // 设置活动变化回调
         activityRecognitionManager.setActivityChangeCallback { newActivity ->
-            Log.d(TAG, "活动识别: ${newActivity.displayName}")
+            Log.d(TAG, "活动识别: ${newActivity.displayName} (${activityRecognitionManager.getStatusDescription()})")
 
-            // 发送活动转换广播
+            // 发送活动转换广播（会自动包含来源：google_api 或 sensor）
             me.ikate.findmy.service.ActivityTransitionReceiver.sendActivityTransition(
                 context = getApplication(),
                 activityType = newActivity,
                 transitionType = me.ikate.findmy.service.ActivityTransitionReceiver.ACTIVITY_TRANSITION_ENTER,
-                source = me.ikate.findmy.service.ActivityTransitionReceiver.SOURCE_SENSOR
+                source = when (activityRecognitionManager.getCurrentMode()) {
+                    me.ikate.findmy.service.ActivityRecognitionManager.RecognitionMode.GOOGLE_API -> "google_api"
+                    me.ikate.findmy.service.ActivityRecognitionManager.RecognitionMode.SENSOR -> "sensor"
+                    else -> "unknown"
+                }
             )
         }
 
         activityRecognitionManager.startActivityTransitionUpdates(
             onSuccess = {
                 isSmartLocationStarted = true
-                Log.d(TAG, "智能位置上报已启动 - 传感器活动识别监听中")
+                val mode = activityRecognitionManager.getCurrentMode()
+                val modeDesc = when (mode) {
+                    me.ikate.findmy.service.ActivityRecognitionManager.RecognitionMode.GOOGLE_API ->
+                        "Google API（更准确）"
+                    me.ikate.findmy.service.ActivityRecognitionManager.RecognitionMode.SENSOR ->
+                        "传感器模式"
+                    else -> "未知模式"
+                }
+                Log.i(TAG, "智能位置上报已启动 - 活动识别模式: $modeDesc")
             },
             onFailure = { e ->
-                Log.w(TAG, "启动传感器活动识别失败: ${e.message}，使用 GPS 速度推断")
+                Log.w(TAG, "启动活动识别失败: ${e.message}，使用 GPS 速度推断")
                 isSmartLocationStarted = true
             }
         )
+    }
+
+    /**
+     * 重启活动识别
+     * 用于权限授予后切换到 Google API 模式
+     */
+    fun restartActivityRecognition() {
+        // 如果已经在使用 Google API，无需重启
+        if (activityRecognitionManager.getCurrentMode() ==
+            me.ikate.findmy.service.ActivityRecognitionManager.RecognitionMode.GOOGLE_API
+        ) {
+            Log.d(TAG, "活动识别已在使用 Google API，无需重启")
+            return
+        }
+
+        // 检查是否有 ACTIVITY_RECOGNITION 权限
+        if (!activityRecognitionManager.hasActivityRecognitionPermission()) {
+            Log.d(TAG, "未授予 ACTIVITY_RECOGNITION 权限，保持当前模式")
+            return
+        }
+
+        Log.i(TAG, "ACTIVITY_RECOGNITION 权限已授予，重启活动识别以使用 Google API")
+
+        // 停止当前的活动识别
+        activityRecognitionManager.stopActivityTransitionUpdates()
+        isSmartLocationStarted = false
+
+        // 重新启动（会自动选择 Google API）
+        startActivityRecognition()
     }
 
     /**
@@ -545,8 +795,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         super.onCleared()
-        // 释放高德定位资源
-        amapLocationService.destroy()
+        // 停止实时位置更新
+        stopRealtimeLocationUpdates()
+        // 释放腾讯定位资源
+        tencentLocationService.destroy()
         locationReportService.destroy()
         // 注意：不断开 MQTT 连接，由 MqttForegroundService 管理
         // 这样 APP 退出后仍能保持连接，支持后台功能（刷新、追踪、响铃、丢失模式）
@@ -556,5 +808,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         private const val TAG = "MainViewModel"
         private const val SMART_LOCATION_WORK_NAME = "smart_location_periodic"
         private const val LEGACY_LOCATION_WORK_NAME = "location_report"
+
+        /** 单个设备时的默认缩放级别 (18级，街道级别，既精细又能看到周围环境) */
+        private const val DEFAULT_SINGLE_DEVICE_ZOOM = 18f
     }
 }

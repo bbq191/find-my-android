@@ -1,8 +1,6 @@
 package me.ikate.findmy.util
 
-import com.mapbox.geojson.Point
-import me.ikate.findmy.data.model.latitude
-import me.ikate.findmy.data.model.longitude
+import com.tencent.tencentmap.mapsdk.maps.model.LatLng
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
@@ -22,7 +20,7 @@ object DistanceCalculator {
      * @param to 终点坐标
      * @return 距离（米）
      */
-    fun calculateDistance(from: Point, to: Point): Double {
+    fun calculateDistance(from: LatLng, to: LatLng): Double {
         val lat1 = Math.toRadians(from.latitude)
         val lon1 = Math.toRadians(from.longitude)
         val lat2 = Math.toRadians(to.latitude)
@@ -68,7 +66,7 @@ object DistanceCalculator {
      * @param to 终点坐标
      * @return 格式化的距离文本
      */
-    fun calculateAndFormatDistance(from: Point?, to: Point?): String? {
+    fun calculateAndFormatDistance(from: LatLng?, to: LatLng?): String? {
         if (from == null || to == null) return null
         val distance = calculateDistance(from, to)
         return formatDistance(distance)

@@ -2,11 +2,12 @@ package me.ikate.findmy.util
 
 import android.content.Context
 import android.content.SharedPreferences
-import me.ikate.findmy.service.AmapLocationService
+import com.tencent.tencentmap.mapsdk.maps.TencentMapInitializer
+import me.ikate.findmy.service.TencentLocationService
 
 /**
  * 隐私合规管理器
- * 管理用户隐私授权状态，用于满足高德等 SDK 的合规要求
+ * 管理用户隐私授权状态，用于满足腾讯等 SDK 的合规要求
  */
 object PrivacyManager {
 
@@ -27,7 +28,7 @@ object PrivacyManager {
 
     /**
      * 记录用户同意隐私政策
-     * 同时初始化高德等 SDK 的隐私接口
+     * 同时初始化腾讯等 SDK 的隐私接口
      */
     fun setPrivacyAgreed(context: Context, agreed: Boolean) {
         getPrefs(context).edit()
@@ -35,8 +36,8 @@ object PrivacyManager {
             .putLong(KEY_PRIVACY_SHOW_TIME, System.currentTimeMillis())
             .apply()
 
-        // 更新高德 SDK 隐私状态
-        updateAmapPrivacy(context, agreed)
+        // 更新腾讯 SDK 隐私状态
+        updateTencentPrivacy(context, agreed)
     }
 
     /**
@@ -50,21 +51,26 @@ object PrivacyManager {
     fun initPrivacy(context: Context): Boolean {
         val agreed = isPrivacyAgreed(context)
 
-        // 无论是否同意，都需要调用这两个方法
-        // isContains: 隐私政策是否包含高德说明
-        // isShow: 是否弹窗展示给用户
-        AmapLocationService.updatePrivacyShow(context, true, true)
-        AmapLocationService.updatePrivacyAgree(context, agreed)
+        // 定位 SDK 隐私合规
+        TencentLocationService.updatePrivacyShow(context, true, true)
+        TencentLocationService.updatePrivacyAgree(context, agreed)
+
+        // 地图 SDK 隐私合规（必须在使用地图 API 之前设置）
+        TencentMapInitializer.setAgreePrivacy(agreed)
 
         return !agreed
     }
 
     /**
-     * 更新高德 SDK 隐私状态
+     * 更新腾讯 SDK 隐私状态
      */
-    private fun updateAmapPrivacy(context: Context, agreed: Boolean) {
-        AmapLocationService.updatePrivacyShow(context, true, true)
-        AmapLocationService.updatePrivacyAgree(context, agreed)
+    private fun updateTencentPrivacy(context: Context, agreed: Boolean) {
+        // 定位 SDK
+        TencentLocationService.updatePrivacyShow(context, true, true)
+        TencentLocationService.updatePrivacyAgree(context, agreed)
+
+        // 地图 SDK
+        TencentMapInitializer.setAgreePrivacy(agreed)
     }
 
     /**

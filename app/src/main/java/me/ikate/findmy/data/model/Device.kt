@@ -1,12 +1,12 @@
 package me.ikate.findmy.data.model
 
-import com.mapbox.geojson.Point
+import com.tencent.tencentmap.mapsdk.maps.model.LatLng
 
 data class Device(
     val id: String,
     val name: String, // 设备名称（型号，如 "Xiaomi Mi 11"）
     val ownerId: String, // 设备所有者 UID
-    val location: Point,
+    val location: LatLng,
     val battery: Int = 100,
     val lastUpdateTime: Long = System.currentTimeMillis(),
     val isOnline: Boolean = true,

@@ -134,7 +134,7 @@ object SmartLocationConfig {
 
     /**
      * 将活动识别类型转换为内部枚举
-     * 注意：当前不使用 Google Activity Recognition，此方法保留供未来接入高德等SDK使用
+     * 注意：当前使用内置传感器活动识别，此方法保留供未来扩展使用
      */
     fun fromDetectedActivity(activityType: Int): ActivityType {
         return when (activityType) {

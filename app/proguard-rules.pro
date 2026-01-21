@@ -20,13 +20,15 @@
 # hide the original source file name.
 #-renamesourcefileattribute SourceFile
 
-# ==================== Mapbox ====================
--keep class com.mapbox.** { *; }
-
-# ==================== 高德定位 ====================
--keep class com.amap.api.** { *; }
--keep class com.loc.** { *; }
--keep class com.autonavi.** { *; }
+# ==================== 腾讯地图/定位 ====================
+-keep public class com.tencent.lbssearch.** {*;}
+-keep public class com.tencent.map.** {*;}
+-keep public class com.tencent.mapsdk.** {*;}
+-keep public class com.tencent.tencentmap.**{*;}
+-keep public class com.tencent.tmsbeacon.**{*;}
+-keep public class com.tencent.tmsbeacon.**{*;}
+-dontwarn com.qq.**
+-dontwarn com.tencent.**
 
 # ==================== Eclipse Paho MQTT ====================
 -keep class org.eclipse.paho.** { *; }
@@ -35,11 +37,6 @@
 -keep class com.google.gson.** { *; }
 -keepattributes Signature
 -keepattributes *Annotation*
-
-# ==================== 个推推送 ====================
--dontwarn com.getui.**
--keep class com.getui.** { *; }
--keep class * extends com.getui.gtc.GeTuiIntentService { *; }
 
 # ==================== Room ====================
 -keep class * extends androidx.room.RoomDatabase { *; }

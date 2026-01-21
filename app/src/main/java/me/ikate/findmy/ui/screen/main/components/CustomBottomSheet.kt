@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -191,17 +192,17 @@ fun CustomBottomSheet(
                     .fillMaxWidth()
                     .padding(top = 12.dp)
             ) {
-                // 拖拽手柄 - 优化样式
+                // 拖拽手柄 - Material 3 风格
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.Center
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(width = 36.dp, height = 5.dp)
-                            .clip(RoundedCornerShape(2.5.dp))
+                            .size(width = 40.dp, height = 4.dp)
+                            .clip(CircleShape)
                             .background(
-                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
+                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
                             )
                     )
                 }

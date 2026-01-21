@@ -2,9 +2,12 @@ package me.ikate.findmy.data.repository
 
 import android.content.Context
 import android.util.Log
-import com.mapbox.geojson.Point
+import com.tencent.tencentmap.mapsdk.maps.model.LatLng
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 import me.ikate.findmy.data.local.FindMyDatabase
 import me.ikate.findmy.data.local.entity.ContactEntity
 import me.ikate.findmy.data.model.Contact
@@ -13,6 +16,7 @@ import me.ikate.findmy.data.model.ShareDuration
 import me.ikate.findmy.data.model.ShareStatus
 import me.ikate.findmy.data.model.User
 import me.ikate.findmy.data.remote.mqtt.LocationMqttService
+import me.ikate.findmy.push.PushWebhookService
 
 /**
  * 联系人和位置共享数据仓库
@@ -24,6 +28,8 @@ class ContactRepository(private val context: Context) {
     private val mqttService: LocationMqttService by lazy {
         DeviceRepository.getMqttService(context)
     }
+    // 用于异步 FCM 推送的协程作用域
+    private val fcmScope = CoroutineScope(Dispatchers.IO)
 
     // 获取当前用户 ID
     private fun getCurrentUid(): String = AuthRepository.getUserId(context)
@@ -87,20 +93,34 @@ class ContactRepository(private val context: Context) {
             // 检查是否已存在该联系人（根据 targetUserId）
             val existingContact = contactDao.getByTargetUserId(targetInput)
             if (existingContact != null) {
-                // 如果是被对方移除的状态，允许重新发起共享（先删除旧记录）
-                if (existingContact.shareStatus == ShareStatus.REMOVED.name) {
-                    contactDao.deleteById(existingContact.id)
-                    Log.d(TAG, "已删除被移除的旧联系人记录，准备重新发起共享")
-                } else {
-                    // 其他状态返回相应的错误信息
-                    val errorMsg = when (existingContact.shareStatus) {
-                        ShareStatus.PENDING.name -> "该联系人的共享请求正在等待处理"
-                        ShareStatus.ACCEPTED.name -> "该联系人已在列表中"
-                        ShareStatus.REJECTED.name -> "该联系人已拒绝共享，请稍后再试"
-                        ShareStatus.EXPIRED.name -> "该联系人的共享已过期，请删除后重新添加"
-                        else -> "该联系人已存在"
+                when (existingContact.shareStatus) {
+                    // 允许重新发起共享的状态：删除旧记录后重新创建
+                    ShareStatus.REMOVED.name -> {
+                        contactDao.deleteById(existingContact.id)
+                        Log.d(TAG, "已删除被移除的旧联系人记录，准备重新发起共享")
                     }
-                    return Result.failure(Exception(errorMsg))
+                    ShareStatus.REJECTED.name -> {
+                        contactDao.deleteById(existingContact.id)
+                        Log.d(TAG, "已删除被拒绝的旧联系人记录，准备重新发起共享")
+                    }
+                    // 过期状态：提示用户恢复共享（不需要重新邀请）
+                    ShareStatus.EXPIRED.name -> {
+                        return Result.failure(Exception("该联系人的共享已过期，请在联系人详情中恢复共享"))
+                    }
+                    // 暂停或其他状态
+                    else -> {
+                        // 检查是否是暂停状态
+                        if (existingContact.isPaused && existingContact.shareStatus == ShareStatus.ACCEPTED.name) {
+                            return Result.failure(Exception("该联系人的共享已暂停，请在联系人详情中恢复共享"))
+                        }
+                        // 其他状态返回相应的错误信息
+                        val errorMsg = when (existingContact.shareStatus) {
+                            ShareStatus.PENDING.name -> "该联系人的共享请求正在等待处理"
+                            ShareStatus.ACCEPTED.name -> "该联系人已在列表中"
+                            else -> "该联系人已存在"
+                        }
+                        return Result.failure(Exception(errorMsg))
+                    }
                 }
             }
 
@@ -150,6 +170,25 @@ class ContactRepository(private val context: Context) {
                 Log.w(TAG, "邀请请求发送失败（已加入离线队列）")
             }
 
+            // 异步触发 FCM 推送作为备用通道（不阻塞主流程）
+            fcmScope.launch {
+                try {
+                    val fcmResult = PushWebhookService.sendShareRequest(
+                        targetUid = targetInput,
+                        senderId = currentUid,
+                        senderName = getCurrentUserName(),
+                        shareId = shareId
+                    )
+                    if (fcmResult.isSuccess) {
+                        Log.d(TAG, "邀请请求已通过 FCM 发送")
+                    } else {
+                        Log.w(TAG, "FCM 推送失败: ${fcmResult.exceptionOrNull()?.message}")
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "FCM 推送失败，已通过 MQTT 发送", e)
+                }
+            }
+
             Result.success(shareId)
         } catch (e: Exception) {
             Log.e(TAG, "创建位置共享失败", e)
@@ -180,6 +219,25 @@ class ContactRepository(private val context: Context) {
                     Log.d(TAG, "接受响应已通过 MQTT 发送")
                 } else {
                     Log.w(TAG, "接受响应发送失败（已加入离线队列）")
+                }
+
+                // 异步触发 FCM 推送作为备用通道（不阻塞主流程）
+                fcmScope.launch {
+                    try {
+                        val fcmResult = PushWebhookService.sendShareAccepted(
+                            targetUid = targetUserId,
+                            accepterId = getCurrentUid(),
+                            accepterName = getCurrentUserName(),
+                            shareId = shareId
+                        )
+                        if (fcmResult.isSuccess) {
+                            Log.d(TAG, "接受响应已通过 FCM 发送")
+                        } else {
+                            Log.w(TAG, "FCM 推送失败: ${fcmResult.exceptionOrNull()?.message}")
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "FCM 推送失败，已通过 MQTT 发送", e)
+                    }
                 }
             }
 
@@ -287,6 +345,25 @@ class ContactRepository(private val context: Context) {
                 } else {
                     Log.w(TAG, "拒绝响应发送失败（已加入离线队列）")
                 }
+
+                // 异步触发 FCM 推送作为备用通道（不阻塞主流程）
+                fcmScope.launch {
+                    try {
+                        val fcmResult = PushWebhookService.sendShareRejected(
+                            targetUid = targetUserId,
+                            rejecterId = getCurrentUid(),
+                            rejecterName = getCurrentUserName(),
+                            shareId = shareId
+                        )
+                        if (fcmResult.isSuccess) {
+                            Log.d(TAG, "拒绝响应已通过 FCM 发送")
+                        } else {
+                            Log.w(TAG, "FCM 推送失败: ${fcmResult.exceptionOrNull()?.message}")
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "FCM 推送失败，已通过 MQTT 发送", e)
+                    }
+                }
             }
 
             Result.success(Unit)
@@ -299,6 +376,9 @@ class ContactRepository(private val context: Context) {
     /**
      * 停止共享（删除共享关系）
      * 会发送移除通知给对方，对方会显示"已被移出"状态
+     *
+     * 特殊情况：如果联系人状态已经是 REMOVED（说明对方已先删除了我），
+     * 则不发送通知，因为双方已无共享关系
      */
     suspend fun stopSharing(shareId: String): Result<Unit> {
         return try {
@@ -309,19 +389,46 @@ class ContactRepository(private val context: Context) {
             contactDao.deleteById(shareId)
             Log.d(TAG, "停止共享成功: $shareId")
 
-            // 通过 MQTT 通知对方已被移除
-            contact?.targetUserId?.let { targetUserId ->
-                val sendResult = mqttService.publishShareRemove(
-                    targetUserId = targetUserId,
-                    shareId = shareId,
-                    responderId = getCurrentUid(),
-                    responderName = getCurrentUserName()
-                )
-                if (sendResult.isSuccess) {
-                    Log.d(TAG, "移除通知已发送给: $targetUserId")
-                } else {
-                    Log.w(TAG, "移除通知发送失败（已加入离线队列）")
+            // 检查是否需要发送通知
+            // 如果状态已经是 REMOVED，说明对方已先删除了我，不需要再通知对方
+            val shouldNotify = contact?.shareStatus != ShareStatus.REMOVED.name
+
+            if (shouldNotify) {
+                // 通过 MQTT 通知对方已被移除
+                contact?.targetUserId?.let { targetUserId ->
+                    val sendResult = mqttService.publishShareRemove(
+                        targetUserId = targetUserId,
+                        shareId = shareId,
+                        responderId = getCurrentUid(),
+                        responderName = getCurrentUserName()
+                    )
+                    if (sendResult.isSuccess) {
+                        Log.d(TAG, "移除通知已发送给: $targetUserId")
+                    } else {
+                        Log.w(TAG, "移除通知发送失败（已加入离线队列）")
+                    }
+
+                    // 异步触发 FCM 推送作为备用通道（不阻塞主流程）
+                    fcmScope.launch {
+                        try {
+                            val fcmResult = PushWebhookService.sendShareRemoved(
+                                targetUid = targetUserId,
+                                removerId = getCurrentUid(),
+                                removerName = getCurrentUserName(),
+                                shareId = shareId
+                            )
+                            if (fcmResult.isSuccess) {
+                                Log.d(TAG, "移除通知已通过 FCM 发送")
+                            } else {
+                                Log.w(TAG, "FCM 推送失败: ${fcmResult.exceptionOrNull()?.message}")
+                            }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "FCM 推送失败，已通过 MQTT 发送", e)
+                        }
+                    }
                 }
+            } else {
+                Log.d(TAG, "联系人状态为 REMOVED，对方已先删除，无需发送通知")
             }
 
             Result.success(Unit)
@@ -354,6 +461,24 @@ class ContactRepository(private val context: Context) {
                     Log.d(TAG, "暂停共享通知已发送给: $targetUserId")
                 } else {
                     Log.w(TAG, "暂停共享通知发送失败（已加入离线队列）")
+                }
+
+                // 异步触发 FCM 推送作为备用通道（不阻塞主流程）
+                fcmScope.launch {
+                    try {
+                        val fcmResult = PushWebhookService.sendSharePaused(
+                            targetUid = targetUserId,
+                            senderId = getCurrentUid(),
+                            senderName = getCurrentUserName()
+                        )
+                        if (fcmResult.isSuccess) {
+                            Log.d(TAG, "暂停共享通知已通过 FCM 发送")
+                        } else {
+                            Log.w(TAG, "FCM 推送失败: ${fcmResult.exceptionOrNull()?.message}")
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "FCM 推送失败，已通过 MQTT 发送", e)
+                    }
                 }
             }
 
@@ -400,6 +525,24 @@ class ContactRepository(private val context: Context) {
                 } else {
                     Log.w(TAG, "恢复共享通知发送失败（已加入离线队列）")
                 }
+
+                // 异步触发 FCM 推送作为备用通道（不阻塞主流程）
+                fcmScope.launch {
+                    try {
+                        val fcmResult = PushWebhookService.sendShareResumed(
+                            targetUid = targetUserId,
+                            senderId = getCurrentUid(),
+                            senderName = getCurrentUserName()
+                        )
+                        if (fcmResult.isSuccess) {
+                            Log.d(TAG, "恢复共享通知已通过 FCM 发送")
+                        } else {
+                            Log.w(TAG, "FCM 推送失败: ${fcmResult.exceptionOrNull()?.message}")
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "FCM 推送失败，已通过 MQTT 发送", e)
+                    }
+                }
             }
 
             Result.success(Unit)
@@ -436,16 +579,71 @@ class ContactRepository(private val context: Context) {
 
     /**
      * 清理过期的位置共享
+     * 过期是一种特殊的暂停：
+     * 1. 找到即将过期的联系人
+     * 2. 通知对方共享已过期（MQTT + FCM）
+     * 3. 标记本地状态为 EXPIRED
+     * 4. 清除位置信息
+     *
+     * @return 过期的联系人数量
      */
     suspend fun cleanupExpiredShares(): Result<Int> {
         return try {
+            val currentUid = getCurrentUid()
+            val currentUserName = getCurrentUserName()
+
+            // 1. 获取即将过期但尚未标记的联系人
+            val expiringContacts = contactDao.getExpiringContacts()
+
+            if (expiringContacts.isNotEmpty()) {
+                Log.d(TAG, "发现 ${expiringContacts.size} 个过期的共享")
+
+                // 2. 通知每个对方共享已过期
+                for (contact in expiringContacts) {
+                    contact.targetUserId?.let { targetUserId ->
+                        // 通过 MQTT 通知对方共享已过期
+                        val sendResult = mqttService.publishShareExpired(
+                            targetUserId = targetUserId,
+                            senderId = currentUid,
+                            senderName = currentUserName
+                        )
+                        if (sendResult.isSuccess) {
+                            Log.d(TAG, "过期通知已发送给: $targetUserId")
+                        } else {
+                            Log.w(TAG, "过期通知发送失败（已加入离线队列）")
+                        }
+
+                        // 异步触发 FCM 推送作为备用通道
+                        fcmScope.launch {
+                            try {
+                                val fcmResult = PushWebhookService.sendShareExpired(
+                                    targetUid = targetUserId,
+                                    senderId = currentUid,
+                                    senderName = currentUserName
+                                )
+                                if (fcmResult.isSuccess) {
+                                    Log.d(TAG, "过期通知已通过 FCM 发送给: $targetUserId")
+                                } else {
+                                    Log.w(TAG, "FCM 推送失败: ${fcmResult.exceptionOrNull()?.message}")
+                                }
+                            } catch (e: Exception) {
+                                Log.w(TAG, "FCM 推送失败，已通过 MQTT 发送", e)
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 3. 标记本地状态为 EXPIRED（同时设置 isPaused = true）
             contactDao.markExpired()
-            // 清除所有过期联系人的位置信息
+
+            // 4. 清除所有过期联系人的位置信息
             contactDao.clearLocationByStatus(ShareStatus.EXPIRED.name)
             // 清除所有被拒绝联系人的位置信息
             contactDao.clearLocationByStatus(ShareStatus.REJECTED.name)
-            Log.d(TAG, "清理过期共享完成")
-            Result.success(0)
+
+            Log.d(TAG, "清理过期共享完成，共 ${expiringContacts.size} 个")
+            Result.success(expiringContacts.size)
         } catch (e: Exception) {
             Log.e(TAG, "清理过期共享失败", e)
             Result.failure(e)
@@ -473,7 +671,7 @@ class ContactRepository(private val context: Context) {
      */
     suspend fun updateContactLocation(
         targetUserId: String,
-        location: Point,
+        location: LatLng,
         lastUpdateTime: Long,
         deviceName: String? = null,
         battery: Int? = null
@@ -483,8 +681,8 @@ class ContactRepository(private val context: Context) {
             if (contact != null) {
                 contactDao.upsert(
                     contact.copy(
-                        latitude = location.latitude(),
-                        longitude = location.longitude(),
+                        latitude = location.latitude,
+                        longitude = location.longitude,
                         lastUpdateTime = lastUpdateTime,
                         isLocationAvailable = true,
                         deviceName = deviceName ?: contact.deviceName,
@@ -501,6 +699,12 @@ class ContactRepository(private val context: Context) {
 
     /**
      * 添加联系人（从 MQTT 接收共享请求时调用）
+     *
+     * 处理逻辑：
+     * 1. 如果不存在记录 → 创建新的 PENDING 记录
+     * 2. 如果存在 ACCEPTED 且未暂停 → 自动发送接受响应（支持对方数据清空后重新添加）
+     * 3. 如果存在 ACCEPTED 且已暂停 → 自动恢复共享
+     * 4. 其他状态（PENDING/EXPIRED/REJECTED/REMOVED）→ 删除旧记录，创建新邀请
      */
     suspend fun addContactFromShare(
         shareId: String,
@@ -512,22 +716,61 @@ class ContactRepository(private val context: Context) {
             // 检查是否已存在该用户的共享记录
             val existingContact = contactDao.getByTargetUserId(fromUserId)
             if (existingContact != null) {
-                // 如果已存在，更新为新的共享请求
-                Log.d(TAG, "收到重复共享请求，更新现有记录: $fromUserId (状态: ${existingContact.shareStatus})")
-                contactDao.upsert(
-                    existingContact.copy(
-                        id = shareId,
-                        name = fromUserName, // 更新名称
-                        shareStatus = ShareStatus.PENDING.name,
-                        shareDirection = ShareDirection.THEY_SHARE_TO_ME.name,
-                        expireTime = expireTime,
-                        updatedAt = System.currentTimeMillis()
-                    )
-                )
-                return
+                when {
+                    // 已是好友且共享正常 → 自动发送接受响应（对方可能清空了数据重新邀请）
+                    existingContact.shareStatus == ShareStatus.ACCEPTED.name && !existingContact.isPaused -> {
+                        Log.d(TAG, "已是好友，自动发送接受响应: $fromUserId (对方可能重新邀请)")
+                        // 自动发送接受响应，帮助对方恢复联系人关系
+                        try {
+                            mqttService.publishShareResponse(
+                                targetUserId = fromUserId,
+                                shareId = shareId,
+                                responderId = getCurrentUid(),
+                                responderName = getCurrentUserName(),
+                                accepted = true
+                            )
+                            Log.d(TAG, "自动接受响应已发送给: $fromUserId")
+                        } catch (e: Exception) {
+                            Log.w(TAG, "自动接受响应发送失败", e)
+                        }
+                        return
+                    }
+                    // 已是好友但共享已暂停 → 自动恢复共享（保持原 id）
+                    existingContact.shareStatus == ShareStatus.ACCEPTED.name && existingContact.isPaused -> {
+                        Log.d(TAG, "收到共享请求，自动恢复暂停的共享: $fromUserId")
+                        contactDao.upsert(
+                            existingContact.copy(
+                                name = fromUserName,
+                                isPaused = false,
+                                expireTime = expireTime,
+                                updatedAt = System.currentTimeMillis()
+                            )
+                        )
+                        // 同时发送接受响应
+                        try {
+                            mqttService.publishShareResponse(
+                                targetUserId = fromUserId,
+                                shareId = shareId,
+                                responderId = getCurrentUid(),
+                                responderName = getCurrentUserName(),
+                                accepted = true
+                            )
+                            Log.d(TAG, "恢复共享响应已发送给: $fromUserId")
+                        } catch (e: Exception) {
+                            Log.w(TAG, "恢复共享响应发送失败", e)
+                        }
+                        return
+                    }
+                    // 其他状态 → 删除旧记录，创建新的共享请求
+                    else -> {
+                        Log.d(TAG, "收到共享请求，删除旧记录并创建新记录: $fromUserId (旧状态: ${existingContact.shareStatus})")
+                        // 先删除旧记录，避免因 PrimaryKey 不同而产生多条记录
+                        contactDao.deleteById(existingContact.id)
+                    }
+                }
             }
 
-            // 不存在则新建
+            // 创建新记录
             val contactEntity = ContactEntity(
                 id = shareId,
                 name = fromUserName,

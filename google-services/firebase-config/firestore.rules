@@ -1,0 +1,108 @@
+rules_version = '2';
+
+/**
+ * Firestore 安全规则
+ *
+ * 架构说明:
+ * - 主要通讯使用 MQTT，Firestore 仅作为备用/扩展
+ * - FCM Token 管理通过 Cloud Functions HTTP API（Admin SDK 绑过规则）
+ * - 客户端不能直接访问 FCM Token 相关集合
+ *
+ * 更新时间: 2026-01-19
+ */
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ====================================================================
+    // FCM Token 集合（仅 Cloud Functions 可访问）
+    // ====================================================================
+    // Cloud Functions 使用 Admin SDK，会绕过这些规则
+    // 这里明确拒绝客户端直接访问，确保安全
+    match /fcm_tokens/{deviceId} {
+      allow read, write: if false;
+    }
+
+    // ====================================================================
+    // UID -> DeviceId 映射集合（仅 Cloud Functions 可访问）
+    // ====================================================================
+    match /uid_device_map/{uid} {
+      allow read, write: if false;
+    }
+
+    // ====================================================================
+    // 用户集合（扩展用途：多端同步）
+    // ====================================================================
+    match /users/{userId} {
+      // 只能读取/写入自己的用户信息
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // ====================================================================
+    // 设备集合（扩展用途：多设备管理）
+    // ====================================================================
+    match /devices/{deviceId} {
+      // 读取：设备所有者
+      allow read: if request.auth != null &&
+                     resource.data.ownerId == request.auth.uid;
+
+      // 创建：ownerId 必须是自己
+      allow create: if request.auth != null &&
+                       request.resource.data.ownerId == request.auth.uid;
+
+      // 更新/删除：只有所有者
+      allow update, delete: if request.auth != null &&
+                               resource.data.ownerId == request.auth.uid;
+    }
+
+    // ====================================================================
+    // 用户设备子集合（丢失模式指令系统）
+    // 路径: users/{userId}/devices/{deviceId}
+    // ====================================================================
+    match /users/{userId}/devices/{deviceId} {
+      // 读取/写入：只允许设备所有者
+      allow read, write: if request.auth != null && request.auth.uid == userId;
+
+      // ====================================================================
+      // 指令集合 (Lost Mode Command & Control)
+      // 路径: users/{userId}/devices/{deviceId}/commands/{cmdId}
+      // ====================================================================
+      match /commands/{cmdId} {
+        // 读取：设备所有者（被控端读取指令）
+        allow read: if request.auth != null && request.auth.uid == userId;
+
+        // 创建：设备所有者或被授权的联系人（控制端下发指令）
+        // 注意：生产环境应添加更严格的授权检查
+        allow create: if request.auth != null && request.auth.uid == userId;
+
+        // 更新：设备所有者（被控端更新执行状态）
+        // 只允许更新 status, executed_at, device_response 字段
+        allow update: if request.auth != null &&
+                         request.auth.uid == userId &&
+                         request.resource.data.diff(resource.data).affectedKeys()
+                           .hasOnly(['status', 'executed_at', 'device_response']);
+
+        // 删除：设备所有者（清理历史指令）
+        allow delete: if request.auth != null && request.auth.uid == userId;
+      }
+    }
+
+    // ====================================================================
+    // 联系人集合（扩展用途：联系人同步）
+    // ====================================================================
+    match /contacts/{contactId} {
+      // 只能访问自己的联系人
+      allow read, write: if request.auth != null &&
+                            resource.data.ownerUserId == request.auth.uid;
+
+      allow create: if request.auth != null &&
+                       request.resource.data.ownerUserId == request.auth.uid;
+    }
+
+    // ====================================================================
+    // 默认拒绝所有其他集合的访问
+    // ====================================================================
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

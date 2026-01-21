@@ -10,8 +10,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BatteryFull
+import androidx.compose.material.icons.filled.Bluetooth
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -42,6 +44,8 @@ fun PermissionGuideDialog(
     val context = LocalContext.current
     val hasBackgroundLocation = "后台定位" in missingPermissions
     val hasBatteryOptimization = "电池无限制" in missingPermissions
+    val hasWifiScanning = "WiFi扫描" in missingPermissions
+    val hasBluetoothScanning = "蓝牙扫描" in missingPermissions
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -91,6 +95,30 @@ fun PermissionGuideDialog(
                         description = "防止系统杀死应用，确保位置持续共享",
                         onClick = {
                             PermissionGuideHelper.openBatteryOptimizationSettings(context)
+                        }
+                    )
+                }
+
+                // WiFi 扫描权限卡片
+                if (hasWifiScanning) {
+                    PermissionCard(
+                        icon = Icons.Default.Wifi,
+                        title = "WiFi 扫描",
+                        description = "允许扫描 WiFi 热点来提高室内定位精度",
+                        onClick = {
+                            PermissionGuideHelper.openWifiScanningSettings(context)
+                        }
+                    )
+                }
+
+                // 蓝牙扫描权限卡片
+                if (hasBluetoothScanning) {
+                    PermissionCard(
+                        icon = Icons.Default.Bluetooth,
+                        title = "蓝牙扫描",
+                        description = "允许扫描蓝牙信标来提高室内定位精度",
+                        onClick = {
+                            PermissionGuideHelper.openBluetoothScanningSettings(context)
                         }
                     )
                 }
