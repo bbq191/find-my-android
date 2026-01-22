@@ -40,14 +40,26 @@ object DeviceOptimizationConfig {
     /**
      * 动画参数配置
      *
-     * @property positionAnimDurationMs 位置移动动画时长（毫秒）
+     * @property positionAnimDurationMs 位置移动动画时长（毫秒），用于固定时长模式
      * @property cameraAnimDurationMs 相机跟随动画时长（毫秒）
      * @property preferHighRefreshRate 是否优先使用高刷新率
+     * @property minAnimDurationMs 最小动画时长（毫秒），防止过快导致抖动
+     * @property maxAnimDurationMs 最大动画时长（毫秒），防止断网后动画过长
+     * @property defaultAnimDurationMs 断网恢复时的默认动画时长（毫秒）
+     * @property bearingThresholdMeters 航向角更新阈值（米），移动距离小于此值时不更新航向角
+     * @property enableDynamicDuration 是否启用动态时长（根据数据间隔自动调整）
+     * @property enableBuffer 是否启用预测缓冲（极致丝滑但有延迟）
      */
     data class AnimationConfig(
         val positionAnimDurationMs: Long,
         val cameraAnimDurationMs: Long,
-        val preferHighRefreshRate: Boolean
+        val preferHighRefreshRate: Boolean,
+        val minAnimDurationMs: Long = 500L,
+        val maxAnimDurationMs: Long = 10_000L,
+        val defaultAnimDurationMs: Long = 2_000L,
+        val bearingThresholdMeters: Float = 5f,
+        val enableDynamicDuration: Boolean = true,
+        val enableBuffer: Boolean = false
     )
 
     // 默认参数（适用于大多数设备）
@@ -64,7 +76,13 @@ object DeviceOptimizationConfig {
     private val DEFAULT_ANIMATION_CONFIG = AnimationConfig(
         positionAnimDurationMs = 1000L,
         cameraAnimDurationMs = 800L,
-        preferHighRefreshRate = false
+        preferHighRefreshRate = false,
+        minAnimDurationMs = 500L,
+        maxAnimDurationMs = 10_000L,
+        defaultAnimDurationMs = 2_000L,
+        bearingThresholdMeters = 5f,
+        enableDynamicDuration = true,
+        enableBuffer = true  // 默认开启预测缓冲，实现极致丝滑
     )
 
     // 三星 Galaxy S24 Ultra 优化参数
@@ -83,7 +101,13 @@ object DeviceOptimizationConfig {
     private val SAMSUNG_S24_ULTRA_ANIMATION_CONFIG = AnimationConfig(
         positionAnimDurationMs = 800L,  // 利用 120Hz 屏幕，缩短动画时长
         cameraAnimDurationMs = 600L,    // 相机动画更流畅
-        preferHighRefreshRate = true    // 追踪模式启用 120Hz
+        preferHighRefreshRate = true,   // 追踪模式启用 120Hz
+        minAnimDurationMs = 400L,       // S24U 高刷屏可以承受更短的最小时长
+        maxAnimDurationMs = 8_000L,     // 断网检测更积极
+        defaultAnimDurationMs = 1_500L, // 120Hz 下默认时长可以更短
+        bearingThresholdMeters = 4f,    // 更精确的 GPS 允许更小的阈值
+        enableDynamicDuration = true,
+        enableBuffer = true             // 开启预测缓冲，实现 iOS Find My 级别丝滑
     )
 
     /**
@@ -130,7 +154,10 @@ object DeviceOptimizationConfig {
             SamsungDeviceDetector.supports120Hz() -> DEFAULT_ANIMATION_CONFIG.copy(
                 positionAnimDurationMs = 850L,
                 cameraAnimDurationMs = 650L,
-                preferHighRefreshRate = true
+                preferHighRefreshRate = true,
+                minAnimDurationMs = 450L,
+                defaultAnimDurationMs = 1_800L,
+                bearingThresholdMeters = 4.5f
             )
             else -> DEFAULT_ANIMATION_CONFIG
         }
@@ -162,6 +189,11 @@ object DeviceOptimizationConfig {
             appendLine("  - Position Anim: ${anim.positionAnimDurationMs}ms")
             appendLine("  - Camera Anim: ${anim.cameraAnimDurationMs}ms")
             appendLine("  - High Refresh Rate: ${anim.preferHighRefreshRate}")
+            appendLine("  - Dynamic Duration: ${anim.enableDynamicDuration}")
+            appendLine("  - Duration Range: ${anim.minAnimDurationMs}ms ~ ${anim.maxAnimDurationMs}ms")
+            appendLine("  - Default Duration: ${anim.defaultAnimDurationMs}ms")
+            appendLine("  - Bearing Threshold: ${anim.bearingThresholdMeters}m")
+            appendLine("  - Buffer Enabled: ${anim.enableBuffer}")
         }
     }
 }

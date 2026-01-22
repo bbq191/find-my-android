@@ -3,6 +3,7 @@ package me.ikate.findmy.service
 import android.content.Context
 import android.util.Log
 import com.google.gson.Gson
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -431,6 +432,10 @@ class LocationTrackingManager(
                     updateTrackingState(targetUid, TrackingState.IDLE)
                     Log.i(TAG, "[刷新追踪] 步骤8: 追踪已自动结束（60秒超时）-> IDLE")
                 }
+            } catch (e: CancellationException) {
+                // 协程取消是正常行为（用户主动停止追踪），不视为错误
+                Log.d(TAG, "[刷新追踪] 追踪已取消")
+                throw e  // 重新抛出，保持协程取消传播
             } catch (e: Exception) {
                 Log.e(TAG, "[刷新追踪] ✗ 失败: ${e.message}", e)
                 _requestingLocationFor.value = null

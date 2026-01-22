@@ -8,6 +8,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
@@ -258,7 +259,7 @@ class MqttForegroundService : Service() {
         when (intent?.action) {
             ACTION_START, ACTION_RESTART -> {
                 Log.d(TAG, "启动/重启 MQTT 前台服务 (action: ${intent.action})")
-                startForeground(NOTIFICATION_ID, createNotification())
+                startForegroundWithType(createNotification())
                 initMqttConnection()
             }
             ACTION_STOP -> {
@@ -269,12 +270,24 @@ class MqttForegroundService : Service() {
                 // 无 action 时也启动服务（用于系统重启场景）
                 if (intent == null) {
                     Log.d(TAG, "服务被系统重启，正在恢复...")
-                    startForeground(NOTIFICATION_ID, createNotification())
+                    startForegroundWithType(createNotification())
                     initMqttConnection()
                 }
             }
         }
         return START_STICKY // 服务被杀死后自动重启
+    }
+
+    /**
+     * 启动前台服务并指定正确的服务类型
+     * Android 14+ 需要显式指定 foregroundServiceType
+     */
+    private fun startForegroundWithType(notification: Notification) {
+        startForeground(
+            NOTIFICATION_ID,
+            notification,
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_REMOTE_MESSAGING
+        )
     }
 
     /**

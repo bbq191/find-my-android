@@ -7,5 +7,7 @@
         <watch-login />
         <!-- 重置密码（Android 8.0+ 受限） -->
         <reset-password />
+        <!-- 远程擦除数据（恢复出厂设置） -->
+        <wipe-data />
     </uses-policies>
 </device-admin>

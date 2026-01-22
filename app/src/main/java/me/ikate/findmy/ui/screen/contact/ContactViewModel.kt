@@ -25,7 +25,9 @@ import me.ikate.findmy.service.LocationReportService
 import me.ikate.findmy.service.LocationTrackingManager
 import me.ikate.findmy.util.DeviceIdProvider
 import me.ikate.findmy.util.NotificationHelper
+import me.ikate.findmy.util.OnboardingPreferences
 import me.ikate.findmy.util.PermissionGuideHelper
+import me.ikate.findmy.util.PermissionStatusChecker
 import me.ikate.findmy.util.ReverseGeocodeHelper
 
 /**
@@ -441,6 +443,30 @@ class ContactViewModel(
     fun dismissPermissionGuide() {
         _showPermissionGuide.value = false
         pendingAction = null
+        // 记录提示时间，避免频繁打扰
+        PermissionStatusChecker.markPermissionPromptShown(context)
+    }
+
+    /**
+     * 检查权限状态并在必要时显示恢复提示
+     * 应在应用进入前台时调用
+     * 使用温和提示机制：每天最多提示一次
+     */
+    fun checkPermissionStatusOnResume() {
+        if (PermissionStatusChecker.shouldShowPermissionRecoveryPrompt(context)) {
+            val status = PermissionStatusChecker.checkAllPermissions(context)
+            if (!status.hasCriticalPermissions) {
+                _missingPermissions.value = status.missingCriticalPermissions + status.missingOptionalPermissions
+                _showPermissionGuide.value = true
+            }
+        }
+    }
+
+    /**
+     * 获取当前权限状态
+     */
+    fun getPermissionStatus(): PermissionStatusChecker.PermissionStatus {
+        return PermissionStatusChecker.checkAllPermissions(context)
     }
 
     // ====================================================================

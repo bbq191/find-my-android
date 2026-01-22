@@ -37,6 +37,19 @@ const RequestType = {
   // 丢失模式
   ENABLE_LOST_MODE: "enable_lost_mode",
   DISABLE_LOST_MODE: "disable_lost_mode",
+  // 共享邀请相关
+  SHARE_REQUEST: "share_request",
+  SHARE_ACCEPTED: "share_accepted",
+  SHARE_REJECTED: "share_rejected",
+  SHARE_REMOVED: "share_removed",
+  SHARE_PAUSED: "share_paused",
+  SHARE_RESUMED: "share_resumed",
+  SHARE_EXPIRED: "share_expired",
+  // 指令同步
+  SYNC_COMMANDS: "sync_commands",
+  // 地理围栏
+  GEOFENCE_SYNC: "geofence_sync",
+  GEOFENCE_EVENT: "geofence_event",
 } as const;
 
 type RequestTypeValue = typeof RequestType[keyof typeof RequestType];
@@ -56,6 +69,16 @@ interface PushRequest {
   message?: string;
   phoneNumber?: string;
   playSound?: boolean;
+  // 共享邀请相关字段
+  senderId?: string;
+  senderName?: string;
+  accepterId?: string;
+  accepterName?: string;
+  shareId?: string;
+  // 地理围栏相关字段
+  contactName?: string;
+  locationName?: string;
+  eventType?: string; // "ENTER" | "EXIT"
 }
 
 /**
@@ -230,6 +253,90 @@ function buildFCMDataMessage(request: PushRequest): Record<string, string> {
       ...base,
       type: "DEVICE_COMMAND",
       command: "DISABLE_LOST_MODE",
+    };
+
+  // 共享邀请相关
+  case RequestType.SHARE_REQUEST:
+    return {
+      ...base,
+      type: "share_request",
+      senderId: request.senderId || "",
+      senderName: request.senderName || "",
+      shareId: request.shareId || "",
+    };
+
+  case RequestType.SHARE_ACCEPTED:
+    return {
+      ...base,
+      type: "share_accepted",
+      accepterId: request.accepterId || "",
+      accepterName: request.accepterName || "",
+      shareId: request.shareId || "",
+    };
+
+  case RequestType.SHARE_REJECTED:
+    return {
+      ...base,
+      type: "share_rejected",
+      senderId: request.senderId || "",
+      senderName: request.senderName || "",
+      shareId: request.shareId || "",
+    };
+
+  case RequestType.SHARE_REMOVED:
+    return {
+      ...base,
+      type: "share_removed",
+      senderId: request.senderId || "",
+      senderName: request.senderName || "",
+      shareId: request.shareId || "",
+    };
+
+  case RequestType.SHARE_PAUSED:
+    return {
+      ...base,
+      type: "share_paused",
+      senderId: request.senderId || "",
+      senderName: request.senderName || "",
+    };
+
+  case RequestType.SHARE_RESUMED:
+    return {
+      ...base,
+      type: "share_resumed",
+      senderId: request.senderId || "",
+      senderName: request.senderName || "",
+    };
+
+  case RequestType.SHARE_EXPIRED:
+    return {
+      ...base,
+      type: "share_expired",
+      senderId: request.senderId || "",
+      senderName: request.senderName || "",
+    };
+
+  // 指令同步
+  case RequestType.SYNC_COMMANDS:
+    return {
+      ...base,
+      type: "sync_commands",
+    };
+
+  // 地理围栏
+  case RequestType.GEOFENCE_SYNC:
+    return {
+      ...base,
+      type: "geofence_sync",
+    };
+
+  case RequestType.GEOFENCE_EVENT:
+    return {
+      ...base,
+      type: "geofence_event",
+      contactName: request.contactName || "",
+      locationName: request.locationName || "",
+      eventType: request.eventType || "ENTER",
     };
 
   default:

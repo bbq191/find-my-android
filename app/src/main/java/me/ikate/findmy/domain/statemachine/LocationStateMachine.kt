@@ -14,6 +14,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import me.ikate.findmy.service.LocationReportService
+import me.ikate.findmy.service.MqttForegroundService
 
 /**
  * 位置状态机
@@ -213,6 +214,8 @@ class LocationStateMachine(
 
     /**
      * 切换到静默守望状态
+     *
+     * 最佳实践：日常状态关闭前台服务，依靠 FCM 唤醒 + WorkManager 低频更新
      */
     private fun transitionToIdle(reason: String) {
         val oldState = _currentState.value
@@ -226,11 +229,16 @@ class LocationStateMachine(
         _currentState.value = LocationState.IDLE
         _trackingRequesterId.value = null
 
+        // 停止前台服务，切换到低功耗模式
+        // 日常依靠 FCM 唤醒 + WorkManager 15分钟周期更新
+        MqttForegroundService.stop(context)
+
         val duration = if (trackingStartTime > 0) {
             (System.currentTimeMillis() - trackingStartTime) / 1000
         } else 0
 
         Log.i(TAG, "状态切换: $oldState -> IDLE (reason=$reason, duration=${duration}s, requesterId=$wasRequesterId)")
+        Log.i(TAG, "前台服务已停止，切换到 WorkManager 低频更新模式")
         onStateChanged?.invoke(oldState, LocationState.IDLE)
     }
 

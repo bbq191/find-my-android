@@ -4,6 +4,8 @@ import android.app.Application
 import android.util.Log
 import com.tencent.map.geolocation.TencentLocationManager
 import com.tencent.tencentmap.mapsdk.maps.TencentMapInitializer
+import me.ikate.findmy.crash.CrashMonitor
+import me.ikate.findmy.crash.CrashUploadWorker
 import me.ikate.findmy.di.allModules
 import me.ikate.findmy.push.FCMManager
 import me.ikate.findmy.service.MqttForegroundService
@@ -29,6 +31,9 @@ class FindMyApplication : Application() {
         super.onCreate()
         Log.d(TAG, "FindMyApplication 启动")
 
+        // 崩溃监控初始化（必须最先执行，捕获后续初始化中的崩溃）
+        initCrashMonitor()
+
         // 初始化加密存储（在 Koin 之前，确保 ViewModel 创建时不会遇到问题）
         SecurePreferences.init(this)
 
@@ -48,6 +53,33 @@ class FindMyApplication : Application() {
         // 启动 MQTT 前台服务（保持后台连接）
         // 后台唤醒依赖 FCM 高优先级消息（Android 12+ 唯一可靠方式）
         MqttForegroundService.start(this)
+    }
+
+    /**
+     * 初始化崩溃监控系统
+     * 必须最先执行，以捕获后续初始化中的崩溃
+     */
+    private fun initCrashMonitor() {
+        try {
+            CrashMonitor.init(this)
+
+            // 检查是否处于崩溃循环
+            if (CrashMonitor.isInCrashLoop()) {
+                Log.w(TAG, "应用处于崩溃循环，部分功能可能被禁用")
+                // TODO: 可以在这里跳过某些可能导致崩溃的初始化
+            }
+
+            // 检查是否有待上传的崩溃日志，调度上传任务
+            val pendingCount = CrashMonitor.getPendingLogCount()
+            if (pendingCount > 0) {
+                Log.d(TAG, "发现 $pendingCount 条待上传的崩溃日志，调度上传任务")
+                CrashUploadWorker.enqueue(this)
+            }
+
+            Log.d(TAG, "崩溃监控系统初始化完成")
+        } catch (e: Exception) {
+            Log.e(TAG, "崩溃监控系统初始化失败", e)
+        }
     }
 
     /**

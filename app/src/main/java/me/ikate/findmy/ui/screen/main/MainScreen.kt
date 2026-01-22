@@ -12,6 +12,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -20,6 +21,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -36,10 +40,12 @@ import me.ikate.findmy.data.repository.AuthRepository
 import me.ikate.findmy.data.model.Device
 import android.content.Intent
 import android.provider.Settings as AndroidSettings
+import me.ikate.findmy.ui.components.DeviceAdminGuideDialog
 import me.ikate.findmy.ui.components.LocationPermissionGuide
 import me.ikate.findmy.ui.components.NetworkStatusIndicator
 import me.ikate.findmy.ui.components.PermissionGuideDialog
 import me.ikate.findmy.ui.components.TrackingStatusIndicator
+import me.ikate.findmy.util.DeviceAdminHelper
 import me.ikate.findmy.ui.dialog.GeofenceConfig
 import me.ikate.findmy.ui.dialog.GeofenceDialog
 import me.ikate.findmy.ui.dialog.LostModeAction
@@ -180,6 +186,8 @@ fun MainScreen(
     var ringingDeviceId by remember { mutableStateOf<String?>(null) }
     var deviceToNavigate by remember { mutableStateOf<Device?>(null) }
     var deviceForLostMode by remember { mutableStateOf<Device?>(null) }
+    var showDeviceAdminGuide by remember { mutableStateOf(false) }
+    var pendingLostModeDevice by remember { mutableStateOf<Device?>(null) }
 
     // 地图图层状态（从本地存储加载）
     var isTrafficEnabled by remember { mutableStateOf(MapSettingsManager.loadTrafficEnabled(context)) }
@@ -216,6 +224,21 @@ fun MainScreen(
 
     // 记录是否已完成初始地图缩放（联系人数据加载后）
     var hasCompletedInitialZoom by remember { mutableStateOf(false) }
+
+    // 生命周期观察：应用进入前台时检查权限状态
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                // 应用进入前台时检查权限状态（温和提示，每天最多一次）
+                contactViewModel.checkPermissionStatusOnResume()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
 
     // 监听联系人数据变化，首次有效联系人数据加载完成后重新触发地图缩放
     // 这确保了即使联系人数据在地图加载后才到达，也能正确显示所有点位
@@ -472,7 +495,14 @@ fun MainScreen(
                         ringingDeviceId = null
                     },
                     onLostModeOnDevice = { device ->
-                        deviceForLostMode = device
+                        // 检查 Device Admin 是否已激活
+                        if (DeviceAdminHelper.isAdminActive(context)) {
+                            deviceForLostMode = device
+                        } else {
+                            // 保存待处理的设备，显示激活引导
+                            pendingLostModeDevice = device
+                            showDeviceAdminGuide = true
+                        }
                     },
                     // Me Tab 参数
                     currentUser = currentUser,
@@ -694,6 +724,32 @@ fun MainScreen(
                     }
                 }
                 deviceForLostMode = null
+            }
+        )
+    }
+
+    // 设备管理员激活引导对话框
+    if (showDeviceAdminGuide) {
+        DeviceAdminGuideDialog(
+            onDismiss = {
+                showDeviceAdminGuide = false
+                pendingLostModeDevice = null
+            },
+            onActivated = {
+                showDeviceAdminGuide = false
+                // 激活成功后，继续显示丢失模式对话框
+                pendingLostModeDevice?.let { device ->
+                    deviceForLostMode = device
+                }
+                pendingLostModeDevice = null
+            },
+            onSkip = {
+                showDeviceAdminGuide = false
+                // 跳过激活，仍然允许使用基础丢失模式功能
+                pendingLostModeDevice?.let { device ->
+                    deviceForLostMode = device
+                }
+                pendingLostModeDevice = null
             }
         )
     }

@@ -14,14 +14,19 @@ import androidx.compose.runtime.setValue
 import androidx.core.content.ContextCompat
 import me.ikate.findmy.ui.components.PrivacyPolicyDialog
 import me.ikate.findmy.ui.screen.main.MainScreen
+import me.ikate.findmy.ui.screen.onboarding.OnboardingScreen
 import me.ikate.findmy.ui.theme.FindmyTheme
 import me.ikate.findmy.util.NotificationHelper
+import me.ikate.findmy.util.OnboardingPreferences
 import me.ikate.findmy.util.PrivacyManager
 
 class MainActivity : ComponentActivity() {
 
     // 隐私政策弹窗状态
     private var showPrivacyDialog by mutableStateOf(false)
+
+    // 首次启动向导状态
+    private var showOnboarding by mutableStateOf(false)
 
     // 通知权限请求启动器（Android 13+）
     private val requestNotificationPermission =
@@ -40,6 +45,9 @@ class MainActivity : ComponentActivity() {
         // 初始化隐私合规（腾讯定位 SDK 要求）
         // 返回 true 表示需要显示隐私弹窗
         showPrivacyDialog = PrivacyManager.initPrivacy(this)
+
+        // 检查是否需要显示首次启动向导
+        showOnboarding = !OnboardingPreferences.isOnboardingCompleted(this)
 
         // 初始化通知渠道
         NotificationHelper.createNotificationChannels(this)
@@ -71,9 +79,17 @@ class MainActivity : ComponentActivity() {
                             finish()
                         }
                     )
+                } else if (showOnboarding) {
+                    // 首次启动向导
+                    OnboardingScreen(
+                        onComplete = {
+                            showOnboarding = false
+                        }
+                    )
+                } else {
+                    // 主界面
+                    MainScreen()
                 }
-
-                MainScreen()
             }
         }
     }
