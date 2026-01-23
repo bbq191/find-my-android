@@ -2,6 +2,7 @@ package me.ikate.findmy.util.animation
 
 import android.animation.ValueAnimator
 import android.view.animation.LinearInterpolator
+import android.util.Log
 import com.tencent.tencentmap.mapsdk.maps.model.LatLng
 import com.tencent.tencentmap.mapsdk.maps.model.Marker
 
@@ -31,7 +32,8 @@ import com.tencent.tencentmap.mapsdk.maps.model.Marker
 class SmoothMarker(
     private val marker: Marker,
     private val bearingThresholdMeters: Float = DEFAULT_BEARING_THRESHOLD_METERS,
-    enableBuffer: Boolean = false
+    enableBuffer: Boolean = false,
+    private val rotateMarker: Boolean = false  // 是否旋转 Marker 图标（默认不旋转，iOS Find My 风格）
 ) {
     /** 坐标插值器 */
     private val latLngEvaluator = LatLngEvaluator()
@@ -183,9 +185,12 @@ class SmoothMarker(
                     effectiveToBearing
                 )
 
-                // 更新 Marker
+                // 更新 Marker 位置
                 marker.position = interpolatedPosition
-                marker.rotation = interpolatedBearing
+                // 仅当启用旋转时才更新 Marker 角度（iOS Find My 风格：图标不旋转）
+                if (rotateMarker) {
+                    marker.rotation = interpolatedBearing
+                }
 
                 // 保存当前动画位置
                 animatedPosition = interpolatedPosition
@@ -243,7 +248,9 @@ class SmoothMarker(
 
         bearing?.let {
             val normalizedBearing = BearingEvaluator.normalizeAngle(it)
-            marker.rotation = normalizedBearing
+            if (rotateMarker) {
+                marker.rotation = normalizedBearing
+            }
             lastBearing = normalizedBearing
         }
 

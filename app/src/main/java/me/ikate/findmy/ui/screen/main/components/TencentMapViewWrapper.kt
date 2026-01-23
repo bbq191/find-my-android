@@ -33,8 +33,6 @@ import com.tencent.tencentmap.mapsdk.maps.model.CircleOptions
 import com.tencent.tencentmap.mapsdk.maps.model.LatLng
 import com.tencent.tencentmap.mapsdk.maps.model.Marker
 import com.tencent.tencentmap.mapsdk.maps.model.MarkerOptions
-import com.tencent.tencentmap.mapsdk.maps.model.Polygon
-import com.tencent.tencentmap.mapsdk.maps.model.PolygonOptions
 import me.ikate.findmy.data.model.Contact
 import me.ikate.findmy.data.model.Device
 import me.ikate.findmy.data.model.ShareStatus
@@ -47,11 +45,7 @@ import me.ikate.findmy.util.DeviceIdProvider
 import me.ikate.findmy.util.DeviceOptimizationConfig
 import me.ikate.findmy.util.MapSettingsManager
 import me.ikate.findmy.util.RefreshRateManager
-import me.ikate.findmy.util.animation.BearingEvaluator
-import me.ikate.findmy.util.animation.DynamicDurationCalculator
-import me.ikate.findmy.util.animation.LatLngEvaluator
-import me.ikate.findmy.util.animation.PositionBuffer
-import kotlin.math.asin
+import me.ikate.findmy.util.animation.SmoothMarker
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
@@ -220,12 +214,11 @@ fun TencentMapViewWrapper(
 
     val deviceShouldShowMergedIcon = contactsMergedWithDevice.isNotEmpty()
 
-    // 保存 Marker 引用，用于后续更新
+    // 保存 Marker 引用，用于后续更新（使用 SmoothMarker 封装实现 iOS Find My 级别丝滑动画）
     val deviceMarkerRef = remember { mutableStateOf<Marker?>(null) }
-    val deviceCircleRef = remember { mutableStateOf<Circle?>(null) }
-    val sectorPolygonRef = remember { mutableStateOf<Polygon?>(null) }
-    val contactMarkersRef = remember { mutableStateOf<Map<String, Marker>>(emptyMap()) }
-    val contactCirclesRef = remember { mutableStateOf<Map<String, Circle>>(emptyMap()) }  // 联系人绿色圆点
+    val deviceSmoothMarkerRef = remember { mutableStateOf<SmoothMarker?>(null) }
+    val contactMarkersRef = remember { mutableStateOf<Map<String, SmoothMarker>>(emptyMap()) }
+    val contactCirclesRef = remember { mutableStateOf<Map<String, Circle>>(emptyMap()) }
 
     // 追踪脉冲动画相关状态
     val pulseCircleRef = remember { mutableStateOf<Circle?>(null) }
@@ -236,41 +229,11 @@ fun TencentMapViewWrapper(
     // 设备优化动画配置（针对三星 S24 Ultra 等高刷屏设备优化）
     val animConfig = remember { DeviceOptimizationConfig.getAnimationConfig() }
 
-    // 平滑动画相关状态
-    val lastDevicePositionRef = remember { mutableStateOf<LatLng?>(null) }
-    val lastDeviceBearingRef = remember { mutableStateOf<Float?>(null) }
-    val positionAnimatorRef = remember { mutableStateOf<ValueAnimator?>(null) }
-    val animatedPositionRef = remember { mutableStateOf<LatLng?>(null) }
+    // 地图实例引用
     val mapInstanceRef = remember { mutableStateOf<TencentMap?>(null) }
 
-    // 动态时长计算器（iOS Find My 级别的丝滑体验核心）
-    val deviceDurationCalculator = remember {
-        DynamicDurationCalculator(
-            minDurationMs = animConfig.minAnimDurationMs,
-            maxDurationMs = animConfig.maxAnimDurationMs,
-            defaultDurationMs = animConfig.defaultAnimDurationMs
-        )
-    }
-
-    // 坐标插值器
-    val latLngEvaluator = remember { LatLngEvaluator() }
-
-    // 设备位置缓冲区（预测缓冲，实现 Marker 永不停顿）
-    val devicePositionBuffer = remember {
-        PositionBuffer(enabled = animConfig.enableBuffer)
-    }
-
-    // 联系人平滑动画相关状态（像 iOS Find My 一样，对端点位也平滑移动）
-    val lastContactPositionsRef = remember { mutableStateOf<Map<String, LatLng>>(emptyMap()) }
-    val lastContactBearingsRef = remember { mutableStateOf<Map<String, Float>>(emptyMap()) }
-    val contactAnimatorsRef = remember { mutableStateOf<Map<String, ValueAnimator>>(emptyMap()) }
+    // 联系人动画位置（用于相机追踪）
     val animatedContactPositionsRef = remember { mutableStateOf<Map<String, LatLng>>(emptyMap()) }
-
-    // 联系人动态时长计算器
-    val contactDurationCalculators = remember { mutableStateOf<Map<String, DynamicDurationCalculator>>(emptyMap()) }
-
-    // 联系人位置缓冲区（预测缓冲）
-    val contactPositionBuffers = remember { mutableStateOf<Map<String, PositionBuffer>>(emptyMap()) }
 
     // 追踪相机动画相关状态
     val cameraAnimatorRef = remember { mutableStateOf<ValueAnimator?>(null) }
@@ -334,14 +297,13 @@ fun TencentMapViewWrapper(
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
-            // 取消位置动画和相机动画
-            positionAnimatorRef.value?.cancel()
-            positionAnimatorRef.value = null
+            // 取消设备 SmoothMarker 动画
+            deviceSmoothMarkerRef.value?.cancel()
+            // 取消相机动画
             cameraAnimatorRef.value?.cancel()
             cameraAnimatorRef.value = null
-            // 取消所有联系人的动画
-            contactAnimatorsRef.value.values.forEach { it.cancel() }
-            contactAnimatorsRef.value = emptyMap()
+            // 取消所有联系人的 SmoothMarker 动画
+            contactMarkersRef.value.values.forEach { it.cancel() }
             // 取消脉冲动画
             pulseAnimatorRef.value?.cancel()
             pulseAnimatorRef.value = null
@@ -445,28 +407,15 @@ fun TencentMapViewWrapper(
                         currentDeviceId = currentDeviceId,
                         devices = devices,
                         contacts = contacts,
-                        // Refs
+                        // Refs（使用 SmoothMarker 封装）
                         deviceMarkerRef = deviceMarkerRef,
-                        deviceCircleRef = deviceCircleRef,
-                        sectorPolygonRef = sectorPolygonRef,
+                        deviceSmoothMarkerRef = deviceSmoothMarkerRef,
                         contactMarkersRef = contactMarkersRef,
                         contactCirclesRef = contactCirclesRef,
-                        lastDevicePositionRef = lastDevicePositionRef,
-                        lastDeviceBearingRef = lastDeviceBearingRef,
-                        positionAnimatorRef = positionAnimatorRef,
-                        animatedPositionRef = animatedPositionRef,
-                        lastContactPositionsRef = lastContactPositionsRef,
-                        lastContactBearingsRef = lastContactBearingsRef,
-                        contactAnimatorsRef = contactAnimatorsRef,
                         animatedContactPositionsRef = animatedContactPositionsRef,
-                        contactDurationCalculators = contactDurationCalculators,
                         cameraAnimatorRef = cameraAnimatorRef,
                         lastTrackingPositionRef = lastTrackingPositionRef,
-                        animConfig = animConfig,
-                        deviceDurationCalculator = deviceDurationCalculator,
-                        latLngEvaluator = latLngEvaluator,
-                        devicePositionBuffer = devicePositionBuffer,
-                        contactPositionBuffers = contactPositionBuffers
+                        animConfig = animConfig
                     )
 
                     // 追踪脉冲动画逻辑
@@ -628,7 +577,7 @@ fun TencentMapViewWrapper(
 }
 
 /**
- * 地图内容更新逻辑（抽取为独立函数，便于异常捕获）
+ * 地图内容更新逻辑（使用 SmoothMarker 封装实现 iOS Find My 级别丝滑动画）
  */
 private fun updateMapContent(
     view: MapView,
@@ -648,514 +597,241 @@ private fun updateMapContent(
     currentDeviceId: String,
     devices: List<Device>,
     contacts: List<Contact>,
-    // Refs
+    // Refs（使用 SmoothMarker 封装）
     deviceMarkerRef: androidx.compose.runtime.MutableState<Marker?>,
-    deviceCircleRef: androidx.compose.runtime.MutableState<Circle?>,
-    sectorPolygonRef: androidx.compose.runtime.MutableState<Polygon?>,
-    contactMarkersRef: androidx.compose.runtime.MutableState<Map<String, Marker>>,
+    deviceSmoothMarkerRef: androidx.compose.runtime.MutableState<SmoothMarker?>,
+    contactMarkersRef: androidx.compose.runtime.MutableState<Map<String, SmoothMarker>>,
     contactCirclesRef: androidx.compose.runtime.MutableState<Map<String, Circle>>,
-    lastDevicePositionRef: androidx.compose.runtime.MutableState<LatLng?>,
-    lastDeviceBearingRef: androidx.compose.runtime.MutableState<Float?>,
-    positionAnimatorRef: androidx.compose.runtime.MutableState<ValueAnimator?>,
-    animatedPositionRef: androidx.compose.runtime.MutableState<LatLng?>,
-    lastContactPositionsRef: androidx.compose.runtime.MutableState<Map<String, LatLng>>,
-    lastContactBearingsRef: androidx.compose.runtime.MutableState<Map<String, Float>>,
-    contactAnimatorsRef: androidx.compose.runtime.MutableState<Map<String, ValueAnimator>>,
     animatedContactPositionsRef: androidx.compose.runtime.MutableState<Map<String, LatLng>>,
-    contactDurationCalculators: androidx.compose.runtime.MutableState<Map<String, DynamicDurationCalculator>>,
     cameraAnimatorRef: androidx.compose.runtime.MutableState<ValueAnimator?>,
     lastTrackingPositionRef: androidx.compose.runtime.MutableState<LatLng?>,
-    animConfig: DeviceOptimizationConfig.AnimationConfig,
-    deviceDurationCalculator: DynamicDurationCalculator,
-    latLngEvaluator: LatLngEvaluator,
-    devicePositionBuffer: PositionBuffer,
-    contactPositionBuffers: androidx.compose.runtime.MutableState<Map<String, PositionBuffer>>
+    animConfig: DeviceOptimizationConfig.AnimationConfig
 ) {
     val tencentMap = view.map
 
-            // 更新路况图层
-            tencentMap.isTrafficEnabled = showTraffic
+    // 更新路况图层
+    tencentMap.isTrafficEnabled = showTraffic
 
-            // 更新 3D 建筑显示
-            tencentMap.setBuilding3dEffectEnable(mapLayerConfig.show3dBuildings)
+    // 更新 3D 建筑显示
+    tencentMap.setBuilding3dEffectEnable(mapLayerConfig.show3dBuildings)
 
+    // ==================== 设备 Marker 更新（使用 SmoothMarker）====================
+    val deviceLocationSource = currentDeviceRealtimeLocation ?: currentDevice?.location
+    currentDevice?.let { device ->
+        val effectiveLocation = deviceLocationSource ?: device.location
+        if (!effectiveLocation.latitude.isNaN() && !effectiveLocation.longitude.isNaN()) {
+            val targetPosition = effectiveLocation
+            val rawBearing = currentDeviceHeading ?: device.bearing
+            val displayBearing = if (rawBearing.isNaN() || rawBearing.isInfinite()) 0f else rawBearing
 
-            // 更新当前设备 Marker（带平滑移动动画）
-            // 像 iOS Find My 一样：优先使用实时位置（追踪自己时更新更快）
-            val deviceLocationSource = currentDeviceRealtimeLocation ?: currentDevice?.location
-            currentDevice?.let { device ->
-                val effectiveLocation = deviceLocationSource ?: device.location
-                if (!effectiveLocation.latitude.isNaN() && !effectiveLocation.longitude.isNaN()) {
-                    val targetPosition = effectiveLocation
-                    val rawBearing = currentDeviceHeading ?: device.bearing
-                    val displayBearing = if (rawBearing.isNaN() || rawBearing.isInfinite()) 0f else rawBearing
+            // 选择设备图标
+            val deviceIconBitmap = if (deviceShouldShowMergedIcon) togetherBitmap else avatarBitmap
+            val anchorU = if (deviceShouldShowMergedIcon) 0.45f else 0.5f
+            val anchorV = 0.95f
 
-                    // 获取上一个位置和航向角，用于计算平滑动画
-                    val lastPosition = lastDevicePositionRef.value
-                    val lastBearing = lastDeviceBearingRef.value ?: displayBearing
-                    val shouldAnimate = lastPosition != null &&
-                            (lastPosition.latitude != targetPosition.latitude ||
-                             lastPosition.longitude != targetPosition.longitude)
+            // 创建或获取 SmoothMarker
+            var smoothMarker = deviceSmoothMarkerRef.value
+            if (smoothMarker == null && deviceIconBitmap != null) {
+                // 首次创建 Marker 和 SmoothMarker
+                val marker = tencentMap.addMarker(
+                    MarkerOptions(targetPosition)
+                        .icon(BitmapDescriptorFactory.fromBitmap(deviceIconBitmap))
+                        .anchor(anchorU, anchorV)
+                        .zIndex(10f)
+                ).apply {
+                    tag = device
+                }
+                deviceMarkerRef.value = marker
+                smoothMarker = SmoothMarker(
+                    marker = marker,
+                    bearingThresholdMeters = animConfig.bearingThresholdMeters,
+                    enableBuffer = animConfig.enableBuffer
+                )
+                deviceSmoothMarkerRef.value = smoothMarker
+            } else if (deviceIconBitmap != null) {
+                // 更新图标
+                deviceMarkerRef.value?.setIcon(BitmapDescriptorFactory.fromBitmap(deviceIconBitmap))
+                deviceMarkerRef.value?.setAnchor(anchorU, anchorV)
+                deviceMarkerRef.value?.tag = device
+            }
 
-                    // 计算移动距离，决定是否更新航向角（低速过滤，防止定位漂移原地转圈）
-                    val moveDistance = if (lastPosition != null) {
-                        calculateDistance(lastPosition, targetPosition)
-                    } else 0.0
-                    val shouldUpdateBearing = BearingEvaluator.shouldUpdateBearing(
-                        moveDistance,
-                        animConfig.bearingThresholdMeters
+            // 使用 SmoothMarker 平滑移动（内部自动处理动画、插值、航向角等）
+            smoothMarker?.animateTo(targetPosition, displayBearing)
+        }
+    }
+
+    // ==================== 联系人 Markers 更新（使用 SmoothMarker）====================
+    val renderedGroups = mutableSetOf<Int>()
+    val newContactMarkers = mutableMapOf<String, SmoothMarker>()
+    val newContactCircles = mutableMapOf<String, Circle>()
+    val newAnimatedPositions = animatedContactPositionsRef.value.toMutableMap()
+
+    validContacts.forEach { contact ->
+        if (contactsMergedWithDevice.contains(contact.id)) return@forEach
+
+        contact.location?.let { targetLocation ->
+            val groupId = contactGroups[contact.id] ?: -1
+            if (groupId >= 0 && renderedGroups.contains(groupId)) return@forEach
+            if (groupId >= 0) renderedGroups.add(groupId)
+
+            val sameGroupContacts = if (groupId >= 0) {
+                validContacts.filter { c ->
+                    contactGroups[c.id] == groupId && !contactsMergedWithDevice.contains(c.id)
+                }
+            } else listOf(contact)
+
+            val shouldMerge = sameGroupContacts.size > 1
+            val contactIconBitmap = if (shouldMerge) togetherBitmap else pigBitmap
+            val contactAnchorU = if (shouldMerge) 0.45f else 0.5f
+            val contactAnchorV = 0.95f
+
+            // 获取或创建 SmoothMarker
+            val existingSmoothMarker = contactMarkersRef.value[contact.id]
+            if (existingSmoothMarker != null) {
+                // 更新图标
+                if (contactIconBitmap != null) {
+                    existingSmoothMarker.getMarker().setIcon(BitmapDescriptorFactory.fromBitmap(contactIconBitmap))
+                    existingSmoothMarker.getMarker().setAnchor(contactAnchorU, contactAnchorV)
+                }
+                existingSmoothMarker.getMarker().tag = contact
+
+                // 使用 SmoothMarker 平滑移动
+                existingSmoothMarker.animateTo(targetLocation, 0f) { position, _ ->
+                    // 更新联系人绿色圆点位置
+                    contactCirclesRef.value[contact.id]?.center = position
+                    // 保存动画中的位置（用于相机追踪）
+                    newAnimatedPositions[contact.id] = position
+                }
+
+                newContactMarkers[contact.id] = existingSmoothMarker
+
+                // 更新或创建联系人绿色圆点
+                val existingCircle = contactCirclesRef.value[contact.id]
+                if (existingCircle != null) {
+                    newContactCircles[contact.id] = existingCircle
+                } else {
+                    val circle = tencentMap.addCircle(
+                        CircleOptions()
+                            .center(targetLocation)
+                            .radius(8.0)
+                            .fillColor(0xFF34C759.toInt())
+                            .strokeColor(android.graphics.Color.WHITE)
+                            .strokeWidth(2f)
                     )
+                    newContactCircles[contact.id] = circle
+                }
+            } else if (contactIconBitmap != null) {
+                // 创建新 Marker 和 SmoothMarker
+                val marker = tencentMap.addMarker(
+                    MarkerOptions(targetLocation)
+                        .icon(BitmapDescriptorFactory.fromBitmap(contactIconBitmap))
+                        .anchor(contactAnchorU, contactAnchorV)
+                        .zIndex(10f)
+                ).apply {
+                    tag = contact
+                }
+                val smoothMarker = SmoothMarker(
+                    marker = marker,
+                    bearingThresholdMeters = animConfig.bearingThresholdMeters,
+                    enableBuffer = animConfig.enableBuffer
+                )
+                newContactMarkers[contact.id] = smoothMarker
+                newAnimatedPositions[contact.id] = targetLocation
 
-                    // 更新位置的函数（用于动画每帧更新），支持航向角参数
-                    fun updatePositionUI(position: LatLng, bearing: Float) {
-                        // 更新或创建方向扇形（半径缩短为 60 米，更符合 iOS Find My 的视觉效果）
-                        val sectorPoints = calculateSectorPoints(
-                            center = position,
-                            radius = 60.0,
-                            direction = bearing,
-                            fov = 45f
-                        )
+                // 创建联系人绿色圆点
+                val circle = tencentMap.addCircle(
+                    CircleOptions()
+                        .center(targetLocation)
+                        .radius(8.0)
+                        .fillColor(0xFF34C759.toInt())
+                        .strokeColor(android.graphics.Color.WHITE)
+                        .strokeWidth(2f)
+                )
+                newContactCircles[contact.id] = circle
+            }
+        }
+    }
 
-                        val existingSector = sectorPolygonRef.value
-                        if (existingSector != null) {
-                            existingSector.points = sectorPoints
-                        } else {
-                            sectorPolygonRef.value = tencentMap.addPolygon(
-                                PolygonOptions()
-                                    .addAll(sectorPoints)
-                                    .fillColor(0x40007AFF)  // 稍微降低透明度
-                                    .strokeColor(0xFF007AFF.toInt())
-                                    .strokeWidth(1f)
-                            )
-                        }
+    // 清理不再显示的联系人
+    contactMarkersRef.value.forEach { (id, smoothMarker) ->
+        if (!newContactMarkers.containsKey(id)) {
+            smoothMarker.cancel()
+            smoothMarker.getMarker().remove()
+            newAnimatedPositions.remove(id)
+        }
+    }
+    contactCirclesRef.value.forEach { (id, circle) ->
+        if (!newContactCircles.containsKey(id)) {
+            circle.remove()
+        }
+    }
 
-                        // 更新或创建蓝色圆点（半径缩小为 8 米，更紧凑）
-                        val existingCircle = deviceCircleRef.value
-                        if (existingCircle != null) {
-                            existingCircle.center = position
-                        } else {
-                            deviceCircleRef.value = tencentMap.addCircle(
-                                CircleOptions()
-                                    .center(position)
-                                    .radius(8.0)
-                                    .fillColor(0xFF007AFF.toInt())
-                                    .strokeColor(android.graphics.Color.WHITE)
-                                    .strokeWidth(2f)
-                            )
-                        }
+    // 更新状态
+    contactMarkersRef.value = newContactMarkers
+    contactCirclesRef.value = newContactCircles
+    animatedContactPositionsRef.value = newAnimatedPositions
 
-                        // 更新设备 Marker 位置（图标不旋转，保持正常方向）
-                        deviceMarkerRef.value?.position = position
-                    }
+    // ==================== 相机追踪 ====================
+    if (trackingTargetId != null) {
+        val targetLocation: LatLng? = when {
+            trackingTargetId == currentDeviceId -> {
+                currentDeviceRealtimeLocation
+                    ?: deviceSmoothMarkerRef.value?.getAnimatedPosition()
+                    ?: devices.find { it.id == trackingTargetId }?.location
+            }
+            devices.any { it.id == trackingTargetId } -> {
+                devices.find { it.id == trackingTargetId }?.location
+            }
+            trackingTargetId.startsWith("contact_") -> {
+                val contactId = trackingTargetId.removePrefix("contact_")
+                animatedContactPositionsRef.value[contactId]
+                    ?: contacts.find { it.id == contactId }?.location
+            }
+            else -> {
+                animatedContactPositionsRef.value[trackingTargetId]
+                    ?: contacts.find { it.id == trackingTargetId }?.location
+            }
+        }
 
-                    // 创建或更新设备 Marker
-                    val iconBitmap = if (deviceShouldShowMergedIcon) togetherBitmap else avatarBitmap
-                    val anchorU = if (deviceShouldShowMergedIcon) 0.45f else 0.5f
-                    val anchorV = 0.95f
+        targetLocation?.let { newPosition ->
+            if (!newPosition.latitude.isNaN() && !newPosition.longitude.isNaN()) {
+                val lastPosition = lastTrackingPositionRef.value
 
-                    if (deviceMarkerRef.value == null && iconBitmap != null) {
-                        deviceMarkerRef.value = tencentMap.addMarker(
-                            MarkerOptions(targetPosition)
-                                .icon(BitmapDescriptorFactory.fromBitmap(iconBitmap))
-                                .anchor(anchorU, anchorV)
-                                .zIndex(10f)  // 层级高于圆点，确保头像在圆点之上
-                        ).apply {
-                            tag = device
-                        }
-                    } else {
-                        if (iconBitmap != null) {
-                            deviceMarkerRef.value?.setIcon(BitmapDescriptorFactory.fromBitmap(iconBitmap))
-                            deviceMarkerRef.value?.setAnchor(anchorU, anchorV)
-                        }
-                        deviceMarkerRef.value?.tag = device
-                    }
+                val hasSignificantChange = lastPosition == null ||
+                    kotlin.math.abs(lastPosition.latitude - newPosition.latitude) > 0.000001 ||
+                    kotlin.math.abs(lastPosition.longitude - newPosition.longitude) > 0.000001
 
-                    // 将新位置入队到缓冲区（用于预测缓冲模式）
-                    if (animConfig.enableBuffer) {
-                        devicePositionBuffer.enqueue(targetPosition, displayBearing)
-                    }
+                if (hasSignificantChange) {
+                    cameraAnimatorRef.value?.cancel()
 
-                    // 执行平滑移动动画（iOS Find My 级别丝滑体验）
-                    if (shouldAnimate) {
-                        // 取消之前的动画（防止鬼畜）
-                        positionAnimatorRef.value?.cancel()
-
-                        // 确定动画起点和终点
-                        val (animStartPosition, animEndPosition, animStartBearing, animEndBearing, animDuration) =
-                            if (animConfig.enableBuffer && devicePositionBuffer.hasEnoughForAnimation()) {
-                                // 缓冲模式：使用缓冲区的动画段（会有 1-2 秒延迟，但更丝滑）
-                                val segment = devicePositionBuffer.peekNextSegment()
-                                if (segment != null) {
-                                    AnimationParams(
-                                        segment.from.position,
-                                        segment.to.position,
-                                        segment.from.bearing,
-                                        segment.to.bearing,
-                                        segment.duration
-                                    )
-                                } else {
-                                    // 缓冲区数据不足，使用直接模式
-                                    val startBearing = BearingEvaluator.normalizeAngle(lastBearing)
-                                    val endBearing = if (shouldUpdateBearing) {
-                                        BearingEvaluator.normalizeAngle(displayBearing)
-                                    } else startBearing
-                                    val duration = if (animConfig.enableDynamicDuration) {
-                                        deviceDurationCalculator.calculate()
-                                    } else animConfig.positionAnimDurationMs
-                                    AnimationParams(lastPosition, targetPosition, startBearing, endBearing, duration)
-                                }
-                            } else {
-                                // 直接模式：从上一位置到新位置
-                                val startBearing = BearingEvaluator.normalizeAngle(lastBearing)
-                                val endBearing = if (shouldUpdateBearing) {
-                                    BearingEvaluator.normalizeAngle(displayBearing)
-                                } else startBearing
-                                val duration = if (animConfig.enableDynamicDuration) {
-                                    deviceDurationCalculator.calculate()
-                                } else animConfig.positionAnimDurationMs
-                                AnimationParams(lastPosition, targetPosition, startBearing, endBearing, duration)
-                            }
-
-                        // 创建新的平滑移动动画（使用坐标插值器 + 航向角最短路径）
+                    if (lastPosition != null) {
                         val animator = ValueAnimator.ofFloat(0f, 1f).apply {
-                            duration = animDuration
+                            duration = animConfig.cameraAnimDurationMs
                             interpolator = LinearInterpolator()
                             addUpdateListener { animation ->
                                 val fraction = animation.animatedValue as Float
+                                val lat = lastPosition.latitude + (newPosition.latitude - lastPosition.latitude) * fraction
+                                val lng = lastPosition.longitude + (newPosition.longitude - lastPosition.longitude) * fraction
+                                val interpolatedPosition = latLngOf(lat, lng)
 
-                                // 使用 LatLngEvaluator 计算插值坐标
-                                val interpolatedPosition = latLngEvaluator.evaluate(
-                                    fraction, animStartPosition, animEndPosition
+                                tencentMap.moveCamera(
+                                    CameraUpdateFactory.newLatLng(interpolatedPosition)
                                 )
-
-                                // 使用 BearingEvaluator 计算最短路径旋转（防止绕远路）
-                                val interpolatedBearing = BearingEvaluator.evaluate(
-                                    fraction, animStartBearing, animEndBearing
-                                )
-
-                                animatedPositionRef.value = interpolatedPosition
-                                updatePositionUI(interpolatedPosition, interpolatedBearing)
                             }
                         }
                         animator.start()
-                        positionAnimatorRef.value = animator
-                    } else {
-                        // 没有上一个位置或位置相同，直接更新
-                        updatePositionUI(targetPosition, displayBearing)
+                        cameraAnimatorRef.value = animator
                     }
 
-                    // 保存当前位置和航向角作为下一次动画的起点
-                    lastDevicePositionRef.value = targetPosition
-                    if (shouldUpdateBearing) {
-                        lastDeviceBearingRef.value = displayBearing
-                    }
+                    lastTrackingPositionRef.value = newPosition
                 }
             }
-
-            // 更新联系人 Markers（带平滑移动动画，像 iOS Find My 一样）
-            val renderedGroups = mutableSetOf<Int>()
-            val newContactMarkers = mutableMapOf<String, Marker>()
-            val newContactCircles = mutableMapOf<String, Circle>()  // 联系人绿色圆点
-            val newLastPositions = lastContactPositionsRef.value.toMutableMap()
-            val newLastBearings = lastContactBearingsRef.value.toMutableMap()
-            val newAnimators = contactAnimatorsRef.value.toMutableMap()
-            val newAnimatedPositions = animatedContactPositionsRef.value.toMutableMap()
-            val newDurationCalculators = contactDurationCalculators.value.toMutableMap()
-
-            validContacts.forEach { contact ->
-                if (contactsMergedWithDevice.contains(contact.id)) return@forEach
-
-                contact.location?.let { targetLocation ->
-                    val groupId = contactGroups[contact.id] ?: -1
-                    if (groupId >= 0 && renderedGroups.contains(groupId)) return@forEach
-                    if (groupId >= 0) renderedGroups.add(groupId)
-
-                    val sameGroupContacts = if (groupId >= 0) {
-                        validContacts.filter { c ->
-                            contactGroups[c.id] == groupId && !contactsMergedWithDevice.contains(c.id)
-                        }
-                    } else listOf(contact)
-
-                    val shouldMerge = sameGroupContacts.size > 1
-                    val iconBitmap = if (shouldMerge) togetherBitmap else pigBitmap
-
-                    // 获取上一个位置和航向角
-                    val lastPosition = lastContactPositionsRef.value[contact.id]
-                    val lastBearing = lastContactBearingsRef.value[contact.id] ?: 0f
-
-                    val shouldAnimate = lastPosition != null &&
-                            (lastPosition.latitude != targetLocation.latitude ||
-                             lastPosition.longitude != targetLocation.longitude)
-
-                    // 计算移动距离，决定是否更新航向角
-                    val contactMoveDistance = if (lastPosition != null) {
-                        calculateDistance(lastPosition, targetLocation)
-                    } else 0.0
-                    val shouldUpdateContactBearing = BearingEvaluator.shouldUpdateBearing(
-                        contactMoveDistance,
-                        animConfig.bearingThresholdMeters
-                    )
-
-                    // 根据移动方向计算航向角（联系人没有传感器数据，需要根据轨迹计算）
-                    val targetBearing = if (lastPosition != null && shouldUpdateContactBearing) {
-                        BearingEvaluator.calculateBearing(
-                            lastPosition.latitude, lastPosition.longitude,
-                            targetLocation.latitude, targetLocation.longitude
-                        )
-                    } else {
-                        lastBearing
-                    }
-
-                    // 联系人图标锚点设置
-                    val contactAnchorU = if (shouldMerge) 0.45f else 0.5f
-                    val contactAnchorV = 0.95f
-
-                    // 获取或创建该联系人的动态时长计算器
-                    val durationCalc = newDurationCalculators.getOrPut(contact.id) {
-                        DynamicDurationCalculator(
-                            minDurationMs = animConfig.minAnimDurationMs,
-                            maxDurationMs = animConfig.maxAnimDurationMs,
-                            defaultDurationMs = animConfig.defaultAnimDurationMs
-                        )
-                    }
-
-                    // 获取或创建该联系人的位置缓冲区
-                    val contactBuffers = contactPositionBuffers.value.toMutableMap()
-                    val contactBuffer = contactBuffers.getOrPut(contact.id) {
-                        PositionBuffer(enabled = animConfig.enableBuffer)
-                    }
-
-                    // 将新位置入队到缓冲区
-                    if (animConfig.enableBuffer) {
-                        contactBuffer.enqueue(targetLocation, targetBearing)
-                    }
-                    contactPositionBuffers.value = contactBuffers
-
-                    val existingMarker = contactMarkersRef.value[contact.id]
-                    if (existingMarker != null) {
-                        // 更新图标和锚点
-                        if (iconBitmap != null) {
-                            existingMarker.setIcon(BitmapDescriptorFactory.fromBitmap(iconBitmap))
-                            existingMarker.setAnchor(contactAnchorU, contactAnchorV)
-                        }
-                        existingMarker.tag = contact
-
-                        // 平滑移动动画（像 iOS Find My 一样，对端点位也平滑移动）
-                        if (shouldAnimate) {
-                            // 取消之前的动画
-                            newAnimators[contact.id]?.cancel()
-
-                            // 确定动画参数
-                            val animParams = if (animConfig.enableBuffer && contactBuffer.hasEnoughForAnimation()) {
-                                // 缓冲模式
-                                val segment = contactBuffer.peekNextSegment()
-                                if (segment != null) {
-                                    AnimationParams(
-                                        segment.from.position,
-                                        segment.to.position,
-                                        segment.from.bearing,
-                                        segment.to.bearing,
-                                        segment.duration
-                                    )
-                                } else {
-                                    // 缓冲区数据不足，使用直接模式
-                                    val startBearing = BearingEvaluator.normalizeAngle(lastBearing)
-                                    val endBearing = if (shouldUpdateContactBearing) {
-                                        BearingEvaluator.normalizeAngle(targetBearing)
-                                    } else startBearing
-                                    val duration = if (animConfig.enableDynamicDuration) {
-                                        durationCalc.calculate()
-                                    } else animConfig.positionAnimDurationMs
-                                    AnimationParams(lastPosition, targetLocation, startBearing, endBearing, duration)
-                                }
-                            } else {
-                                // 直接模式
-                                val startBearing = BearingEvaluator.normalizeAngle(lastBearing)
-                                val endBearing = if (shouldUpdateContactBearing) {
-                                    BearingEvaluator.normalizeAngle(targetBearing)
-                                } else startBearing
-                                val duration = if (animConfig.enableDynamicDuration) {
-                                    durationCalc.calculate()
-                                } else animConfig.positionAnimDurationMs
-                                AnimationParams(lastPosition, targetLocation, startBearing, endBearing, duration)
-                            }
-
-                            val animator = ValueAnimator.ofFloat(0f, 1f).apply {
-                                duration = animParams.duration
-                                interpolator = LinearInterpolator()
-                                addUpdateListener { animation ->
-                                    val fraction = animation.animatedValue as Float
-
-                                    // 使用 LatLngEvaluator 计算插值坐标
-                                    val interpolatedPosition = latLngEvaluator.evaluate(
-                                        fraction, animParams.startPosition, animParams.endPosition
-                                    )
-
-                                    // 使用 BearingEvaluator 计算最短路径旋转
-                                    val interpolatedBearing = BearingEvaluator.evaluate(
-                                        fraction, animParams.startBearing, animParams.endBearing
-                                    )
-
-                                    // 更新 Marker 位置（图标不旋转，保持正常方向）
-                                    existingMarker.position = interpolatedPosition
-
-                                    // 更新联系人绿色圆点位置
-                                    contactCirclesRef.value[contact.id]?.center = interpolatedPosition
-
-                                    // 保存动画中的位置（用于相机追踪）
-                                    val currentAnimated = animatedContactPositionsRef.value.toMutableMap()
-                                    currentAnimated[contact.id] = interpolatedPosition
-                                    animatedContactPositionsRef.value = currentAnimated
-                                }
-                            }
-                            animator.start()
-                            newAnimators[contact.id] = animator
-                        } else {
-                            // 位置相同或首次显示，直接设置
-                            existingMarker.position = targetLocation
-                            newAnimatedPositions[contact.id] = targetLocation
-                        }
-
-                        newContactMarkers[contact.id] = existingMarker
-
-                        // 更新或创建联系人绿色圆点
-                        val existingCircle = contactCirclesRef.value[contact.id]
-                        if (existingCircle != null) {
-                            existingCircle.center = targetLocation
-                            newContactCircles[contact.id] = existingCircle
-                        } else {
-                            val circle = tencentMap.addCircle(
-                                CircleOptions()
-                                    .center(targetLocation)
-                                    .radius(8.0)
-                                    .fillColor(0xFF34C759.toInt())  // iOS 风格绿色
-                                    .strokeColor(android.graphics.Color.WHITE)
-                                    .strokeWidth(2f)
-                            )
-                            newContactCircles[contact.id] = circle
-                        }
-                    } else if (iconBitmap != null) {
-                        // 创建新 Marker
-                        val marker = tencentMap.addMarker(
-                            MarkerOptions(targetLocation)
-                                .icon(BitmapDescriptorFactory.fromBitmap(iconBitmap))
-                                .anchor(contactAnchorU, contactAnchorV)
-                                .zIndex(10f)  // 层级高于圆点
-                        ).apply {
-                            tag = contact
-                        }
-                        newContactMarkers[contact.id] = marker
-                        newAnimatedPositions[contact.id] = targetLocation
-
-                        // 创建联系人绿色圆点
-                        val circle = tencentMap.addCircle(
-                            CircleOptions()
-                                .center(targetLocation)
-                                .radius(8.0)
-                                .fillColor(0xFF34C759.toInt())  // iOS 风格绿色
-                                .strokeColor(android.graphics.Color.WHITE)
-                                .strokeWidth(2f)
-                        )
-                        newContactCircles[contact.id] = circle
-                    }
-
-                    // 保存当前位置和航向角作为下一次动画的起点
-                    newLastPositions[contact.id] = targetLocation
-                    if (shouldUpdateContactBearing) {
-                        newLastBearings[contact.id] = targetBearing
-                    }
-                }
-            }
-
-            // 清理不再显示的联系人的动画、圆点和位置状态
-            contactMarkersRef.value.forEach { (id, marker) ->
-                if (!newContactMarkers.containsKey(id)) {
-                    marker.remove()
-                    newAnimators[id]?.cancel()
-                    newAnimators.remove(id)
-                    newLastPositions.remove(id)
-                    newLastBearings.remove(id)
-                    newAnimatedPositions.remove(id)
-                    newDurationCalculators.remove(id)
-                }
-            }
-            // 清理不再显示的联系人绿色圆点
-            contactCirclesRef.value.forEach { (id, circle) ->
-                if (!newContactCircles.containsKey(id)) {
-                    circle.remove()
-                }
-            }
-
-            // 更新状态
-            contactMarkersRef.value = newContactMarkers
-            contactCirclesRef.value = newContactCircles
-            lastContactPositionsRef.value = newLastPositions
-            lastContactBearingsRef.value = newLastBearings
-            contactAnimatorsRef.value = newAnimators
-            animatedContactPositionsRef.value = newAnimatedPositions
-            contactDurationCalculators.value = newDurationCalculators
-
-            // 追踪模式：平滑移动相机跟随目标
-            if (trackingTargetId != null) {
-                val targetLocation: LatLng? = when {
-                    trackingTargetId == currentDeviceId -> {
-                        currentDeviceRealtimeLocation
-                            ?: animatedPositionRef.value
-                            ?: devices.find { it.id == trackingTargetId }?.location
-                    }
-                    devices.any { it.id == trackingTargetId } -> {
-                        devices.find { it.id == trackingTargetId }?.location
-                    }
-                    trackingTargetId.startsWith("contact_") -> {
-                        val contactId = trackingTargetId.removePrefix("contact_")
-                        animatedContactPositionsRef.value[contactId]
-                            ?: contacts.find { it.id == contactId }?.location
-                    }
-                    else -> {
-                        animatedContactPositionsRef.value[trackingTargetId]
-                            ?: contacts.find { it.id == trackingTargetId }?.location
-                    }
-                }
-
-                targetLocation?.let { newPosition ->
-                    if (!newPosition.latitude.isNaN() && !newPosition.longitude.isNaN()) {
-                        val lastPosition = lastTrackingPositionRef.value
-
-                        val hasSignificantChange = lastPosition == null ||
-                            kotlin.math.abs(lastPosition.latitude - newPosition.latitude) > 0.000001 ||
-                            kotlin.math.abs(lastPosition.longitude - newPosition.longitude) > 0.000001
-
-                        if (hasSignificantChange) {
-                            cameraAnimatorRef.value?.cancel()
-
-                            if (lastPosition != null) {
-                                val animator = ValueAnimator.ofFloat(0f, 1f).apply {
-                                    duration = animConfig.cameraAnimDurationMs // 默认 800ms，三星 S24 Ultra 为 600ms
-                                    interpolator = LinearInterpolator()
-                                    addUpdateListener { animation ->
-                                        val fraction = animation.animatedValue as Float
-                                        val lat = lastPosition.latitude + (newPosition.latitude - lastPosition.latitude) * fraction
-                                        val lng = lastPosition.longitude + (newPosition.longitude - lastPosition.longitude) * fraction
-                                        val interpolatedPosition = latLngOf(lat, lng)
-
-                                        tencentMap.moveCamera(
-                                            CameraUpdateFactory.newLatLng(interpolatedPosition)
-                                        )
-                                    }
-                                }
-                                animator.start()
-                                cameraAnimatorRef.value = animator
-                            }
-
-                            lastTrackingPositionRef.value = newPosition
-                        }
-                    }
-                }
-            } else {
-                cameraAnimatorRef.value?.cancel()
-                cameraAnimatorRef.value = null
-                lastTrackingPositionRef.value = null
-            }
+        }
+    } else {
+        cameraAnimatorRef.value?.cancel()
+        cameraAnimatorRef.value = null
+        lastTrackingPositionRef.value = null
+    }
 }
 
 /**
@@ -1230,55 +906,4 @@ private fun calculateMergeGroups(
     return result
 }
 
-/**
- * 计算扇形多边形的顶点列表
- */
-private fun calculateSectorPoints(
-    center: LatLng,
-    radius: Double,
-    direction: Float,
-    fov: Float = 60f
-): List<LatLng> {
-    val points = mutableListOf<LatLng>()
-    points.add(center)
 
-    val startAngle = direction - fov / 2
-    val endAngle = direction + fov / 2
-
-    var angle = startAngle
-    while (angle <= endAngle) {
-        points.add(computeOffset(center, radius, angle.toDouble()))
-        angle += 5
-    }
-    points.add(computeOffset(center, radius, endAngle.toDouble()))
-    points.add(center)
-
-    return points
-}
-
-/**
- * 计算给定距离和方位的目标坐标
- */
-private fun computeOffset(from: LatLng, distance: Double, heading: Double): LatLng {
-    val d = distance / 6371009.0
-    val h = Math.toRadians(heading)
-    val fromLat = Math.toRadians(from.latitude)
-    val fromLng = Math.toRadians(from.longitude)
-
-    val lat = asin(sin(fromLat) * cos(d) + cos(fromLat) * sin(d) * cos(h))
-    val lng = fromLng + atan2(sin(h) * sin(d) * cos(fromLat), cos(d) - sin(fromLat) * sin(lat))
-
-    return latLngOf(Math.toDegrees(lat), Math.toDegrees(lng))
-}
-
-/**
- * 动画参数数据类
- * 用于封装动画的起点、终点、航向角和时长
- */
-private data class AnimationParams(
-    val startPosition: LatLng,
-    val endPosition: LatLng,
-    val startBearing: Float,
-    val endBearing: Float,
-    val duration: Long
-)

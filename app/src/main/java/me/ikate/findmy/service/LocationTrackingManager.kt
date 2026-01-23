@@ -46,6 +46,8 @@ class LocationTrackingManager(
         private const val REQUEST_TIMEOUT_MS = 10_000L
         private const val TRACKING_DURATION_MS = 60_000L
         private const val SUCCESS_DISPLAY_MS = 2_000L  // 成功状态显示时间
+        private const val DEBOUNCE_MS = 400L           // 防双击误操作
+        private const val COOLDOWN_AFTER_SUCCESS_MS = 3_000L  // SUCCESS 后冷却期
     }
 
     // 正在请求位置更新的联系人 UID
@@ -62,6 +64,12 @@ class LocationTrackingManager(
 
     // 追踪任务 Map: targetUid -> Job（用于取消追踪）
     private val trackingJobs = mutableMapOf<String, Job>()
+
+    // 每个联系人的上次请求时间（用于防抖和冷却期）
+    private val lastRequestTime = mutableMapOf<String, Long>()
+
+    // 追踪期间是否收到过位置更新（用于判断追踪成功/失败）
+    private val hasReceivedLocation = mutableMapOf<String, Boolean>()
 
     // 错误消息
     private val _errorMessage = MutableStateFlow<String?>(null)
@@ -89,14 +97,26 @@ class LocationTrackingManager(
     }
 
     /**
-     * 标记追踪成功
-     * 当收到位置更新时调用，显示成功状态后自动回到 IDLE
+     * 标记收到位置更新
+     * 在追踪期间收到位置时调用，不改变状态，只记录已收到位置
+     * 追踪结束时会根据此标记判断是 SUCCESS 还是 FAILED
      */
-    fun markTrackingSuccess(targetUid: String) {
+    fun onLocationReceived(targetUid: String) {
+        val currentState = getTrackingState(targetUid)
+        if (currentState == TrackingState.CONNECTED || currentState == TrackingState.WAITING) {
+            hasReceivedLocation[targetUid] = true
+            Log.d(TAG, "[追踪] 收到位置更新: $targetUid (追踪继续)")
+        }
+    }
+
+    /**
+     * 标记追踪成功（内部使用）
+     * 追踪周期结束且期间收到过位置时调用
+     */
+    private fun markTrackingSuccess(targetUid: String) {
         scope.launch {
             updateTrackingState(targetUid, TrackingState.SUCCESS)
             delay(SUCCESS_DISPLAY_MS)
-            // 如果还是 SUCCESS 状态才重置（可能已被其他操作改变）
             if (_trackingStates.value[targetUid] == TrackingState.SUCCESS) {
                 updateTrackingState(targetUid, TrackingState.IDLE)
             }
@@ -104,14 +124,13 @@ class LocationTrackingManager(
     }
 
     /**
-     * 标记追踪失败
-     * 当连接失败或超时时调用，显示失败状态后自动回到 IDLE
+     * 标记追踪失败（内部使用）
+     * 追踪周期结束且期间未收到任何位置时调用
      */
-    fun markTrackingFailed(targetUid: String) {
+    private fun markTrackingFailed(targetUid: String) {
         scope.launch {
             updateTrackingState(targetUid, TrackingState.FAILED)
             delay(SUCCESS_DISPLAY_MS)
-            // 如果还是 FAILED 状态才重置（可能已被其他操作改变）
             if (_trackingStates.value[targetUid] == TrackingState.FAILED) {
                 updateTrackingState(targetUid, TrackingState.IDLE)
             }
@@ -390,19 +409,41 @@ class LocationTrackingManager(
             return
         }
 
-        // 如果已经在追踪这个联系人，则停止追踪
+        val now = System.currentTimeMillis()
+        val lastTime = lastRequestTime[targetUid] ?: 0L
         val currentState = getTrackingState(targetUid)
-        if (currentState != TrackingState.IDLE && currentState != TrackingState.SUCCESS) {
-            Log.d(TAG, "[刷新追踪] 已在追踪中，停止追踪: targetUid=$targetUid")
-            stopContinuousTracking(currentUid, targetUid)
+
+        // 1. 防抖：防止双击误操作（400ms 内忽略重复点击）
+        if (now - lastTime < DEBOUNCE_MS) {
+            Log.d(TAG, "[刷新追踪] 防抖保护：忽略快速连续点击 (间隔=${now - lastTime}ms)")
             return
         }
+
+        // 2. 冷却期：SUCCESS 状态下不允许立即重新请求（避免刚收到位置就重复请求）
+        if (currentState == TrackingState.SUCCESS) {
+            Log.d(TAG, "[刷新追踪] 冷却期保护：正在显示成功状态，请稍后重试")
+            return
+        }
+
+        // 3. 已在追踪中（WAITING/CONNECTED/FAILED）则停止追踪
+        if (currentState != TrackingState.IDLE) {
+            Log.d(TAG, "[刷新追踪] 已在追踪中，停止追踪: targetUid=$targetUid, state=$currentState")
+            stopContinuousTracking(currentUid, targetUid)
+            lastRequestTime[targetUid] = now
+            return
+        }
+
+        // 记录请求时间
+        lastRequestTime[targetUid] = now
 
         // 取消之前的追踪任务（如果有）
         trackingJobs[targetUid]?.cancel()
 
         val job = scope.launch {
             try {
+                // 重置位置接收标记
+                hasReceivedLocation[targetUid] = false
+
                 // 步骤1: 设置等待状态（黄色）
                 updateTrackingState(targetUid, TrackingState.WAITING)
                 _requestingLocationFor.value = targetUid
@@ -440,21 +481,29 @@ class LocationTrackingManager(
                     reportLocationFirst = false
                 )
 
-                Log.i(TAG, "[刷新追踪] 步骤7: 等待位置响应中... (60秒超时)")
+                Log.i(TAG, "[刷新追踪] 步骤7: 持续追踪中... (60秒)")
 
-                // 60秒后自动清除追踪状态
+                // 60秒后自动结束追踪
                 delay(TRACKING_DURATION_MS)
                 if (_trackingContactUid.value == targetUid) {
                     _trackingContactUid.value = null
-                    // 超时未收到响应，标记为失败
                     val currentState = _trackingStates.value[targetUid]
                     if (currentState == TrackingState.CONNECTED || currentState == TrackingState.WAITING) {
-                        Log.i(TAG, "[刷新追踪] 步骤8: 追踪超时，标记失败 -> FAILED")
-                        markTrackingFailed(targetUid)
+                        // 根据是否收到过位置判断成功/失败
+                        val received = hasReceivedLocation[targetUid] == true
+                        if (received) {
+                            Log.i(TAG, "[刷新追踪] 步骤8: 追踪完成，期间收到位置 -> SUCCESS")
+                            markTrackingSuccess(targetUid)
+                        } else {
+                            Log.i(TAG, "[刷新追踪] 步骤8: 追踪完成，未收到位置 -> FAILED")
+                            markTrackingFailed(targetUid)
+                        }
                     } else {
                         updateTrackingState(targetUid, TrackingState.IDLE)
                         Log.i(TAG, "[刷新追踪] 步骤8: 追踪已结束 -> IDLE")
                     }
+                    // 清理标记
+                    hasReceivedLocation.remove(targetUid)
                 }
             } catch (e: CancellationException) {
                 // 协程取消是正常行为（用户主动停止追踪），不视为错误

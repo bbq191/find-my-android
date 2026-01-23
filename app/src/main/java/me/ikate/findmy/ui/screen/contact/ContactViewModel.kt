@@ -149,7 +149,8 @@ class ContactViewModel(
     }
 
     /**
-     * 监听位置更新，当收到追踪目标的位置更新时标记成功
+     * 监听位置更新，当收到追踪目标的位置更新时记录
+     * 追踪期间持续收到位置，不改变状态，60秒后根据是否收到过位置判断成功/失败
      */
     private fun observeLocationUpdates() {
         viewModelScope.launch {
@@ -159,8 +160,8 @@ class ContactViewModel(
                     val trackingUid = trackingManager.trackingContactUid.value
                     if (trackingUid != null && device.ownerId == trackingUid) {
                         Log.i(TAG, "[位置更新] 收到追踪目标的位置更新: ${device.ownerId}")
-                        // 标记追踪成功（显示绿色边框）
-                        trackingManager.markTrackingSuccess(trackingUid)
+                        // 记录收到位置（追踪继续，不改变状态）
+                        trackingManager.onLocationReceived(trackingUid)
                     }
                 }
             } catch (e: Exception) {
@@ -720,13 +721,6 @@ class ContactViewModel(
      */
     fun getTrackingState(targetUid: String): me.ikate.findmy.service.TrackingState {
         return trackingManager.getTrackingState(targetUid)
-    }
-
-    /**
-     * 标记追踪成功（当收到位置更新时调用）
-     */
-    fun markTrackingSuccess(targetUid: String) {
-        trackingManager.markTrackingSuccess(targetUid)
     }
 
     /**

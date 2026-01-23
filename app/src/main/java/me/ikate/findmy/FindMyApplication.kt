@@ -190,12 +190,14 @@ class FindMyApplication : Application() {
      * 初始化 StrictMode（仅 Debug 构建）
      *
      * 功能：
-     * - 检测主线程上的磁盘读写、网络访问等耗时操作
+     * - 检测主线程上的网络访问（最重要，会导致 ANR）
      * - 检测资源泄漏（未关闭的 Cursor、未释放的 SQLite 对象等）
      * - 检测 Activity 泄漏
      *
      * 注意：
      * - 仅在 Debug 构建中启用，Release 构建自动跳过
+     * - 磁盘读写检测已禁用（第三方 SDK 如腾讯地图会产生大量误报）
+     * - 明文网络检测已禁用（腾讯 SDK 内部通信会触发误报）
      * - 违规行为会记录到 Logcat（tag: StrictMode）
      * - 配合 LeakCanary 使用效果更佳
      */
@@ -207,19 +209,24 @@ class FindMyApplication : Application() {
 
         Log.d(TAG, "初始化 StrictMode（Debug 模式）")
 
-        // 线程策略：检测主线程上的违规操作
+        // 线程策略：仅检测最关键的违规（网络访问会导致 ANR）
+        // 注意：磁盘读写检测已禁用，因为：
+        // 1. 腾讯地图 SDK 初始化会触发大量磁盘读取
+        // 2. SharedPreferences 首次加载会触发磁盘读取
+        // 3. Firebase SDK 内部也有磁盘操作
+        // 这些都是第三方库的正常行为，我们无法控制
         StrictMode.setThreadPolicy(
             StrictMode.ThreadPolicy.Builder()
-                .detectDiskReads()           // 检测磁盘读取
-                .detectDiskWrites()          // 检测磁盘写入
-                .detectNetwork()             // 检测网络访问
+                .detectNetwork()             // 检测网络访问（最重要！会导致 ANR）
                 .detectCustomSlowCalls()     // 检测自定义慢调用
+                // .detectDiskReads()        // 禁用：第三方 SDK 误报过多
+                // .detectDiskWrites()       // 禁用：第三方 SDK 误报过多
                 .penaltyLog()                // 记录到 Logcat
-                // .penaltyDeath()           // 严格模式：违规时崩溃（开发后期可启用）
                 .build()
         )
 
-        // VM 策略：检测内存泄漏和资源泄漏
+        // VM 策略：检测内存泄漏和资源泄漏（这些是真正需要关注的问题）
+        // 注意：明文网络检测已禁用，因为腾讯 SDK 内部使用明文通信
         StrictMode.setVmPolicy(
             StrictMode.VmPolicy.Builder()
                 .detectLeakedSqlLiteObjects()      // 检测未关闭的 SQLite 对象
@@ -227,12 +234,11 @@ class FindMyApplication : Application() {
                 .detectActivityLeaks()             // 检测 Activity 泄漏
                 .detectLeakedRegistrationObjects() // 检测未注销的 BroadcastReceiver 等
                 .detectFileUriExposure()           // 检测 file:// URI 暴露
-                .detectCleartextNetwork()          // 检测明文网络传输
+                // .detectCleartextNetwork()       // 禁用：腾讯 SDK 内部明文通信
                 .penaltyLog()                      // 记录到 Logcat
-                // .penaltyDeath()                 // 严格模式：违规时崩溃
                 .build()
         )
 
-        Log.d(TAG, "StrictMode 初始化完成，违规行为将记录到 Logcat (tag: StrictMode)")
+        Log.d(TAG, "StrictMode 初始化完成（精简模式：仅检测网络访问和资源泄漏）")
     }
 }

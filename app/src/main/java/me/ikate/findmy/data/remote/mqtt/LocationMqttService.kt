@@ -807,7 +807,10 @@ class LocationMqttService(
         // 清理已发送的消息
         pendingMessageDao.deleteSentMessages()
 
-        Log.d(TAG, "离线队列处理完成: 发送 $sentCount/${pendingMessages.size} 条消息")
+        // 只在有消息处理时才输出日志
+        if (pendingMessages.isNotEmpty()) {
+            Log.d(TAG, "离线队列处理完成: 发送 $sentCount/${pendingMessages.size} 条消息")
+        }
         return sentCount
     }
 

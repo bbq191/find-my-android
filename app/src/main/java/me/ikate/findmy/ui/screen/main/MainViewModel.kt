@@ -286,8 +286,6 @@ class MainViewModel(
                         // 更新实时位置（用于地图显示）
                         _currentDeviceRealtimeLocation.value = latLng
                         _currentDeviceBearing.value = locationResult.bearing
-
-                        Log.d(TAG, "实时位置更新: (${latLng.latitude}, ${latLng.longitude}), 朝向: ${locationResult.bearing}")
                     }
                 }
             }

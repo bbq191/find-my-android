@@ -196,7 +196,7 @@ class TencentLocationService(private val context: Context) {
                         }
 
                         override fun onStatusUpdate(name: String?, status: Int, desc: String?) {
-                            Log.d(TAG, "Status update: name=$name, status=$status, desc=$desc")
+                            // 状态更新（静默）
                         }
                     }
 
@@ -350,7 +350,7 @@ class TencentLocationService(private val context: Context) {
             }
 
             override fun onStatusUpdate(name: String?, status: Int, desc: String?) {
-                Log.d(TAG, "Status update: name=$name, status=$status, desc=$desc")
+                // 状态更新（静默）
             }
         }
 
