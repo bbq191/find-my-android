@@ -139,10 +139,32 @@ class ContactViewModel(
         ensureUserAuthenticatedAndObserve()
         startPeriodicCleanup()
         observeTrackingErrors()
+        observeLocationUpdates()  // 监听位置更新，更新追踪状态
         // 监听 MQTT 共享消息（订阅在 MainViewModel 中完成）
         observeShareRequests()
         observeShareResponses()
         observeSharePauseStatus()
+    }
+
+    /**
+     * 监听位置更新，当收到追踪目标的位置更新时标记成功
+     */
+    private fun observeLocationUpdates() {
+        viewModelScope.launch {
+            try {
+                mqttService.locationUpdates.collect { device ->
+                    // 检查是否是正在追踪的联系人
+                    val trackingUid = trackingManager.trackingContactUid.value
+                    if (trackingUid != null && device.ownerId == trackingUid) {
+                        Log.i(TAG, "[位置更新] 收到追踪目标的位置更新: ${device.ownerId}")
+                        // 标记追踪成功（显示绿色边框）
+                        trackingManager.markTrackingSuccess(trackingUid)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "[位置更新] 监听位置更新失败", e)
+            }
+        }
     }
 
     private fun observeTrackingErrors() {

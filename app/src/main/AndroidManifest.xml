@@ -32,6 +32,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_LOCATION" />
 
     <!-- FCM 推送权限 -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
@@ -148,6 +149,12 @@
             android:name=".service.MqttForegroundService"
             android:exported="false"
             android:foregroundServiceType="remoteMessaging" />
+
+        <!-- 围栏监控前台服务（高频位置监控，IMPORTANCE_LOW 通知） -->
+        <service
+            android:name=".service.GeofenceForegroundService"
+            android:exported="false"
+            android:foregroundServiceType="location" />
 
         <!-- 地理围栏广播接收器（腾讯 Geofence SDK） -->
         <receiver

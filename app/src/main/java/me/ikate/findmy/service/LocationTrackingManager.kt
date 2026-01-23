@@ -24,10 +24,12 @@ enum class TrackingState {
     IDLE,
     /** 等待中，启动追踪等待连接（黄色） */
     WAITING,
-    /** 已连接，追踪中（蓝色） */
+    /** 已连接，追踪中（蓝色旋转动画） */
     CONNECTED,
     /** 追踪成功，位置已刷新（绿色），短暂显示后回到 IDLE */
-    SUCCESS
+    SUCCESS,
+    /** 追踪失败，连接不成功（灰色） */
+    FAILED
 }
 
 /**
@@ -96,6 +98,21 @@ class LocationTrackingManager(
             delay(SUCCESS_DISPLAY_MS)
             // 如果还是 SUCCESS 状态才重置（可能已被其他操作改变）
             if (_trackingStates.value[targetUid] == TrackingState.SUCCESS) {
+                updateTrackingState(targetUid, TrackingState.IDLE)
+            }
+        }
+    }
+
+    /**
+     * 标记追踪失败
+     * 当连接失败或超时时调用，显示失败状态后自动回到 IDLE
+     */
+    fun markTrackingFailed(targetUid: String) {
+        scope.launch {
+            updateTrackingState(targetUid, TrackingState.FAILED)
+            delay(SUCCESS_DISPLAY_MS)
+            // 如果还是 FAILED 状态才重置（可能已被其他操作改变）
+            if (_trackingStates.value[targetUid] == TrackingState.FAILED) {
                 updateTrackingState(targetUid, TrackingState.IDLE)
             }
         }
@@ -429,8 +446,15 @@ class LocationTrackingManager(
                 delay(TRACKING_DURATION_MS)
                 if (_trackingContactUid.value == targetUid) {
                     _trackingContactUid.value = null
-                    updateTrackingState(targetUid, TrackingState.IDLE)
-                    Log.i(TAG, "[刷新追踪] 步骤8: 追踪已自动结束（60秒超时）-> IDLE")
+                    // 超时未收到响应，标记为失败
+                    val currentState = _trackingStates.value[targetUid]
+                    if (currentState == TrackingState.CONNECTED || currentState == TrackingState.WAITING) {
+                        Log.i(TAG, "[刷新追踪] 步骤8: 追踪超时，标记失败 -> FAILED")
+                        markTrackingFailed(targetUid)
+                    } else {
+                        updateTrackingState(targetUid, TrackingState.IDLE)
+                        Log.i(TAG, "[刷新追踪] 步骤8: 追踪已结束 -> IDLE")
+                    }
                 }
             } catch (e: CancellationException) {
                 // 协程取消是正常行为（用户主动停止追踪），不视为错误

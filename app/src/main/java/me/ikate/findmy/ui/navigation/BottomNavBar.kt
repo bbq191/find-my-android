@@ -23,9 +23,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
+import me.ikate.findmy.util.rememberHaptics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -69,7 +68,7 @@ fun BottomNavBar(
     onTabSelected: (FindMyTab) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val haptic = LocalHapticFeedback.current
+    val haptics = rememberHaptics()
 
     NavigationBar(
         modifier = modifier,
@@ -93,7 +92,7 @@ fun BottomNavBar(
                 selected = selected,
                 onClick = {
                     if (!selected) {
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        haptics.click()  // Tab 切换：清脆的点击感
                         onTabSelected(tab)
                     }
                 },

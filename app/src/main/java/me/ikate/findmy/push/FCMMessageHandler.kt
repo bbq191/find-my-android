@@ -11,6 +11,7 @@ import com.google.gson.JsonParser
 import me.ikate.findmy.MainActivity
 import me.ikate.findmy.util.NotificationHelper
 import android.provider.Settings
+import me.ikate.findmy.service.GeofenceServiceController
 import me.ikate.findmy.service.MqttForegroundService
 import me.ikate.findmy.service.SoundPlaybackService
 import me.ikate.findmy.domain.statemachine.LocationStateMachine
@@ -42,6 +43,14 @@ object FCMMessageHandler {
             communicationManager.ensureMqttConnection()
         } catch (e: Exception) {
             Log.w(TAG, "确保 MQTT 连接失败", e)
+        }
+
+        // FCM 唤醒后刷新围栏服务状态
+        // 如果有激活的围栏，确保前台服务正在运行
+        try {
+            GeofenceServiceController.getInstance(context).refreshState()
+        } catch (e: Exception) {
+            Log.w(TAG, "刷新围栏服务状态失败", e)
         }
 
         try {

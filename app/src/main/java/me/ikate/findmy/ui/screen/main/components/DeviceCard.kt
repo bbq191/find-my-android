@@ -28,9 +28,14 @@ import androidx.compose.material.icons.filled.Battery5Bar
 import androidx.compose.material.icons.filled.Battery6Bar
 import androidx.compose.material.icons.filled.BatteryFull
 import androidx.compose.material.icons.filled.Directions
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.PhoneAndroid
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.material3.LinearProgressIndicator
+import me.ikate.findmy.ui.theme.FindMyShapes
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Tablet
 import androidx.compose.material.icons.filled.Watch
@@ -101,8 +106,11 @@ fun DeviceCard(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // 设备图标
-                DeviceIcon(deviceType = device.deviceType)
+                // 设备图标（根据型号精细化显示）
+                DeviceIcon(
+                    deviceType = device.deviceType,
+                    deviceModel = device.name  // name 字段存储设备型号
+                )
 
                 Spacer(modifier = Modifier.width(16.dp))
 
@@ -200,6 +208,7 @@ fun DeviceCard(
                     )
                     Spacer(modifier = Modifier.height(12.dp))
 
+                    // 主要操作按钮行
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceEvenly
@@ -216,17 +225,15 @@ fun DeviceCard(
                             icon = if (isRinging) Icons.Default.Stop else Icons.AutoMirrored.Filled.VolumeUp,
                             label = if (isRinging) "停止" else "响铃",
                             isDestructive = isRinging,
+                            useConfirmHaptic = true,  // 远程控制指令需要明确的确认震动
                             onClick = if (isRinging) onStopSound else onPlaySound
                         )
+                    }
 
-                        // 丢失模式按钮（仅限自己的设备）
-                        if (!isSharedDevice) {
-                            ActionButton(
-                                icon = Icons.Default.Lock,
-                                label = "丢失模式",
-                                onClick = onLostMode
-                            )
-                        }
+                    // 丢失模式独立卡片（仅限自己的设备）
+                    if (!isSharedDevice) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        LostModeCard(onClick = onLostMode)
                     }
                 }
             }
@@ -234,32 +241,69 @@ fun DeviceCard(
     }
 }
 
+/**
+ * 设备图标组件 - 根据设备型号精细化显示
+ * 支持识别 Samsung、iPhone、Pixel 等不同品牌
+ */
 @Composable
-private fun DeviceIcon(deviceType: DeviceType) {
+private fun DeviceIcon(
+    deviceType: DeviceType,
+    deviceModel: String? = null
+) {
+    // 根据设备型号识别品牌
+    val brand = deviceModel?.let { model ->
+        when {
+            model.contains("Samsung", ignoreCase = true) ||
+            model.contains("Galaxy", ignoreCase = true) ||
+            model.contains("SM-", ignoreCase = true) -> DeviceBrand.SAMSUNG
+            model.contains("iPhone", ignoreCase = true) ||
+            model.contains("iPad", ignoreCase = true) -> DeviceBrand.APPLE
+            model.contains("Pixel", ignoreCase = true) -> DeviceBrand.GOOGLE
+            model.contains("Xiaomi", ignoreCase = true) ||
+            model.contains("Redmi", ignoreCase = true) ||
+            model.contains("Mi ", ignoreCase = true) -> DeviceBrand.XIAOMI
+            model.contains("HUAWEI", ignoreCase = true) ||
+            model.contains("Honor", ignoreCase = true) -> DeviceBrand.HUAWEI
+            model.contains("OnePlus", ignoreCase = true) -> DeviceBrand.ONEPLUS
+            model.contains("OPPO", ignoreCase = true) -> DeviceBrand.OPPO
+            model.contains("vivo", ignoreCase = true) -> DeviceBrand.VIVO
+            else -> DeviceBrand.OTHER
+        }
+    } ?: DeviceBrand.OTHER
+
     // 使用 Outlined 风格图标（线框风格，更接近 Apple 设计）
     val icon = when (deviceType) {
         DeviceType.PHONE -> Icons.Outlined.PhoneAndroid
         DeviceType.TABLET -> Icons.Outlined.Tablet
         DeviceType.WATCH -> Icons.Outlined.Watch
-        DeviceType.AIRTAG -> Icons.Default.LocationOn  // AirTag 使用定位图标
+        DeviceType.AIRTAG -> Icons.Default.LocationOn
         DeviceType.OTHER -> Icons.Outlined.Laptop
     }
 
-    // 根据设备类型设置不同的主题色
-    val iconTint = when (deviceType) {
-        DeviceType.PHONE -> MaterialTheme.colorScheme.primary
-        DeviceType.TABLET -> MaterialTheme.colorScheme.tertiary
-        DeviceType.WATCH -> MaterialTheme.colorScheme.secondary
-        DeviceType.AIRTAG -> MaterialTheme.colorScheme.primary
-        DeviceType.OTHER -> MaterialTheme.colorScheme.onSurfaceVariant
-    }
-
-    val containerColor = when (deviceType) {
-        DeviceType.PHONE -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
-        DeviceType.TABLET -> MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.4f)
-        DeviceType.WATCH -> MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.4f)
-        DeviceType.AIRTAG -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
-        DeviceType.OTHER -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+    // 根据品牌和设备类型设置不同的主题色
+    val (iconTint, containerColor) = when (brand) {
+        DeviceBrand.SAMSUNG -> MaterialTheme.colorScheme.primary to
+                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
+        DeviceBrand.APPLE -> MaterialTheme.colorScheme.onSurface to
+                MaterialTheme.colorScheme.surfaceContainerHighest
+        DeviceBrand.GOOGLE -> MaterialTheme.colorScheme.tertiary to
+                MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.4f)
+        DeviceBrand.XIAOMI -> androidx.compose.ui.graphics.Color(0xFFFF6900) to
+                androidx.compose.ui.graphics.Color(0xFFFF6900).copy(alpha = 0.1f)
+        DeviceBrand.HUAWEI -> androidx.compose.ui.graphics.Color(0xFFCF0A2C) to
+                androidx.compose.ui.graphics.Color(0xFFCF0A2C).copy(alpha = 0.1f)
+        else -> when (deviceType) {
+            DeviceType.PHONE -> MaterialTheme.colorScheme.primary to
+                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
+            DeviceType.TABLET -> MaterialTheme.colorScheme.tertiary to
+                    MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.4f)
+            DeviceType.WATCH -> MaterialTheme.colorScheme.secondary to
+                    MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.4f)
+            DeviceType.AIRTAG -> MaterialTheme.colorScheme.primary to
+                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
+            DeviceType.OTHER -> MaterialTheme.colorScheme.onSurfaceVariant to
+                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+        }
     }
 
     Surface(
@@ -273,6 +317,81 @@ private fun DeviceIcon(deviceType: DeviceType) {
                 contentDescription = deviceType.name,
                 modifier = Modifier.size(28.dp),
                 tint = iconTint
+            )
+        }
+    }
+}
+
+/**
+ * 设备品牌枚举
+ */
+private enum class DeviceBrand {
+    SAMSUNG, APPLE, GOOGLE, XIAOMI, HUAWEI, ONEPLUS, OPPO, VIVO, OTHER
+}
+
+/**
+ * 丢失模式独立卡片
+ * 使用红色警告色，突出显示这是一个重要的安全功能
+ */
+@Composable
+private fun LostModeCard(onClick: () -> Unit) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(FindMyShapes.Medium)
+            .clickable(onClick = onClick),
+        shape = FindMyShapes.Medium,
+        color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f),
+        border = androidx.compose.foundation.BorderStroke(
+            1.dp,
+            MaterialTheme.colorScheme.error.copy(alpha = 0.3f)
+        )
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            // 警告图标
+            Surface(
+                modifier = Modifier.size(36.dp),
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.error.copy(alpha = 0.15f)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = Icons.Default.Lock,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.width(12.dp))
+
+            // 文字说明
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "标记为丢失",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.error
+                )
+                Text(
+                    text = "启用后将显示您的联系方式",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            // 右箭头
+            Icon(
+                imageVector = Icons.Default.ChevronRight,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp),
+                tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f)
             )
         }
     }
@@ -301,30 +420,58 @@ private fun DeviceLabel(text: String, isPrimary: Boolean) {
     }
 }
 
+/**
+ * 电量指示器 - 使用进度条可视化
+ * 电量 ≤20% 时显示红色，≤50% 显示黄色，其他显示绿色
+ */
 @Composable
-private fun BatteryIndicator(battery: Int) {
-    val icon = getBatteryIcon(battery)
+private fun BatteryIndicator(battery: Int, showProgressBar: Boolean = true) {
     val color = when {
         battery <= 20 -> MaterialTheme.colorScheme.error
         battery <= 50 -> MaterialTheme.colorScheme.tertiary
         else -> MaterialTheme.colorScheme.primary
     }
 
+    val trackColor = when {
+        battery <= 20 -> MaterialTheme.colorScheme.errorContainer
+        battery <= 50 -> MaterialTheme.colorScheme.tertiaryContainer
+        else -> MaterialTheme.colorScheme.primaryContainer
+    }
+
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp)
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            modifier = Modifier.size(14.dp),
-            tint = color
-        )
+        // 电量进度条
+        if (showProgressBar) {
+            LinearProgressIndicator(
+                progress = { battery / 100f },
+                modifier = Modifier
+                    .width(60.dp)
+                    .height(6.dp)
+                    .clip(RoundedCornerShape(3.dp)),
+                color = color,
+                trackColor = trackColor,
+            )
+        }
+
+        // 电量百分比
         Text(
             text = "$battery%",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            style = MaterialTheme.typography.labelSmall,
+            color = color,
+            fontWeight = FontWeight.Medium
         )
+
+        // 低电量警告图标
+        if (battery <= 20) {
+            Icon(
+                imageVector = Icons.Default.Warning,
+                contentDescription = "低电量",
+                modifier = Modifier.size(14.dp),
+                tint = MaterialTheme.colorScheme.error
+            )
+        }
     }
 }
 

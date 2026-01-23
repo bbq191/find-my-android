@@ -38,7 +38,8 @@ data class MapThemeColors(
 object MapTheme {
 
     /**
-     * 白天主题 - 明亮清新
+     * 浅色主题（白天）- 明亮清新
+     * 自动应用腾讯地图白浅样式 (styleId=1)
      */
     val Day = MapThemeColors(
         primary = Color(0xFF007AFF),
@@ -57,52 +58,15 @@ object MapTheme {
     )
 
     /**
-     * 黄昏主题 - 温暖橙色调
-     */
-    val Dusk = MapThemeColors(
-        primary = Color(0xFFFF9500),
-        primaryVariant = Color(0xFFCC7700),
-        surface = Color(0xFFFFF8F0),
-        surfaceVariant = Color(0xFFFFF3E6),
-        background = Color(0xFFFEF5EB),
-        onPrimary = Color.White,
-        onSurface = Color(0xFF3D2914),
-        onSurfaceVariant = Color(0xFF8B7355),
-        border = Color(0xFFFFE4C4),
-        buttonBackground = Color(0xFFFFF8F0),
-        buttonIcon = Color(0xFFFF9500),
-        accent = Color(0xFFFF6B35),
-        isDark = false
-    )
-
-    /**
-     * 黎明主题 - 淡粉紫色调
-     */
-    val Dawn = MapThemeColors(
-        primary = Color(0xFFAF52DE),
-        primaryVariant = Color(0xFF8B3FB8),
-        surface = Color(0xFFFCF8FF),
-        surfaceVariant = Color(0xFFF8F0FF),
-        background = Color(0xFFFAF5FF),
-        onPrimary = Color.White,
-        onSurface = Color(0xFF2D1F3D),
-        onSurfaceVariant = Color(0xFF7D6B8F),
-        border = Color(0xFFE8D4F4),
-        buttonBackground = Color(0xFFFCF8FF),
-        buttonIcon = Color(0xFFAF52DE),
-        accent = Color(0xFFFF6B9D),
-        isDark = false
-    )
-
-    /**
-     * 夜间主题 - 深色蓝调
+     * 深色主题（夜间）- 深色蓝调
+     * 自动应用腾讯地图墨渊样式 (styleId=2)
      */
     val Night = MapThemeColors(
         primary = Color(0xFF0A84FF),
         primaryVariant = Color(0xFF0066CC),
         surface = Color(0xFF1C1C1E),
         surfaceVariant = Color(0xFF2C2C2E),
-        background = Color(0xFF000000),
+        background = Color(0xFF1C1C1E),
         onPrimary = Color.White,
         onSurface = Color(0xFFFFFFFF),
         onSurfaceVariant = Color(0xFF8E8E93),
@@ -115,15 +79,16 @@ object MapTheme {
 
     /**
      * 根据光照预设获取主题颜色
+     * - AUTO: 根据当前时间自动选择 Day 或 Night
+     * - LIGHT: Day 主题
+     * - DARK: Night 主题
      */
     fun getColors(preset: LightPreset): MapThemeColors {
         val effectivePreset = LightPreset.getEffectivePreset(preset)
         return when (effectivePreset) {
-            LightPreset.DAY -> Day
-            LightPreset.DUSK -> Dusk
-            LightPreset.DAWN -> Dawn
-            LightPreset.NIGHT -> Night
-            LightPreset.AUTO -> Day // 不会到达这里
+            LightPreset.LIGHT -> Day
+            LightPreset.DARK -> Night
+            LightPreset.AUTO -> Day // 不会到达这里，AUTO 会被 getEffectivePreset 转换
         }
     }
 }

@@ -13,7 +13,6 @@ import me.ikate.findmy.data.model.Contact
 import me.ikate.findmy.data.model.Device
 import me.ikate.findmy.data.model.ShareDuration
 import me.ikate.findmy.data.model.User
-import me.ikate.findmy.service.TrackingState
 import me.ikate.findmy.ui.navigation.FindMyTab
 
 /**
@@ -28,7 +27,6 @@ fun TabContent(
     contacts: List<Contact>,
     requestingLocationFor: String?,
     trackingContactUid: String?,
-    trackingStates: Map<String, TrackingState>,
     geofenceContactIds: Set<String>,
     onContactClick: (Contact) -> Unit,
     onAddContactClick: () -> Unit,
@@ -40,7 +38,6 @@ fun TabContent(
     onAcceptShare: (Contact) -> Unit,
     onRejectShare: (Contact) -> Unit,
     onRefreshAndTrack: (String) -> Unit,
-    onStopTracking: (String) -> Unit,
     onPlaySound: (String) -> Unit,
     onStopSound: () -> Unit,
     isRinging: Boolean,
@@ -89,7 +86,6 @@ fun TabContent(
                 contacts = contacts,
                 requestingLocationFor = requestingLocationFor,
                 trackingContactUid = trackingContactUid,
-                trackingStates = trackingStates,
                 geofenceContactIds = geofenceContactIds,
                 onContactClick = onContactClick,
                 onAddContactClick = onAddContactClick,
@@ -101,7 +97,6 @@ fun TabContent(
                 onAcceptShare = onAcceptShare,
                 onRejectShare = onRejectShare,
                 onRefreshAndTrack = onRefreshAndTrack,
-                onStopTracking = onStopTracking,
                 onPlaySound = onPlaySound,
                 onStopSound = onStopSound,
                 isRinging = isRinging,

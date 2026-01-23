@@ -5,11 +5,18 @@ package me.ikate.findmy.ui.screen.main.components
 import android.animation.ValueAnimator
 import android.graphics.BitmapFactory
 import android.view.animation.LinearInterpolator
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.Dp
@@ -32,6 +39,7 @@ import me.ikate.findmy.data.model.Contact
 import me.ikate.findmy.data.model.Device
 import me.ikate.findmy.data.model.ShareStatus
 import me.ikate.findmy.data.model.latLngOf
+import me.ikate.findmy.service.TrackingState
 import android.util.Log
 import android.app.Activity
 import me.ikate.findmy.util.AppIconHelper
@@ -62,6 +70,9 @@ import kotlin.math.sqrt
  * @param mapLayerConfig 地图图层配置
  * @param bottomPadding 底部 padding
  * @param trackingTargetId 正在追踪的目标 ID（设备 ID 或联系人 ID，null 表示不追踪）
+ * @param trackingContactUid 正在追踪的联系人 UID（用于脉冲动画）
+ * @param trackingStates 追踪状态 Map（用于脉冲动画颜色）
+ * @param allContacts 完整联系人列表（用于脉冲动画查找位置，不受 tab 过滤影响）
  * @param onMapReady 地图准备完成回调
  * @param onMarkerClick Marker 点击回调
  * @param onContactMarkerClick 联系人 Marker 点击回调
@@ -79,6 +90,9 @@ fun TencentMapViewWrapper(
     mapLayerConfig: MapLayerConfig = MapLayerConfig(),
     bottomPadding: Dp = 0.dp,
     trackingTargetId: String? = null,
+    trackingContactUid: String? = null,
+    trackingStates: Map<String, TrackingState> = emptyMap(),
+    allContacts: List<Contact> = emptyList(),  // 用于脉冲动画查找联系人位置
     onMapReady: (TencentMap) -> Unit = {},
     onMarkerClick: (Device) -> Unit = {},
     onContactMarkerClick: (Contact) -> Unit = {},
@@ -182,6 +196,12 @@ fun TencentMapViewWrapper(
     val sectorPolygonRef = remember { mutableStateOf<Polygon?>(null) }
     val contactMarkersRef = remember { mutableStateOf<Map<String, Marker>>(emptyMap()) }
     val contactCirclesRef = remember { mutableStateOf<Map<String, Circle>>(emptyMap()) }  // 联系人绿色圆点
+
+    // 追踪脉冲动画相关状态
+    val pulseCircleRef = remember { mutableStateOf<Circle?>(null) }
+    val pulseAnimatorRef = remember { mutableStateOf<ValueAnimator?>(null) }
+    val lastTrackingContactUidRef = remember { mutableStateOf<String?>(null) }
+    val lastPulseStateRef = remember { mutableStateOf<TrackingState?>(null) }
 
     // 设备优化动画配置（针对三星 S24 Ultra 等高刷屏设备优化）
     val animConfig = remember { DeviceOptimizationConfig.getAnimationConfig() }
@@ -292,6 +312,11 @@ fun TencentMapViewWrapper(
             // 取消所有联系人的动画
             contactAnimatorsRef.value.values.forEach { it.cancel() }
             contactAnimatorsRef.value = emptyMap()
+            // 取消脉冲动画
+            pulseAnimatorRef.value?.cancel()
+            pulseAnimatorRef.value = null
+            pulseCircleRef.value?.remove()
+            pulseCircleRef.value = null
             if (isMapCreated.value) {
                 mapView.onDestroy()
                 isMapCreated.value = false
@@ -299,135 +324,277 @@ fun TencentMapViewWrapper(
         }
     }
 
-    AndroidView(
-        factory = {
-            mapView.apply {
-                // 腾讯 MapView 无需显式调用 onCreate，直接标记已创建
-                if (!isMapCreated.value) {
-                    isMapCreated.value = true
-                }
-                map.apply {
-                    // UI 设置
-                    uiSettings.apply {
-                        isZoomControlsEnabled = false
-                        isCompassEnabled = false
-                        isMyLocationButtonEnabled = false
-                        isScaleViewEnabled = false
-                    }
-
-                    // 地图点击事件
-                    setOnMapClickListener {
-                        selectedMarkerId.value = null
-                        onMapClick()
-                    }
-
-                    // 用户拖动地图时停止追踪
-                    setOnMapPoiClickListener {
-                        if (trackingTargetId != null) {
-                            onUserInteraction()
-                        }
-                    }
-
-                    // Marker 点击事件
-                    setOnMarkerClickListener { marker ->
-                        val tag = marker.tag
-                        when {
-                            tag is Device -> {
-                                selectedMarkerId.value = tag.id
-                                onMarkerClick(tag)
-                            }
-                            tag is Contact -> {
-                                selectedMarkerId.value = "contact_${tag.id}"
-                                onContactMarkerClick(tag)
-                            }
-                        }
-                        true
-                    }
-
-                    // 加载保存的地图样式
-                    val savedStyleName = MapSettingsManager.loadMapStyle(context)
-                    when (savedStyleName) {
-                        "SATELLITE" -> {
-                            mapType = TencentMap.MAP_TYPE_SATELLITE
-                            setMapStyle(0)
-                        }
-                        "BAIQIAN" -> {
-                            // 白浅：浅色个性化样式
-                            mapType = TencentMap.MAP_TYPE_NORMAL
-                            setMapStyle(1)
-                        }
-                        "MOYUAN" -> {
-                            // 墨渊：深色个性化样式
-                            mapType = TencentMap.MAP_TYPE_NORMAL
-                            setMapStyle(2)
-                        }
-                        else -> {
-                            // 标准或默认样式
-                            mapType = TencentMap.MAP_TYPE_NORMAL
-                            setMapStyle(0)
-                        }
-                    }
-
-                    // 保存地图实例引用
-                    mapInstanceRef.value = this
-
-                    // 回调
-                    onMapReady(this)
-                }
-            }
-        },
-        update = { view ->
-            try {
-                updateMapContent(
-                    view = view,
-                    showTraffic = showTraffic,
-                    mapLayerConfig = mapLayerConfig,
-                    currentDevice = currentDevice,
-                    currentDeviceRealtimeLocation = currentDeviceRealtimeLocation,
-                    currentDeviceHeading = currentDeviceHeading,
-                    deviceShouldShowMergedIcon = deviceShouldShowMergedIcon,
-                    avatarBitmap = avatarBitmap,
-                    togetherBitmap = togetherBitmap,
-                    pigBitmap = pigBitmap,
-                    validContacts = validContacts,
-                    contactsMergedWithDevice = contactsMergedWithDevice,
-                    contactGroups = contactGroups,
-                    trackingTargetId = trackingTargetId,
-                    currentDeviceId = currentDeviceId,
-                    devices = devices,
-                    contacts = contacts,
-                    // Refs
-                    deviceMarkerRef = deviceMarkerRef,
-                    deviceCircleRef = deviceCircleRef,
-                    sectorPolygonRef = sectorPolygonRef,
-                    contactMarkersRef = contactMarkersRef,
-                    contactCirclesRef = contactCirclesRef,
-                    lastDevicePositionRef = lastDevicePositionRef,
-                    lastDeviceBearingRef = lastDeviceBearingRef,
-                    positionAnimatorRef = positionAnimatorRef,
-                    animatedPositionRef = animatedPositionRef,
-                    lastContactPositionsRef = lastContactPositionsRef,
-                    lastContactBearingsRef = lastContactBearingsRef,
-                    contactAnimatorsRef = contactAnimatorsRef,
-                    animatedContactPositionsRef = animatedContactPositionsRef,
-                    contactDurationCalculators = contactDurationCalculators,
-                    cameraAnimatorRef = cameraAnimatorRef,
-                    lastTrackingPositionRef = lastTrackingPositionRef,
-                    animConfig = animConfig,
-                    deviceDurationCalculator = deviceDurationCalculator,
-                    latLngEvaluator = latLngEvaluator,
-                    devicePositionBuffer = devicePositionBuffer,
-                    contactPositionBuffers = contactPositionBuffers
-                )
-            } catch (e: ArrayIndexOutOfBoundsException) {
-                // 腾讯地图 SDK 内部并发 bug，忽略此异常
-                Log.w("TencentMapWrapper", "SDK 内部并发异常（已忽略）: ${e.message}")
-            } catch (e: Exception) {
-                Log.e("TencentMapWrapper", "地图更新异常: ${e.message}", e)
-            }
-        },
-        modifier = modifier
+    // 计算深色模式遮罩的透明度
+    val effectivePreset = LightPreset.getEffectivePreset(mapLayerConfig.lightPreset)
+    val isDarkMode = effectivePreset == LightPreset.DARK
+    val overlayAlpha by animateFloatAsState(
+        targetValue = if (isDarkMode) 0.35f else 0f,
+        animationSpec = tween(500),
+        label = "mapOverlay"
     )
+
+    Box(modifier = modifier) {
+        AndroidView(
+            factory = {
+                mapView.apply {
+                    // 腾讯 MapView 无需显式调用 onCreate，直接标记已创建
+                    if (!isMapCreated.value) {
+                        isMapCreated.value = true
+                    }
+                    map.apply {
+                        // UI 设置
+                        uiSettings.apply {
+                            isZoomControlsEnabled = false
+                            isCompassEnabled = false
+                            isMyLocationButtonEnabled = false
+                            isScaleViewEnabled = false
+                        }
+
+                        // 地图点击事件
+                        setOnMapClickListener {
+                            selectedMarkerId.value = null
+                            onMapClick()
+                        }
+
+                        // 用户拖动地图时停止追踪
+                        setOnMapPoiClickListener {
+                            if (trackingTargetId != null) {
+                                onUserInteraction()
+                            }
+                        }
+
+                        // Marker 点击事件
+                        setOnMarkerClickListener { marker ->
+                            val tag = marker.tag
+                            when {
+                                tag is Device -> {
+                                    selectedMarkerId.value = tag.id
+                                    onMarkerClick(tag)
+                                }
+                                tag is Contact -> {
+                                    selectedMarkerId.value = "contact_${tag.id}"
+                                    onContactMarkerClick(tag)
+                                }
+                            }
+                            true
+                        }
+
+                        // 加载保存的地图类型
+                        val savedStyleName = MapSettingsManager.loadMapStyle(context)
+                        mapType = if (savedStyleName == "SATELLITE") {
+                            TencentMap.MAP_TYPE_SATELLITE
+                        } else {
+                            TencentMap.MAP_TYPE_NORMAL
+                        }
+
+                        // 保存地图实例引用
+                        mapInstanceRef.value = this
+
+                        // 回调
+                        onMapReady(this)
+                    }
+                }
+            },
+            update = { view ->
+                try {
+                    updateMapContent(
+                        view = view,
+                        showTraffic = showTraffic,
+                        mapLayerConfig = mapLayerConfig,
+                        currentDevice = currentDevice,
+                        currentDeviceRealtimeLocation = currentDeviceRealtimeLocation,
+                        currentDeviceHeading = currentDeviceHeading,
+                        deviceShouldShowMergedIcon = deviceShouldShowMergedIcon,
+                        avatarBitmap = avatarBitmap,
+                        togetherBitmap = togetherBitmap,
+                        pigBitmap = pigBitmap,
+                        validContacts = validContacts,
+                        contactsMergedWithDevice = contactsMergedWithDevice,
+                        contactGroups = contactGroups,
+                        trackingTargetId = trackingTargetId,
+                        currentDeviceId = currentDeviceId,
+                        devices = devices,
+                        contacts = contacts,
+                        // Refs
+                        deviceMarkerRef = deviceMarkerRef,
+                        deviceCircleRef = deviceCircleRef,
+                        sectorPolygonRef = sectorPolygonRef,
+                        contactMarkersRef = contactMarkersRef,
+                        contactCirclesRef = contactCirclesRef,
+                        lastDevicePositionRef = lastDevicePositionRef,
+                        lastDeviceBearingRef = lastDeviceBearingRef,
+                        positionAnimatorRef = positionAnimatorRef,
+                        animatedPositionRef = animatedPositionRef,
+                        lastContactPositionsRef = lastContactPositionsRef,
+                        lastContactBearingsRef = lastContactBearingsRef,
+                        contactAnimatorsRef = contactAnimatorsRef,
+                        animatedContactPositionsRef = animatedContactPositionsRef,
+                        contactDurationCalculators = contactDurationCalculators,
+                        cameraAnimatorRef = cameraAnimatorRef,
+                        lastTrackingPositionRef = lastTrackingPositionRef,
+                        animConfig = animConfig,
+                        deviceDurationCalculator = deviceDurationCalculator,
+                        latLngEvaluator = latLngEvaluator,
+                        devicePositionBuffer = devicePositionBuffer,
+                        contactPositionBuffers = contactPositionBuffers
+                    )
+
+                    // 追踪脉冲动画逻辑
+                    val tencentMap = view.map
+                    val currentTrackingState = trackingContactUid?.let { trackingStates[it] }
+                    // 使用 allContacts 查找联系人，而不是可能为空的 contacts
+                    val trackedContact = trackingContactUid?.let { uid ->
+                        allContacts.find { it.targetUserId == uid }
+                    }
+
+                    // 检测追踪目标或状态是否变化
+                    val uidChanged = trackingContactUid != lastTrackingContactUidRef.value
+                    val stateChanged = currentTrackingState != lastPulseStateRef.value
+
+                    // 只在追踪目标或状态变化时更新脉冲圈
+                    if (uidChanged || stateChanged) {
+                        lastTrackingContactUidRef.value = trackingContactUid
+                        lastPulseStateRef.value = currentTrackingState
+
+                        // 移除旧的脉冲圈和动画
+                        pulseAnimatorRef.value?.cancel()
+                        pulseAnimatorRef.value = null
+                        pulseCircleRef.value?.remove()
+                        pulseCircleRef.value = null
+
+                        if (trackingContactUid != null && trackedContact?.location != null) {
+                            val location = trackedContact.location
+
+                            when (currentTrackingState) {
+                                TrackingState.WAITING, TrackingState.CONNECTED -> {
+                                    val pulseColor = if (currentTrackingState == TrackingState.WAITING) {
+                                        0x80FFC107.toInt()  // 黄色半透明
+                                    } else {
+                                        0x802196F3.toInt()  // 蓝色半透明
+                                    }
+
+                                    // 创建脉冲圈
+                                    val pulseCircle = tencentMap.addCircle(
+                                        CircleOptions()
+                                            .center(location)
+                                            .radius(20.0)
+                                            .fillColor(pulseColor)
+                                            .strokeColor(pulseColor or 0xFF000000.toInt())
+                                            .strokeWidth(2f)
+                                    )
+                                    pulseCircleRef.value = pulseCircle
+
+                                    // 创建脉冲动画
+                                    val animator = ValueAnimator.ofFloat(20f, 100f).apply {
+                                        duration = 1200
+                                        repeatCount = ValueAnimator.INFINITE
+                                        repeatMode = ValueAnimator.RESTART
+                                        interpolator = LinearInterpolator()
+                                        addUpdateListener { anim ->
+                                            try {
+                                                val radius = anim.animatedValue as Float
+                                                val alpha = 1f - (radius - 20f) / 80f
+                                                pulseCircle.radius = radius.toDouble()
+                                                val baseColor = pulseColor and 0x00FFFFFF
+                                                val newAlpha = (alpha * 128).toInt().coerceIn(0, 255)
+                                                pulseCircle.fillColor = (newAlpha shl 24) or baseColor
+                                            } catch (e: Exception) {
+                                                // 忽略动画更新异常
+                                            }
+                                        }
+                                        start()
+                                    }
+                                    pulseAnimatorRef.value = animator
+                                }
+
+                                TrackingState.SUCCESS -> {
+                                    val pulseColor = 0x804CAF50.toInt()  // 绿色半透明
+                                    // 成功时显示短暂闪烁
+                                    val pulseCircle = tencentMap.addCircle(
+                                        CircleOptions()
+                                            .center(location)
+                                            .radius(50.0)
+                                            .fillColor(pulseColor)
+                                            .strokeColor(0xFF4CAF50.toInt())
+                                            .strokeWidth(3f)
+                                    )
+                                    pulseCircleRef.value = pulseCircle
+
+                                    // 淡出动画
+                                    val animator = ValueAnimator.ofFloat(1f, 0f).apply {
+                                        duration = 1500
+                                        addUpdateListener { anim ->
+                                            try {
+                                                val alpha = anim.animatedValue as Float
+                                                val newAlpha = (alpha * 128).toInt().coerceIn(0, 255)
+                                                pulseCircle.fillColor = (newAlpha shl 24) or 0x004CAF50
+                                            } catch (e: Exception) {
+                                                // 忽略动画更新异常
+                                            }
+                                        }
+                                        start()
+                                    }
+                                    pulseAnimatorRef.value = animator
+                                }
+
+                                TrackingState.FAILED -> {
+                                    val pulseColor = 0x80F44336.toInt()  // 红色半透明
+                                    // 失败时显示短暂闪烁
+                                    val pulseCircle = tencentMap.addCircle(
+                                        CircleOptions()
+                                            .center(location)
+                                            .radius(50.0)
+                                            .fillColor(pulseColor)
+                                            .strokeColor(0xFFF44336.toInt())
+                                            .strokeWidth(3f)
+                                    )
+                                    pulseCircleRef.value = pulseCircle
+
+                                    // 淡出动画
+                                    val animator = ValueAnimator.ofFloat(1f, 0f).apply {
+                                        duration = 1500
+                                        addUpdateListener { anim ->
+                                            try {
+                                                val alpha = anim.animatedValue as Float
+                                                val newAlpha = (alpha * 128).toInt().coerceIn(0, 255)
+                                                pulseCircle.fillColor = (newAlpha shl 24) or 0x00F44336
+                                            } catch (e: Exception) {
+                                                // 忽略动画更新异常
+                                            }
+                                        }
+                                        start()
+                                    }
+                                    pulseAnimatorRef.value = animator
+                                }
+
+                                else -> {
+                                    // IDLE 或 null 状态，不显示脉冲
+                                }
+                            }
+                        }
+                    } else if (pulseCircleRef.value != null && trackedContact?.location != null) {
+                        // 状态未变但需要更新位置
+                        pulseCircleRef.value?.center = trackedContact.location
+                    }
+                } catch (e: ArrayIndexOutOfBoundsException) {
+                    // 腾讯地图 SDK 内部并发 bug，忽略此异常
+                    Log.w("TencentMapWrapper", "SDK 内部并发异常（已忽略）: ${e.message}")
+                } catch (e: Exception) {
+                    Log.e("TencentMapWrapper", "地图更新异常: ${e.message}", e)
+                }
+            },
+            modifier = Modifier.fillMaxSize()
+        )
+
+        // 深色模式遮罩层 - 自己控制地图深色效果
+        if (overlayAlpha > 0f) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black.copy(alpha = overlayAlpha))
+            )
+        }
+    }
 }
 
 /**
@@ -482,7 +649,6 @@ private fun updateMapContent(
             // 更新 3D 建筑显示
             tencentMap.setBuilding3dEffectEnable(mapLayerConfig.show3dBuildings)
 
-            // 更新地点标签（腾讯地图暂无直接 API，可通过样式控制）
 
             // 更新当前设备 Marker（带平滑移动动画）
             // 像 iOS Find My 一样：优先使用实时位置（追踪自己时更新更快）

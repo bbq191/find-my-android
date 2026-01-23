@@ -223,7 +223,9 @@ fun GeofenceDialogWrapper(
     onDismiss: () -> Unit
 ) {
     contactForGeofence?.let { contact ->
-        val existingGeofence = geofenceManager.getGeofenceForContact(contact.id)
+        // 使用 targetUserId 查询围栏，与创建时保持一致
+        val geofenceContactId = contact.targetUserId ?: contact.id
+        val existingGeofence = geofenceManager.getGeofenceForContact(geofenceContactId)
         val currentConfig = if (existingGeofence != null) {
             GeofenceConfig(
                 enabled = true,
@@ -243,9 +245,12 @@ fun GeofenceDialogWrapper(
             currentConfig = currentConfig,
             onDismiss = onDismiss,
             onConfirm = { config ->
+                // 使用 targetUserId 而非 contact.id（共享记录ID）
+                // 因为位置消息中的 userId 与 targetUserId 对应
+                val targetId = contact.targetUserId ?: contact.id
                 if (config.enabled && config.center != null) {
                     geofenceManager.addGeofence(
-                        contactId = contact.id,
+                        contactId = targetId,
                         contactName = contact.name,
                         locationName = config.locationName,
                         center = config.center,
@@ -268,7 +273,7 @@ fun GeofenceDialogWrapper(
                         }
                     )
                 } else {
-                    geofenceManager.removeGeofence(contact.id)
+                    geofenceManager.removeGeofence(targetId)
                     scope.launch {
                         snackbarHostState.showSnackbar(
                             message = "已移除「${contact.name}」的地理围栏"

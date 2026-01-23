@@ -114,6 +114,18 @@ interface GeofenceDao {
     @Query("SELECT EXISTS(SELECT 1 FROM geofences WHERE contactId = :contactId)")
     suspend fun hasGeofenceForContact(contactId: String): Boolean
 
+    /**
+     * 获取激活围栏数量（协程版本）
+     */
+    @Query("SELECT COUNT(*) FROM geofences WHERE isActive = 1")
+    suspend fun getActiveGeofenceCount(): Int
+
+    /**
+     * 获取激活围栏数量（同步版本，用于 Worker）
+     */
+    @Query("SELECT COUNT(*) FROM geofences WHERE isActive = 1")
+    fun getActiveGeofenceCountSync(): Int
+
     // ==================== 围栏事件操作 ====================
 
     /**

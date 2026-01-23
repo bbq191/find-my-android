@@ -24,6 +24,7 @@ class BootReceiver : BroadcastReceiver() {
             "com.htc.intent.action.QUICKBOOT_POWERON" -> {
                 Log.d(TAG, "收到开机广播: ${intent.action}")
                 startMqttService(context)
+                initGeofenceServiceController(context)
             }
         }
     }
@@ -34,6 +35,19 @@ class BootReceiver : BroadcastReceiver() {
             MqttForegroundService.start(context)
         } catch (e: Exception) {
             Log.e(TAG, "启动 MQTT 服务失败", e)
+        }
+    }
+
+    /**
+     * 初始化围栏服务智能开关控制器
+     * 检查是否有激活的围栏，自动决定是否启动围栏监控前台服务
+     */
+    private fun initGeofenceServiceController(context: Context) {
+        try {
+            Log.d(TAG, "开机后初始化围栏服务控制器")
+            GeofenceServiceController.getInstance(context).refreshState()
+        } catch (e: Exception) {
+            Log.e(TAG, "初始化围栏服务控制器失败", e)
         }
     }
 }

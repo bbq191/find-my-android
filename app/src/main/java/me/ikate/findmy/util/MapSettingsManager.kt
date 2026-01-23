@@ -9,11 +9,13 @@ import me.ikate.findmy.ui.screen.main.components.MapLayerConfig
  * 地图设置持久化管理器
  * 保存用户的地图偏好设置，包括图层、样式、视角等
  *
- * 支持的地图样式：
+ * 支持的地图类型：
  * - STANDARD: 标准地图
  * - SATELLITE: 卫星地图
- * - BAIQIAN: 白浅（浅色个性化样式，需在腾讯地图控制台配置）
- * - MOYUAN: 墨渊（深色个性化样式，需在腾讯地图控制台配置）
+ *
+ * 个性化样式由光照预设自动控制：
+ * - 浅色模式：白浅样式 (styleId=1)
+ * - 深色模式：墨渊样式 (styleId=2)
  */
 object MapSettingsManager {
 
@@ -21,7 +23,6 @@ object MapSettingsManager {
 
     // 设置键
     private const val KEY_MAP_STYLE = "map_style"
-    private const val KEY_CUSTOM_STYLE_ID = "custom_style_id"
     private const val KEY_SHOW_TRAFFIC = "show_traffic"
     private const val KEY_SHOW_3D_BUILDINGS = "show_3d_buildings"
     private const val KEY_SHOW_LANDMARK_ICONS = "show_landmark_icons"
@@ -73,7 +74,7 @@ object MapSettingsManager {
         val lightPreset = try {
             LightPreset.valueOf(lightPresetName)
         } catch (e: Exception) {
-            LightPreset.DAY
+            LightPreset.LIGHT
         }
 
         return MapLayerConfig(
@@ -103,34 +104,6 @@ object MapSettingsManager {
      */
     fun loadMapStyle(context: Context): String {
         return getPrefs(context).getString(KEY_MAP_STYLE, DEFAULT_MAP_STYLE) ?: DEFAULT_MAP_STYLE
-    }
-
-    /**
-     * 获取个性化样式 ID
-     * 根据样式名称返回对应的个性化样式 ID
-     *
-     * @return 样式 ID (1-3)，如果不是个性化样式返回 null
-     */
-    fun getCustomStyleId(context: Context): Int? {
-        return when (loadMapStyle(context)) {
-            "BAIQIAN" -> 1  // 白浅
-            "MOYUAN" -> 2   // 墨渊
-            else -> null
-        }
-    }
-
-    /**
-     * 判断当前是否使用个性化样式
-     */
-    fun isCustomStyle(context: Context): Boolean {
-        return getCustomStyleId(context) != null
-    }
-
-    /**
-     * 判断当前是否使用深色样式（墨渊）
-     */
-    fun isDarkStyle(context: Context): Boolean {
-        return loadMapStyle(context) == "MOYUAN"
     }
 
     /**

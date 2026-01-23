@@ -18,9 +18,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import me.ikate.findmy.ui.theme.FindMyShapes
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
@@ -32,6 +32,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
+import me.ikate.findmy.util.rememberHaptics
 
 /**
  * 底部面板的三种状态
@@ -71,6 +72,7 @@ fun CustomBottomSheet(
 ) {
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
+    val haptics = rememberHaptics()
 
     BoxWithConstraints(modifier = modifier) {
         // 获取父容器最大高度 (px)
@@ -161,6 +163,8 @@ fun CustomBottomSheet(
                                         stiffness = Spring.StiffnessMedium
                                     )
                                 )
+                                // 吸附完成时触发震动：模拟抽屉关上的"咔哒"感
+                                haptics.gestureEnd()
                             }
                             onSheetValueChange(newState)
                         },
@@ -182,7 +186,7 @@ fun CustomBottomSheet(
                         }
                     )
                 },
-            shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp), // 增大圆角
+            shape = FindMyShapes.BottomSheetTop, // 统一 28dp 超大圆角
             color = MaterialTheme.colorScheme.surface,
             shadowElevation = 12.dp, // 增强阴影
             tonalElevation = 2.dp

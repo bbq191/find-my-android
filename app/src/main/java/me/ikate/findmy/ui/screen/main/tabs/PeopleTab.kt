@@ -30,9 +30,9 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.FloatingActionButton
-import androidx.compose.material3.FloatingActionButtonDefaults
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -51,10 +51,10 @@ import me.ikate.findmy.data.model.Contact
 import me.ikate.findmy.data.model.ShareDirection
 import me.ikate.findmy.data.model.ShareDuration
 import me.ikate.findmy.data.model.ShareStatus
-import me.ikate.findmy.service.TrackingState
 import me.ikate.findmy.ui.dialog.FindDeviceDialog
 import me.ikate.findmy.ui.dialog.RemoveContactDialog
 import me.ikate.findmy.ui.dialog.ResumeShareDialog
+import me.ikate.findmy.ui.screen.main.components.ContactDetailBottomSheet
 import me.ikate.findmy.ui.screen.main.components.ContactListItem
 
 /**
@@ -66,7 +66,6 @@ fun PeopleTab(
     contacts: List<Contact>,
     requestingLocationFor: String? = null,
     trackingContactUid: String? = null,
-    trackingStates: Map<String, TrackingState> = emptyMap(),
     geofenceContactIds: Set<String> = emptySet(),
     onContactClick: (Contact) -> Unit,
     onAddContactClick: () -> Unit,
@@ -78,7 +77,6 @@ fun PeopleTab(
     onAcceptShare: (Contact) -> Unit = {},
     onRejectShare: (Contact) -> Unit = {},
     onRefreshAndTrack: (String) -> Unit = {},
-    onStopTracking: (String) -> Unit = {},
     onPlaySound: (String) -> Unit = {},
     onStopSound: () -> Unit = {},
     isRinging: Boolean = false,
@@ -91,6 +89,8 @@ fun PeopleTab(
     var contactToResume by remember { mutableStateOf<Contact?>(null) }
     var contactToRemove by remember { mutableStateOf<Contact?>(null) }
     var contactForFindDevice by remember { mutableStateOf<Contact?>(null) }
+    // MONET: 联系人详情 BottomSheet
+    var contactForDetail by remember { mutableStateOf<Contact?>(null) }
 
     // Dialogs
     contactToResume?.let { contact ->
@@ -128,6 +128,22 @@ fun PeopleTab(
             onEnableLostMode = { message, phone, playSound ->
                 onLostModeClick(contact, message, phone, playSound)
             }
+        )
+    }
+
+    // MONET: 联系人详情 BottomSheet (主要/次要动作分组)
+    contactForDetail?.let { contact ->
+        ContactDetailBottomSheet(
+            contact = contact,
+            hasGeofence = contact.id in geofenceContactIds,
+            onDismiss = { contactForDetail = null },
+            onNavigate = { onNavigate(contact) },
+            onFindDevice = { contactForFindDevice = contact },
+            onGeofence = { onGeofenceClick(contact) },
+            onBindContact = { onBindContact(contact) },
+            onPauseShare = { onPauseShare(contact) },
+            onResumeShare = { contactToResume = contact },
+            onRemoveContact = { contactToRemove = contact }
         )
     }
 
@@ -179,9 +195,6 @@ fun PeopleTab(
                     val isExpanded = expandedContactId == contact.id
                     val isRequesting = requestingLocationFor == contact.targetUserId
                     val isTracking = trackingContactUid == contact.targetUserId
-                    val contactTrackingState = contact.targetUserId?.let {
-                        trackingStates[it]
-                    } ?: TrackingState.IDLE
 
                     ContactListItem(
                         contact = contact,
@@ -189,21 +202,22 @@ fun PeopleTab(
                         isExpanded = isExpanded,
                         isRequestingLocation = isRequesting,
                         isTracking = isTracking,
-                        trackingState = contactTrackingState,
                         onClick = {
                             // 点击卡片：定位到地图
                             onContactClick(contact)
                         },
+                        onDetailClick = {
+                            // MONET: 点击信息区域打开详情面板
+                            contactForDetail = contact
+                        },
                         onAvatarClick = {
-                            // 点击头像：开始追踪
+                            // 点击头像：跳转到地图 + 开始追踪
+                            onContactClick(contact)
                             contact.targetUserId?.let { onRefreshAndTrack(it) }
                         },
                         onExpandClick = {
                             // 点击展开按钮（已废弃，保留兼容）
                             expandedContactId = if (expandedContactId == contact.id) null else contact.id
-                        },
-                        onStopTracking = {
-                            contact.targetUserId?.let { onStopTracking(it) }
                         },
                         onFindDeviceClick = {
                             // 打开查找设备对话框
@@ -265,20 +279,19 @@ private fun PeopleHeader(
                 }
             }
 
-            FloatingActionButton(
+            // MONET: 使用 FilledTonalIconButton 替代 FAB，更小巧不遮挡地图
+            FilledTonalIconButton(
                 onClick = onAddClick,
-                modifier = Modifier.size(48.dp),
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary,
-                elevation = FloatingActionButtonDefaults.elevation(
-                    defaultElevation = 2.dp,
-                    pressedElevation = 4.dp
+                modifier = Modifier.size(36.dp),
+                colors = IconButtonDefaults.filledTonalIconButtonColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer
                 )
             ) {
                 Icon(
                     Icons.Default.Add,
                     contentDescription = "添加联系人",
-                    modifier = Modifier.size(24.dp)
+                    modifier = Modifier.size(20.dp)
                 )
             }
         }

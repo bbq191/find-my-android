@@ -12,20 +12,29 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.outlined.Login
+import androidx.compose.material.icons.outlined.Logout
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -55,6 +64,7 @@ import com.tencent.tencentmap.mapsdk.maps.CameraUpdateFactory
 import com.tencent.tencentmap.mapsdk.maps.MapView
 import com.tencent.tencentmap.mapsdk.maps.TencentMap
 import com.tencent.tencentmap.mapsdk.maps.model.BitmapDescriptorFactory
+import com.tencent.tencentmap.mapsdk.maps.model.CameraPosition
 import com.tencent.tencentmap.mapsdk.maps.model.Circle
 import com.tencent.tencentmap.mapsdk.maps.model.CircleOptions
 import com.tencent.tencentmap.mapsdk.maps.model.LatLng
@@ -62,6 +72,7 @@ import com.tencent.tencentmap.mapsdk.maps.model.Marker
 import com.tencent.tencentmap.mapsdk.maps.model.MarkerOptions
 import kotlinx.coroutines.launch
 import me.ikate.findmy.util.ReverseGeocodeHelper
+import me.ikate.findmy.util.rememberHaptics
 
 /**
  * 地理围栏事件类型
@@ -106,9 +117,12 @@ fun GeofenceDialog(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
+    val haptics = rememberHaptics()
 
     // 状态
     var locationName by remember { mutableStateOf(currentConfig.locationName.ifBlank { "$contactName 的位置" }) }
+    // 用于刻度震动：记录上一个步进值
+    var lastSliderStep by remember { mutableStateOf((currentConfig.radiusMeters / 50f).toInt()) }
     var isLoadingAddress by remember { mutableStateOf(false) }
     var radiusMeters by remember { mutableFloatStateOf(currentConfig.radiusMeters) }
     var notifyOnEnter by remember { mutableStateOf(currentConfig.notifyOnEnter) }
@@ -121,7 +135,7 @@ fun GeofenceDialog(
     val mapView = remember { MapView(context) }
     val tencentMapRef = remember { mutableStateOf<TencentMap?>(null) }
     val circleRef = remember { mutableStateOf<Circle?>(null) }
-    val centerMarkerRef = remember { mutableStateOf<Marker?>(null) }
+    // 中心 Marker 已改用 Compose 层叠的 Pin 图标实现
     val contactMarkerRef = remember { mutableStateOf<Marker?>(null) }
 
     // 加载联系人图标
@@ -132,9 +146,12 @@ fun GeofenceDialog(
         } else null
     }
 
-    // 围栏圆圈颜色
+    // 围栏圆圈颜色 - 更轻盈的视觉效果 (透明度 10-15%)
     val circleStrokeColor = 0xFF007AFF.toInt()
-    val circleFillColor = 0x33007AFF
+    val circleFillColor = 0x1A007AFF  // 约 10% 透明度
+
+    // 地图拖动状态
+    var isMapDragging by remember { mutableStateOf(false) }
 
     // 逆地理编码获取地址
     fun fetchAddressForLocation(latLng: LatLng) {
@@ -165,7 +182,7 @@ fun GeofenceDialog(
             color = MaterialTheme.colorScheme.background
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
-                // 顶部栏
+                // 顶部栏 - 简洁版，操作按钮移至底部
                 TopAppBar(
                     title = {
                         Text(
@@ -176,38 +193,6 @@ fun GeofenceDialog(
                     navigationIcon = {
                         IconButton(onClick = onDismiss) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
-                        }
-                    },
-                    actions = {
-                        if (contactLocation != null) {
-                            if (isEnabled) {
-                                TextButton(
-                                    onClick = {
-                                        onConfirm(GeofenceConfig(enabled = false))
-                                    }
-                                ) {
-                                    Text("移除", color = MaterialTheme.colorScheme.error)
-                                }
-                            }
-                            TextButton(
-                                onClick = {
-                                    if ((notifyOnEnter || notifyOnExit) && geofenceCenter != null) {
-                                        onConfirm(
-                                            GeofenceConfig(
-                                                enabled = true,
-                                                locationName = locationName,
-                                                center = geofenceCenter,
-                                                radiusMeters = radiusMeters,
-                                                notifyOnEnter = notifyOnEnter,
-                                                notifyOnExit = notifyOnExit
-                                            )
-                                        )
-                                    }
-                                },
-                                enabled = (notifyOnEnter || notifyOnExit) && geofenceCenter != null
-                            ) {
-                                Text(if (isEnabled) "更新" else "保存")
-                            }
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
@@ -283,21 +268,32 @@ fun GeofenceDialog(
                                             isScaleViewEnabled = true
                                         }
 
-                                        // 设置地图点击监听
-                                        tencentMap.setOnMapClickListener { latLng ->
-                                            geofenceCenter = latLng
-                                            updateGeofenceOnMap(
-                                                tencentMap = tencentMap,
-                                                center = latLng,
-                                                radius = radiusMeters.toDouble(),
-                                                circleRef = circleRef,
-                                                centerMarkerRef = centerMarkerRef,
-                                                strokeColor = circleStrokeColor,
-                                                fillColor = circleFillColor
-                                            )
-                                            // 逆地理编码获取地址
-                                            fetchAddressForLocation(latLng)
-                                        }
+                                        // 设置相机变化监听 - "定针不动，地图动"模式
+                                        tencentMap.setOnCameraChangeListener(object : TencentMap.OnCameraChangeListener {
+                                            override fun onCameraChange(position: CameraPosition) {
+                                                // 拖动中：实时更新围栏位置
+                                                isMapDragging = true
+                                                geofenceCenter = position.target
+                                                updateGeofenceCircleOnly(
+                                                    circleRef = circleRef,
+                                                    center = position.target,
+                                                    radius = radiusMeters.toDouble()
+                                                )
+                                            }
+
+                                            override fun onCameraChangeFinished(position: CameraPosition) {
+                                                // 拖动结束：更新位置并获取地址
+                                                isMapDragging = false
+                                                geofenceCenter = position.target
+                                                updateGeofenceCircleOnly(
+                                                    circleRef = circleRef,
+                                                    center = position.target,
+                                                    radius = radiusMeters.toDouble()
+                                                )
+                                                // 逆地理编码获取地址
+                                                fetchAddressForLocation(position.target)
+                                            }
+                                        })
 
                                         // 添加联系人位置标记
                                         pigBitmap?.let { bitmap ->
@@ -309,16 +305,15 @@ fun GeofenceDialog(
                                             )
                                         }
 
-                                        // 初始化围栏圆圈
+                                        // 初始化围栏圆圈（不添加中心 Marker，使用 Compose 层叠的 Pin）
                                         val initialCenter = geofenceCenter ?: contactLocation
-                                        updateGeofenceOnMap(
-                                            tencentMap = tencentMap,
-                                            center = initialCenter,
-                                            radius = radiusMeters.toDouble(),
-                                            circleRef = circleRef,
-                                            centerMarkerRef = centerMarkerRef,
-                                            strokeColor = circleStrokeColor,
-                                            fillColor = circleFillColor
+                                        circleRef.value = tencentMap.addCircle(
+                                            CircleOptions()
+                                                .center(initialCenter)
+                                                .radius(radiusMeters.toDouble())
+                                                .strokeColor(circleStrokeColor)
+                                                .strokeWidth(2f)  // 2dp 描边
+                                                .fillColor(circleFillColor)
                                         )
 
                                         // 移动相机到围栏中心
@@ -328,6 +323,17 @@ fun GeofenceDialog(
                                     }
                                 }
                             }
+                        )
+
+                        // 中心固定 Pin 图标 - "定针不动，地图动"
+                        Icon(
+                            imageVector = Icons.Default.LocationOn,
+                            contentDescription = "围栏中心",
+                            modifier = Modifier
+                                .align(Alignment.Center)
+                                .offset(y = (-20).dp)  // 向上偏移，使 Pin 底部对准中心
+                                .size(48.dp),
+                            tint = MaterialTheme.colorScheme.primary
                         )
 
                         // 提示文字
@@ -342,7 +348,7 @@ fun GeofenceDialog(
                                 .padding(horizontal = 12.dp, vertical = 8.dp)
                         ) {
                             Text(
-                                text = "点击地图设置围栏中心",
+                                text = if (isMapDragging) "松开以选定位置" else "拖动地图选择围栏中心",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
@@ -360,105 +366,212 @@ fun GeofenceDialog(
                                 .fillMaxWidth()
                                 .padding(16.dp)
                         ) {
-                            // 位置名称（支持逆地理编码自动填充）
-                            OutlinedTextField(
-                                value = if (isLoadingAddress) "正在获取地址..." else locationName,
-                                onValueChange = { locationName = it },
-                                label = { Text("位置名称") },
-                                placeholder = { Text("例如：家、公司") },
-                                leadingIcon = {
-                                    Icon(
-                                        Icons.Default.LocationOn,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                },
+                            // 位置名称 - 纯文本展示，去除输入框感
+                            Row(
                                 modifier = Modifier.fillMaxWidth(),
-                                singleLine = true,
-                                enabled = !isLoadingAddress
-                            )
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    Icons.Default.LocationOn,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp),
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = if (isLoadingAddress) "正在获取地址..." else locationName.ifBlank { "未知位置" },
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    fontWeight = FontWeight.Medium,
+                                    color = if (isLoadingAddress) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                                           else MaterialTheme.colorScheme.onSurface
+                                )
+                            }
 
-                            Spacer(modifier = Modifier.height(16.dp))
+                            Spacer(modifier = Modifier.height(20.dp))
 
-                            // 围栏半径
-                            Text(
-                                text = "围栏半径: ${radiusMeters.toInt()} 米",
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.Medium
-                            )
+                            // 围栏半径 - M3 标准 Slider
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "围栏半径",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Text(
+                                    text = "${radiusMeters.toInt()} 米",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
                             Slider(
                                 value = radiusMeters,
                                 onValueChange = { newRadius ->
-                                    radiusMeters = newRadius
-                                    // 实时更新地图上的圆圈
-                                    tencentMapRef.value?.let { tencentMap ->
-                                        geofenceCenter?.let { center ->
-                                            updateGeofenceOnMap(
-                                                tencentMap = tencentMap,
-                                                center = center,
-                                                radius = newRadius.toDouble(),
-                                                circleRef = circleRef,
-                                                centerMarkerRef = centerMarkerRef,
-                                                strokeColor = circleStrokeColor,
-                                                fillColor = circleFillColor
-                                            )
-                                        }
+                                    // 关键节点吸附 (100, 200, 500, 1000)
+                                    val snappedRadius = snapToKeyPoints(newRadius)
+                                    // 检测步进变化，触发刻度震动
+                                    val currentStep = (snappedRadius / 50f).toInt()
+                                    if (currentStep != lastSliderStep) {
+                                        haptics.tick()
+                                        lastSliderStep = currentStep
                                     }
+                                    radiusMeters = snappedRadius
+                                    // 实时更新地图上的圆圈
+                                    updateGeofenceCircleOnly(
+                                        circleRef = circleRef,
+                                        center = geofenceCenter,
+                                        radius = snappedRadius.toDouble()
+                                    )
                                 },
                                 valueRange = 50f..1000f,
-                                steps = 18,
-                                modifier = Modifier.fillMaxWidth()
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = SliderDefaults.colors(
+                                    thumbColor = MaterialTheme.colorScheme.primary,
+                                    activeTrackColor = MaterialTheme.colorScheme.primary
+                                )
                             )
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
-                                Text("50m", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
-                                Text("1000m", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.secondary)
+                                Text("50m", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("1km", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
 
-                            Spacer(modifier = Modifier.height(16.dp))
+                            Spacer(modifier = Modifier.height(20.dp))
 
-                            // 通知类型选择（统一颜色）
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            // 触发条件 - Segmented Button
+                            Text(
+                                text = "触发条件",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            SingleChoiceSegmentedButtonRow(
+                                modifier = Modifier.fillMaxWidth()
                             ) {
-                                FilterChip(
-                                    selected = notifyOnEnter,
-                                    onClick = { notifyOnEnter = !notifyOnEnter },
-                                    label = { Text("到达时通知") },
-                                    leadingIcon = if (notifyOnEnter) {
-                                        { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp)) }
-                                    } else null,
-                                    modifier = Modifier.weight(1f)
-                                )
-                                FilterChip(
-                                    selected = notifyOnExit,
-                                    onClick = { notifyOnExit = !notifyOnExit },
-                                    label = { Text("离开时通知") },
-                                    leadingIcon = if (notifyOnExit) {
-                                        { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(18.dp)) }
-                                    } else null,
-                                    modifier = Modifier.weight(1f)
-                                )
+                                SegmentedButton(
+                                    selected = notifyOnEnter && !notifyOnExit,
+                                    onClick = {
+                                        notifyOnEnter = true
+                                        notifyOnExit = false
+                                    },
+                                    shape = SegmentedButtonDefaults.itemShape(index = 0, count = 3),
+                                    icon = { Icon(Icons.Outlined.Login, contentDescription = null, modifier = Modifier.size(18.dp)) }
+                                ) {
+                                    Text("到达")
+                                }
+                                SegmentedButton(
+                                    selected = notifyOnExit && !notifyOnEnter,
+                                    onClick = {
+                                        notifyOnEnter = false
+                                        notifyOnExit = true
+                                    },
+                                    shape = SegmentedButtonDefaults.itemShape(index = 1, count = 3),
+                                    icon = { Icon(Icons.Outlined.Logout, contentDescription = null, modifier = Modifier.size(18.dp)) }
+                                ) {
+                                    Text("离开")
+                                }
+                                SegmentedButton(
+                                    selected = notifyOnEnter && notifyOnExit,
+                                    onClick = {
+                                        notifyOnEnter = true
+                                        notifyOnExit = true
+                                    },
+                                    shape = SegmentedButtonDefaults.itemShape(index = 2, count = 3)
+                                ) {
+                                    Text("两者")
+                                }
                             }
 
-                            // 智能推荐提示
+                            // 智能推荐提示 - Banner 样式
                             val currentCenter = geofenceCenter
                             if (currentCenter != null) {
                                 val distance = calculateDistance(currentCenter, contactLocation)
                                 val isInside = distance < radiusMeters
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Text(
-                                    text = if (isInside) {
-                                        "💡 联系人当前在围栏内，推荐选择「离开时通知」"
-                                    } else {
-                                        "💡 联系人当前在围栏外，推荐选择「到达时通知」"
+                                Spacer(modifier = Modifier.height(16.dp))
+                                Surface(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(12.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Info,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(20.dp),
+                                            tint = MaterialTheme.colorScheme.onSecondaryContainer
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = if (isInside) {
+                                                "联系人当前在围栏内，推荐选择「离开」"
+                                            } else {
+                                                "联系人当前在围栏外，推荐选择「到达」"
+                                            },
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                                        )
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(20.dp))
+
+                            // 操作按钮 - 全部在底部
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                // 删除按钮（仅编辑模式显示）
+                                if (isEnabled) {
+                                    TextButton(
+                                        onClick = {
+                                            onConfirm(GeofenceConfig(enabled = false))
+                                        },
+                                        colors = ButtonDefaults.textButtonColors(
+                                            contentColor = MaterialTheme.colorScheme.error
+                                        )
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Delete,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text("移除围栏")
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.weight(1f))
+
+                                // 保存/更新按钮 - FilledButton
+                                Button(
+                                    onClick = {
+                                        if ((notifyOnEnter || notifyOnExit) && geofenceCenter != null) {
+                                            onConfirm(
+                                                GeofenceConfig(
+                                                    enabled = true,
+                                                    locationName = locationName,
+                                                    center = geofenceCenter,
+                                                    radiusMeters = radiusMeters,
+                                                    notifyOnEnter = notifyOnEnter,
+                                                    notifyOnExit = notifyOnExit
+                                                )
+                                            )
+                                        }
                                     },
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.secondary
-                                )
+                                    enabled = (notifyOnEnter || notifyOnExit) && geofenceCenter != null
+                                ) {
+                                    Text(if (isEnabled) "更新围栏" else "保存围栏")
+                                }
                             }
                         }
                     }
@@ -469,42 +582,32 @@ fun GeofenceDialog(
 }
 
 /**
- * 更新地图上的围栏圆圈
+ * 关键节点吸附（100, 200, 500, 1000）
  */
-private fun updateGeofenceOnMap(
-    tencentMap: TencentMap,
-    center: LatLng,
-    radius: Double,
-    circleRef: androidx.compose.runtime.MutableState<Circle?>,
-    centerMarkerRef: androidx.compose.runtime.MutableState<Marker?>,
-    strokeColor: Int,
-    fillColor: Int
-) {
-    // 更新或创建圆圈
-    val existingCircle = circleRef.value
-    if (existingCircle != null) {
-        existingCircle.center = center
-        existingCircle.radius = radius
-    } else {
-        circleRef.value = tencentMap.addCircle(
-            CircleOptions()
-                .center(center)
-                .radius(radius)
-                .strokeColor(strokeColor)
-                .strokeWidth(3f)
-                .fillColor(fillColor)
-        )
-    }
+private fun snapToKeyPoints(value: Float): Float {
+    val keyPoints = listOf(100f, 200f, 500f, 1000f)
+    val snapThreshold = 20f  // 吸附阈值
 
-    // 更新中心点标记（可选，用于更清晰显示）
-    centerMarkerRef.value?.remove()
-    centerMarkerRef.value = tencentMap.addMarker(
-        MarkerOptions()
-            .position(center)
-            .anchor(0.5f, 0.5f)
-    ).apply {
-        // 设置小圆点标记
-        alpha = 0.8f
+    for (point in keyPoints) {
+        if (kotlin.math.abs(value - point) < snapThreshold) {
+            return point
+        }
+    }
+    return value
+}
+
+/**
+ * 仅更新围栏圆圈位置和半径（不添加 Marker，使用 Compose 层叠的 Pin）
+ */
+private fun updateGeofenceCircleOnly(
+    circleRef: androidx.compose.runtime.MutableState<Circle?>,
+    center: LatLng?,
+    radius: Double
+) {
+    center ?: return
+    circleRef.value?.let { circle ->
+        circle.center = center
+        circle.radius = radius
     }
 }
 

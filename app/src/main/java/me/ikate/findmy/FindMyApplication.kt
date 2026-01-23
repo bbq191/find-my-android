@@ -8,6 +8,7 @@ import me.ikate.findmy.crash.CrashMonitor
 import me.ikate.findmy.crash.CrashUploadWorker
 import me.ikate.findmy.di.allModules
 import me.ikate.findmy.push.FCMManager
+import me.ikate.findmy.service.GeofenceServiceController
 import me.ikate.findmy.service.MqttForegroundService
 import me.ikate.findmy.service.TencentLocationService
 import me.ikate.findmy.util.PrivacyManager
@@ -53,6 +54,26 @@ class FindMyApplication : Application() {
         // 启动 MQTT 前台服务（保持后台连接）
         // 后台唤醒依赖 FCM 高优先级消息（Android 12+ 唯一可靠方式）
         MqttForegroundService.start(this)
+
+        // 初始化围栏服务智能开关控制器
+        // 根据数据库中是否有激活围栏，自动决定是否启动围栏监控前台服务
+        initGeofenceServiceController()
+    }
+
+    /**
+     * 初始化围栏服务智能开关控制器
+     *
+     * 智能开关策略：
+     * - 有激活围栏 → 启动 GeofenceForegroundService（高频位置监控，IMPORTANCE_LOW 通知）
+     * - 无激活围栏 → 停止前台服务，切换到低功耗模式（FCM + WorkManager 心跳）
+     */
+    private fun initGeofenceServiceController() {
+        try {
+            GeofenceServiceController.getInstance(this).initialize()
+            Log.d(TAG, "围栏服务智能开关控制器初始化成功")
+        } catch (e: Exception) {
+            Log.e(TAG, "围栏服务智能开关控制器初始化失败", e)
+        }
     }
 
     /**

@@ -42,7 +42,6 @@ import me.ikate.findmy.data.model.Contact
 import me.ikate.findmy.data.model.Device
 import me.ikate.findmy.data.model.ShareDuration
 import me.ikate.findmy.data.model.User
-import me.ikate.findmy.service.TrackingState
 import me.ikate.findmy.ui.dialog.AppIconSelectionDialog
 import me.ikate.findmy.ui.dialog.FindDeviceDialog
 import me.ikate.findmy.ui.dialog.MyUidDialog
@@ -60,7 +59,6 @@ fun ContactListPanel(
     contacts: List<Contact>,
     requestingLocationFor: String? = null,
     trackingContactUid: String? = null,
-    trackingStates: Map<String, TrackingState> = emptyMap(),
     onContactClick: (Contact) -> Unit,
     onAddContactClick: () -> Unit,
     onNavigate: (Contact) -> Unit = {},
@@ -71,7 +69,6 @@ fun ContactListPanel(
     onAcceptShare: (Contact) -> Unit = {},
     onRejectShare: (Contact) -> Unit = {},
     onRefreshAndTrack: (String) -> Unit = {},
-    onStopTracking: (String) -> Unit = {},
     onPlaySound: (String) -> Unit = {},
     onStopSound: () -> Unit = {},
     isRinging: Boolean = false,
@@ -159,7 +156,6 @@ fun ContactListPanel(
             expandedContactId = expandedContactId,
             requestingLocationFor = requestingLocationFor,
             trackingContactUid = trackingContactUid,
-            trackingStates = trackingStates,
             onContactClick = { contact ->
                 // 点击联系人卡片：定位到地图
                 onContactClick(contact)
@@ -179,7 +175,6 @@ fun ContactListPanel(
             onRemoveClick = { contactToRemove = it },
             onAcceptShare = onAcceptShare,
             onRejectShare = onRejectShare,
-            onStopTracking = onStopTracking,
             onFindDeviceClick = { contactForFindDevice = it },
             onPlaySound = onPlaySound,
             onStopSound = onStopSound,
@@ -329,7 +324,6 @@ private fun ContactList(
     expandedContactId: String?,
     requestingLocationFor: String?,
     trackingContactUid: String?,
-    trackingStates: Map<String, TrackingState>,
     onContactClick: (Contact) -> Unit,  // 点击卡片：定位追踪
     onAvatarClick: (Contact) -> Unit,   // 点击头像：开始追踪
     onExpandClick: (Contact) -> Unit,   // 点击展开按钮（已废弃）
@@ -340,7 +334,6 @@ private fun ContactList(
     onRemoveClick: (Contact) -> Unit,
     onAcceptShare: (Contact) -> Unit,
     onRejectShare: (Contact) -> Unit,
-    onStopTracking: (String) -> Unit,
     onFindDeviceClick: (Contact) -> Unit,
     onPlaySound: (String) -> Unit,
     onStopSound: () -> Unit,
@@ -356,9 +349,6 @@ private fun ContactList(
                 val isExpanded = expandedContactId == contact.id
                 val isRequesting = requestingLocationFor == contact.targetUserId
                 val isTracking = trackingContactUid == contact.targetUserId
-                val contactTrackingState = contact.targetUserId?.let {
-                    trackingStates[it]
-                } ?: TrackingState.IDLE
 
                 ContactListItem(
                     contact = contact,
@@ -366,13 +356,9 @@ private fun ContactList(
                     isExpanded = isExpanded,
                     isRequestingLocation = isRequesting,
                     isTracking = isTracking,
-                    trackingState = contactTrackingState,
                     onClick = { onContactClick(contact) },
                     onAvatarClick = { onAvatarClick(contact) },
                     onExpandClick = { onExpandClick(contact) },
-                    onStopTracking = {
-                        contact.targetUserId?.let { onStopTracking(it) }
-                    },
                     onFindDeviceClick = { onFindDeviceClick(contact) },
                     onNavigate = { onNavigate(contact) },
                     onPauseClick = { onPauseShare(contact) },

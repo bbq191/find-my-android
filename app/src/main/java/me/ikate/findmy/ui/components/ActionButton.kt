@@ -20,10 +20,18 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import me.ikate.findmy.util.rememberHaptics
 
 /**
  * 通用操作按钮组件
  * 用于联系人列表项的展开操作栏
+ *
+ * @param icon 按钮图标
+ * @param label 按钮标签
+ * @param enabled 是否可用
+ * @param isDestructive 是否是破坏性操作（使用红色）
+ * @param useConfirmHaptic 是否使用强确认震动（用于远程控制指令如播放声音）
+ * @param onClick 点击回调
  */
 @Composable
 fun ActionButton(
@@ -31,8 +39,10 @@ fun ActionButton(
     label: String,
     enabled: Boolean = true,
     isDestructive: Boolean = false,
+    useConfirmHaptic: Boolean = false,
     onClick: () -> Unit
 ) {
+    val haptics = rememberHaptics()
     val contentColor = when {
         !enabled -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
         isDestructive -> MaterialTheme.colorScheme.error
@@ -49,7 +59,15 @@ fun ActionButton(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier
             .clip(RoundedCornerShape(12.dp))
-            .clickable(enabled = enabled, onClick = onClick)
+            .clickable(enabled = enabled, onClick = {
+                // 根据按钮类型选择震动反馈
+                if (useConfirmHaptic) {
+                    haptics.confirm()  // 远程控制指令：较强的"发送成功"震动
+                } else {
+                    haptics.click()  // 普通操作：清脆的点击感
+                }
+                onClick()
+            })
             .padding(horizontal = 4.dp, vertical = 8.dp)
     ) {
         Surface(

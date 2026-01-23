@@ -46,6 +46,8 @@ import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Warning
+import me.ikate.findmy.ui.theme.FindMyShapes
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -466,6 +468,10 @@ private fun ProfileCard(
     }
 }
 
+/**
+ * 设置区域 - 按功能分组显示
+ * MONET 设计：组与组之间 16dp 间距
+ */
 @Composable
 private fun SettingsSection(
     onAppIconClick: () -> Unit,
@@ -480,63 +486,103 @@ private fun SettingsSection(
         LicensesDialog(onDismiss = { showLicensesDialog = false })
     }
 
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    // 判断权限是否完整
+    val hasPermissionWarning = permissionStatusSummary.contains("未") ||
+                                permissionStatusSummary.contains("关闭") ||
+                                permissionStatusSummary.contains("需要")
+
+    Column(
+        modifier = Modifier.padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)  // 组间距 16dp
     ) {
-        Column {
+        // 第一组：应用设置
+        SettingsGroup(title = "应用设置") {
             SettingsItem(
                 icon = Icons.Default.AppShortcut,
                 title = "应用图标",
                 subtitle = "自定义应用图标样式",
                 onClick = onAppIconClick
             )
-            HorizontalDivider(
-                modifier = Modifier.padding(start = 56.dp),
-                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-            )
+        }
+
+        // 第二组：权限与安全
+        SettingsGroup(title = "权限与安全") {
             SettingsItem(
                 icon = Icons.Default.Security,
                 title = "权限与安全",
                 subtitle = permissionStatusSummary,
-                onClick = onPermissionSecurityClick
+                onClick = onPermissionSecurityClick,
+                showWarning = hasPermissionWarning
             )
-            HorizontalDivider(
-                modifier = Modifier.padding(start = 56.dp),
-                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-            )
-            SettingsItem(
-                icon = Icons.Default.Info,
-                title = "关于",
-                subtitle = "版本信息与帮助",
-                onClick = onAboutClick
-            )
-            HorizontalDivider(
-                modifier = Modifier.padding(start = 56.dp),
-                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-            )
-            SettingsItem(
-                icon = Icons.Default.Description,
-                title = "开源协议",
-                subtitle = "查看第三方开源库许可",
-                onClick = { showLicensesDialog = true }
-            )
+        }
+
+        // 第三组：关于
+        SettingsGroup(title = "关于") {
+            Column {
+                SettingsItem(
+                    icon = Icons.Default.Info,
+                    title = "关于",
+                    subtitle = "版本信息与帮助",
+                    onClick = onAboutClick
+                )
+                HorizontalDivider(
+                    modifier = Modifier.padding(start = 56.dp),
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                )
+                SettingsItem(
+                    icon = Icons.Default.Description,
+                    title = "开源协议",
+                    subtitle = "查看第三方开源库许可",
+                    onClick = { showLicensesDialog = true }
+                )
+            }
         }
     }
 }
 
+/**
+ * 设置分组卡片
+ */
+@Composable
+private fun SettingsGroup(
+    title: String,
+    content: @Composable () -> Unit
+) {
+    Column {
+        // 分组标题
+        Text(
+            text = title,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)
+        )
+
+        // 分组内容卡片
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = FindMyShapes.Medium,
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+            ),
+            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        ) {
+            content()
+        }
+    }
+}
+
+/**
+ * 设置项组件
+ * @param showWarning 是否显示警告指示器（橙色感叹号）
+ */
 @Composable
 private fun SettingsItem(
     icon: ImageVector,
     title: String,
     subtitle: String,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    showWarning: Boolean = false
 ) {
     Row(
         modifier = Modifier
@@ -555,15 +601,41 @@ private fun SettingsItem(
         Spacer(modifier = Modifier.width(16.dp))
 
         Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = title,
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.Medium
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Medium
+                )
+                // 权限健康检查指示器
+                if (showWarning) {
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.errorContainer,
+                        modifier = Modifier.size(18.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.Warning,
+                                contentDescription = "需要注意",
+                                modifier = Modifier.size(12.dp),
+                                tint = MaterialTheme.colorScheme.error
+                            )
+                        }
+                    }
+                }
+            }
             Text(
                 text = subtitle,
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = if (showWarning) {
+                    MaterialTheme.colorScheme.error.copy(alpha = 0.8f)
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                }
             )
         }
 

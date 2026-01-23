@@ -3,12 +3,11 @@ package me.ikate.findmy.ui.screen.main.components
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.scaleIn
-import androidx.compose.animation.scaleOut
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -26,15 +25,17 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Battery4Bar
+import androidx.compose.material.icons.filled.BatteryAlert
+import androidx.compose.material.icons.filled.BatteryChargingFull
+import androidx.compose.material.icons.filled.BatteryFull
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Directions
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Radar
-import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material3.Card
@@ -55,6 +56,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -71,11 +73,10 @@ import me.ikate.findmy.data.model.Contact
 import me.ikate.findmy.data.model.Device
 import me.ikate.findmy.data.model.ShareDirection
 import me.ikate.findmy.data.model.ShareStatus
-import me.ikate.findmy.service.TrackingState
-import me.ikate.findmy.ui.components.AccuracyBadge
 import me.ikate.findmy.util.DistanceCalculator
 import me.ikate.findmy.util.ReverseGeocodeHelper
 import me.ikate.findmy.util.TimeFormatter
+import me.ikate.findmy.util.rememberHaptics
 
 
 /**
@@ -101,10 +102,10 @@ fun ContactListItem(
     isExpanded: Boolean,
     isRequestingLocation: Boolean = false,
     isTracking: Boolean = false,
-    trackingState: TrackingState = TrackingState.IDLE,
     isPinned: Boolean = false,
-    onClick: () -> Unit,  // 点击卡片：定位到地图 + 追踪
-    onAvatarClick: () -> Unit = {},  // 点击头像：开始/停止追踪
+    onClick: () -> Unit,  // 点击卡片：定位到地图
+    onDetailClick: () -> Unit = {},  // 点击信息区域打开详情面板
+    onAvatarClick: () -> Unit = {},  // 点击头像：跳转地图并刷新位置
     onExpandClick: () -> Unit,  // 点击展开按钮：展开/收起操作栏
     onNavigate: () -> Unit,
     onPauseClick: () -> Unit,
@@ -113,8 +114,7 @@ fun ContactListItem(
     onRemoveClick: () -> Unit,
     onAcceptClick: () -> Unit,
     onRejectClick: () -> Unit,
-    onStopTracking: () -> Unit = {},  // 停止追踪
-    onFindDeviceClick: () -> Unit = {},  // 查找设备（合并响铃+丢失模式）
+    onFindDeviceClick: () -> Unit = {},  // 查找设备
     onPlaySound: () -> Unit = {},
     onStopSound: () -> Unit = {},
     isRinging: Boolean = false,
@@ -300,6 +300,7 @@ fun ContactListItem(
                         icon = Icons.AutoMirrored.Filled.VolumeUp,
                         label = "查找设备",
                         enabled = canTrackForSwipe,
+                        useConfirmHaptic = true,  // 远程控制指令需要明确的确认震动
                         onClick = {
                             onFindDeviceClick()
                             offsetX = 0f
@@ -387,39 +388,35 @@ fun ContactListItem(
                 // 判断在线状态
                 val isOnline = TimeFormatter.isOnline(contact.lastUpdateTime ?: 0L)
 
-                // 点击主体区域（头像+信息）触发定位追踪
+                // MONET: 点击头像追踪，点击信息区域打开详情面板
                 Row(
-                    modifier = Modifier
-                        .weight(1f)
-                        .then(
-                            if (canTrack) {
-                                Modifier.clickable(onClick = onClick)
-                            } else {
-                                Modifier
-                            }
-                        ),
+                    modifier = Modifier.weight(1f),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    // 头像：点击跳转地图并刷新位置
                     ContactAvatar(
                         contact = contact,
                         isOnline = isOnline,
-                        trackingState = trackingState,
                         canTrack = canTrack,
-                        onAvatarClick = onAvatarClick,
-                        onStopClick = onStopTracking
+                        onAvatarClick = onAvatarClick
                     )
 
                     Spacer(modifier = Modifier.width(16.dp))
 
-                    // 联系人信息
-                    ContactInfo(
-                        contact = contact,
-                        myDevice = myDevice,
-                        trackingState = trackingState,
-                        addressText = addressText,
-                        isAddressLoading = isAddressLoading,
-                        modifier = Modifier.weight(1f)
-                    )
+                    // 联系人信息：点击打开详情面板
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable(onClick = onDetailClick)
+                    ) {
+                        ContactInfo(
+                            contact = contact,
+                            myDevice = myDevice,
+                            addressText = addressText,
+                            isAddressLoading = isAddressLoading,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
                 }
 
                 Spacer(modifier = Modifier.width(8.dp))
@@ -432,13 +429,20 @@ fun ContactListItem(
                         onRejectClick = onRejectClick
                     )
                 } else {
-                    // 右箭头提示（提示右滑可操作）
-                    Icon(
-                        imageVector = Icons.Default.ChevronRight,
-                        contentDescription = "滑动操作",
-                        modifier = Modifier.size(20.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                    )
+                    // 右箭头提示（点击打开详情面板）
+                    Box(
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .clickable(onClick = onDetailClick)
+                            .padding(4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.ChevronRight,
+                            contentDescription = "查看详情",
+                            modifier = Modifier.size(20.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                        )
+                    }
                 }
             }
         }
@@ -454,12 +458,23 @@ private fun SwipeActionButton(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     label: String,
     enabled: Boolean = true,
+    useConfirmHaptic: Boolean = false,
     onClick: () -> Unit
 ) {
+    val haptics = rememberHaptics()
+
     Column(
         modifier = Modifier
             .clip(RoundedCornerShape(12.dp))
-            .clickable(enabled = enabled, onClick = onClick)
+            .clickable(enabled = enabled, onClick = {
+                // 根据按钮类型选择震动反馈
+                if (useConfirmHaptic) {
+                    haptics.confirm()  // 远程控制指令：较强的"发送成功"震动
+                } else {
+                    haptics.click()  // 普通操作：清脆的点击感
+                }
+                onClick()
+            })
             .padding(12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
@@ -483,67 +498,56 @@ private fun SwipeActionButton(
 
 /**
  * 联系人头像组件
- * 支持追踪状态显示和停止追踪覆盖层
- *
- * 颜色状态：
- * - WAITING: 黄色 (#FFC107) - 等待连接
- * - CONNECTED: 蓝色 (#2196F3) - 追踪中
- * - SUCCESS: 绿色 (#4CAF50) - 追踪成功
- * - IDLE: 在线绿/离线灰 - 原状态
+ * 点击跳转到地图并刷新位置
+ * 边框仅显示在线/离线状态（追踪状态在地图上显示脉冲动画）
  */
 @Composable
 private fun ContactAvatar(
     contact: Contact,
     isOnline: Boolean = false,
-    trackingState: TrackingState = TrackingState.IDLE,
     canTrack: Boolean = false,
-    onAvatarClick: () -> Unit = {},
-    onStopClick: () -> Unit = {}
+    onAvatarClick: () -> Unit = {}
 ) {
-    // 状态颜色定义
-    val waitingColor = Color(0xFFFFC107)  // 黄色
-    val connectedColor = Color(0xFF2196F3)  // 蓝色
-    val successColor = Color(0xFF4CAF50)  // 绿色
-    val onlineColor = Color(0xFF4CAF50)  // 绿色
-    val offlineColor = MaterialTheme.colorScheme.outlineVariant  // 灰色
+    // 边框颜色：仅显示在线/离线状态
+    val onlineColor = Color(0xFF4CAF50)  // 绿色 - 在线
+    val offlineColor = MaterialTheme.colorScheme.outlineVariant  // 灰色 - 离线
+    val borderColor = if (isOnline) onlineColor else offlineColor
+    val borderWidth = 2.5.dp
 
-    // 根据追踪状态确定边框颜色和宽度
-    val (borderColor, borderWidth) = when (trackingState) {
-        TrackingState.WAITING -> waitingColor to 3.dp
-        TrackingState.CONNECTED -> connectedColor to 3.dp
-        TrackingState.SUCCESS -> successColor to 3.dp
-        TrackingState.IDLE -> if (isOnline) onlineColor to 2.dp else offlineColor to 2.dp
-    }
-
-    // 是否显示活跃状态（追踪相关状态）
-    val isActive = trackingState != TrackingState.IDLE
-
-    // 是否显示停止覆盖层（等待中或连接中）
-    val showStopOverlay = trackingState == TrackingState.WAITING || trackingState == TrackingState.CONNECTED
+    val interactionSource = remember { MutableInteractionSource() }
+    val strokeWidthPx = with(LocalDensity.current) { borderWidth.toPx() }
 
     Box(
         modifier = Modifier
             .size(56.dp)
             .then(
-                if (canTrack && !showStopOverlay) {
-                    Modifier.clickable(onClick = onAvatarClick)
+                if (canTrack) {
+                    Modifier.clickable(
+                        onClick = onAvatarClick,
+                        indication = null,
+                        interactionSource = interactionSource
+                    )
                 } else {
                     Modifier
                 }
             ),
         contentAlignment = Alignment.Center
     ) {
-        // 外层边框 - 显示状态颜色
-        Surface(
-            modifier = Modifier.fillMaxSize(),
-            shape = CircleShape,
-            color = Color.Transparent,
-            border = androidx.compose.foundation.BorderStroke(borderWidth, borderColor)
-        ) {}
+        // 边框
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .drawBehind {
+                    drawCircle(
+                        color = borderColor,
+                        style = Stroke(width = strokeWidthPx)
+                    )
+                }
+        )
 
         // 头像内容
         Surface(
-            modifier = Modifier.size(if (isActive) 48.dp else 50.dp),
+            modifier = Modifier.size(50.dp),
             shape = CircleShape,
             color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
         ) {
@@ -570,53 +574,6 @@ private fun ContactAvatar(
                 }
             }
         }
-
-        // 停止追踪覆盖层（黑色半透明 + 停止图标）
-        AnimatedVisibility(
-            visible = showStopOverlay,
-            enter = fadeIn() + scaleIn(),
-            exit = fadeOut() + scaleOut()
-        ) {
-            Surface(
-                modifier = Modifier
-                    .size(48.dp)
-                    .clickable(onClick = onStopClick),
-                shape = CircleShape,
-                color = Color.Black.copy(alpha = 0.6f)
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = Icons.Default.Stop,
-                        contentDescription = "停止追踪",
-                        modifier = Modifier.size(24.dp),
-                        tint = Color.White
-                    )
-                }
-            }
-        }
-
-        // 状态指示器（右下角小圆点）
-        AnimatedVisibility(
-            visible = isActive && !showStopOverlay,
-            enter = fadeIn() + scaleIn(),
-            exit = fadeOut() + scaleOut(),
-            modifier = Modifier.align(Alignment.BottomEnd)
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(14.dp)
-                    .clip(CircleShape)
-                    .background(successColor),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Radar,
-                    contentDescription = "追踪成功",
-                    modifier = Modifier.size(10.dp),
-                    tint = Color.White
-                )
-            }
-        }
     }
 }
 
@@ -624,7 +581,6 @@ private fun ContactAvatar(
 private fun ContactInfo(
     contact: Contact,
     myDevice: Device?,
-    trackingState: TrackingState = TrackingState.IDLE,
     addressText: String?,
     isAddressLoading: Boolean,
     modifier: Modifier = Modifier
@@ -640,14 +596,9 @@ private fun ContactInfo(
             fontWeight = FontWeight.SemiBold
         )
 
-        // 状态逻辑
+        // 状态逻辑 - 只显示设备状态，不显示追踪文字
         if (contact.shareStatus == ShareStatus.ACCEPTED && !contact.isPaused && contact.isLocationAvailable) {
-            when (trackingState) {
-                TrackingState.WAITING -> WaitingStatusRow()
-                TrackingState.CONNECTED -> TrackingStatusRow()
-                TrackingState.SUCCESS -> SuccessStatusRow()
-                TrackingState.IDLE -> DeviceStatusRow(contact = contact)
-            }
+            DeviceStatusRow(contact = contact)
 
             // 距离 + 地址
             DistanceAndAddressRow(
@@ -663,140 +614,108 @@ private fun ContactInfo(
 }
 
 /**
- * 等待状态行 - 黄色
+ * 设备状态行 - 使用 Material Chips 展示电量和时间
+ * 电量 ≤20% 时背景变红，其他时候使用 Surface 色
  */
-@Composable
-private fun WaitingStatusRow() {
-    val waitingColor = Color(0xFFFFC107)
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        CircularProgressIndicator(
-            modifier = Modifier.size(12.dp),
-            strokeWidth = 1.5.dp,
-            color = waitingColor
-        )
-        Spacer(modifier = Modifier.width(6.dp))
-        Text(
-            text = "等待连接...",
-            style = MaterialTheme.typography.bodySmall,
-            color = waitingColor,
-            fontWeight = FontWeight.SemiBold
-        )
-    }
-}
-
-/**
- * 追踪中状态行 - 蓝色
- */
-@Composable
-private fun TrackingStatusRow() {
-    val connectedColor = Color(0xFF2196F3)
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        CircularProgressIndicator(
-            modifier = Modifier.size(12.dp),
-            strokeWidth = 1.5.dp,
-            color = connectedColor
-        )
-        Spacer(modifier = Modifier.width(6.dp))
-        Text(
-            text = "实时追踪中...",
-            style = MaterialTheme.typography.bodySmall,
-            color = connectedColor,
-            fontWeight = FontWeight.SemiBold
-        )
-    }
-}
-
-/**
- * 追踪成功状态行 - 绿色
- */
-@Composable
-private fun SuccessStatusRow() {
-    val successColor = Color(0xFF4CAF50)
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Icon(
-            imageVector = Icons.Default.MyLocation,
-            contentDescription = null,
-            modifier = Modifier.size(12.dp),
-            tint = successColor
-        )
-        Spacer(modifier = Modifier.width(6.dp))
-        Text(
-            text = "位置已更新",
-            style = MaterialTheme.typography.bodySmall,
-            color = successColor,
-            fontWeight = FontWeight.SemiBold
-        )
-    }
-}
-
 @Composable
 private fun DeviceStatusRow(contact: Contact) {
     val isOnline = TimeFormatter.isOnline(contact.lastUpdateTime ?: 0L)
-    val onlineText = if (isOnline) "在线" else "离线"
-    val onlineColor = if (isOnline) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
     val timeText = TimeFormatter.formatUpdateTime(contact.lastUpdateTime ?: 0L)
     val deviceName = contact.deviceName ?: "未知设备"
     val battery = contact.battery ?: 100
 
+    // 电量状态颜色
+    val isLowBattery = battery <= 20
+    val batteryIcon = when {
+        isLowBattery -> Icons.Default.BatteryAlert
+        battery >= 90 -> Icons.Default.BatteryFull
+        else -> Icons.Default.BatteryChargingFull
+    }
+    val batteryChipColor = if (isLowBattery) {
+        MaterialTheme.colorScheme.errorContainer
+    } else {
+        MaterialTheme.colorScheme.surfaceContainerHigh
+    }
+    val batteryContentColor = if (isLowBattery) {
+        MaterialTheme.colorScheme.onErrorContainer
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
+
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp)
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        // 电量指示
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(2.dp)
+        // 电量胶囊 (Chip)
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = batteryChipColor,
+            modifier = Modifier.height(24.dp)
         ) {
-            Icon(
-                imageVector = Icons.Default.Battery4Bar,
-                contentDescription = "电量",
-                modifier = Modifier.size(14.dp),
-                tint = when {
-                    battery <= 20 -> MaterialTheme.colorScheme.error
-                    battery <= 50 -> MaterialTheme.colorScheme.tertiary
-                    else -> MaterialTheme.colorScheme.primary
-                }
-            )
-            Text(
-                text = "$battery%",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            Row(
+                modifier = Modifier.padding(horizontal = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Icon(
+                    imageVector = batteryIcon,
+                    contentDescription = "电量",
+                    modifier = Modifier.size(14.dp),
+                    tint = batteryContentColor
+                )
+                Text(
+                    text = "$battery%",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = batteryContentColor,
+                    fontWeight = FontWeight.Medium
+                )
+            }
         }
 
-        Text(
-            text = "•",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        // 时间胶囊 (Chip)
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            modifier = Modifier.height(24.dp)
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Schedule,
+                    contentDescription = "更新时间",
+                    modifier = Modifier.size(14.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = timeText,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+        }
 
+        // 设备名称（简化显示）
         Text(
             text = deviceName,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f, fill = false)
         )
 
-        Text(
-            text = "•",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-
-        Text(
-            text = onlineText,
-            style = MaterialTheme.typography.bodySmall,
-            color = onlineColor
-        )
-
-        Text(
-            text = "•",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-
-        // 位置更新时间徽章
-        AccuracyBadge(
-            lastUpdateTime = contact.lastUpdateTime
+        // 在线状态小圆点
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .clip(CircleShape)
+                .background(
+                    if (isOnline) Color(0xFF4CAF50) else MaterialTheme.colorScheme.outlineVariant
+                )
         )
     }
 }

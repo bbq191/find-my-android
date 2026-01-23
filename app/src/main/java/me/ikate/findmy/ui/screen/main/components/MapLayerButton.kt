@@ -1,7 +1,13 @@
 package me.ikate.findmy.ui.screen.main.components
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -39,11 +45,15 @@ import androidx.compose.material3.FloatingActionButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
+import me.ikate.findmy.ui.theme.FindMyShapes
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -70,12 +80,9 @@ import com.tencent.tencentmap.mapsdk.maps.TencentMap
 import com.tencent.tencentmap.mapsdk.maps.CameraUpdateFactory
 import com.tencent.tencentmap.mapsdk.maps.model.CameraPosition
 import kotlinx.coroutines.launch
-import androidx.compose.runtime.CompositionLocalProvider
-import me.ikate.findmy.ui.theme.LocalMapThemeColors
-import me.ikate.findmy.ui.theme.MapTheme
-import me.ikate.findmy.ui.theme.MapThemeColors
 import me.ikate.findmy.util.TencentMapCameraHelper
 import me.ikate.findmy.util.MapSettingsManager
+import me.ikate.findmy.util.rememberHaptics
 
 /**
  * 地图图层配置数据类
@@ -94,34 +101,23 @@ data class MapLayerConfig(
 
 /**
  * 光照预设
+ * MONET: 简化为三个选项 [自动] [浅色] [深色]
  */
 enum class LightPreset(val displayName: String, val icon: ImageVector) {
-    AUTO("自动", Icons.Outlined.AutoMode),  // 根据本地时间自动切换
-    DAY("白天", Icons.Outlined.LightMode),
-    DUSK("黄昏", Icons.Outlined.WbTwilight),
-    DAWN("黎明", Icons.Outlined.WbTwilight),
-    NIGHT("夜间", Icons.Outlined.DarkMode);
+    AUTO("自动", Icons.Outlined.AutoMode),   // 根据本地时间自动切换
+    LIGHT("浅色", Icons.Outlined.LightMode), // 白天模式
+    DARK("深色", Icons.Outlined.DarkMode);   // 夜间模式
 
     companion object {
         /**
          * 根据当前时间计算应该使用的光照预设
-         * - 05:00 - 06:30: 黎明
-         * - 06:30 - 17:30: 白天
-         * - 17:30 - 19:00: 黄昏
-         * - 19:00 - 05:00: 夜间
+         * - 06:00 - 18:00: 浅色
+         * - 18:00 - 06:00: 深色
          */
         fun calculateByTime(): LightPreset {
             val calendar = java.util.Calendar.getInstance()
             val hour = calendar.get(java.util.Calendar.HOUR_OF_DAY)
-            val minute = calendar.get(java.util.Calendar.MINUTE)
-            val timeInMinutes = hour * 60 + minute
-
-            return when {
-                timeInMinutes in 300..389 -> DAWN      // 05:00 - 06:29
-                timeInMinutes in 390..1049 -> DAY      // 06:30 - 17:29
-                timeInMinutes in 1050..1139 -> DUSK    // 17:30 - 18:59
-                else -> NIGHT                           // 19:00 - 04:59
-            }
+            return if (hour in 6..17) LIGHT else DARK
         }
 
         /**
@@ -146,8 +142,7 @@ fun MapLayerButton(
     isTrafficEnabled: Boolean = false,
     onTrafficToggle: (Boolean) -> Unit = {},
     config: MapLayerConfig = MapLayerConfig(),
-    onConfigChange: (MapLayerConfig) -> Unit = {},
-    themeColors: MapThemeColors = MapTheme.Day
+    onConfigChange: (MapLayerConfig) -> Unit = {}
 ) {
     var showBottomSheet by remember { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -156,21 +151,23 @@ fun MapLayerButton(
     // 合并 traffic 状态到 config
     val currentConfig = config.copy(showTraffic = isTrafficEnabled)
 
+    // Small FAB 样式 - 使用 Material 3 主题色
     FloatingActionButton(
         onClick = { showBottomSheet = true },
-        modifier = modifier.size(48.dp),
+        modifier = modifier.size(40.dp),
         shape = CircleShape,
-        containerColor = themeColors.buttonBackground,
-        contentColor = themeColors.buttonIcon,
+        containerColor = MaterialTheme.colorScheme.surface,
+        contentColor = MaterialTheme.colorScheme.onSurface,
         elevation = FloatingActionButtonDefaults.elevation(
             defaultElevation = 4.dp,
-            pressedElevation = 8.dp
+            pressedElevation = 6.dp
         )
     ) {
         Icon(
             imageVector = Icons.Default.Layers,
             contentDescription = "图层",
-            modifier = Modifier.size(22.dp)
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(20.dp)
         )
     }
 
@@ -178,7 +175,7 @@ fun MapLayerButton(
         ModalBottomSheet(
             onDismissRequest = { showBottomSheet = false },
             sheetState = sheetState,
-            containerColor = themeColors.surface,
+            containerColor = MaterialTheme.colorScheme.surface,
             dragHandle = {
                 Box(
                     modifier = Modifier
@@ -190,18 +187,17 @@ fun MapLayerButton(
                         modifier = Modifier
                             .size(width = 36.dp, height = 4.dp)
                             .background(
-                                themeColors.border,
+                                MaterialTheme.colorScheme.outline.copy(alpha = 0.4f),
                                 RoundedCornerShape(2.dp)
                             )
                     )
                 }
             },
-            shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp)
+            shape = FindMyShapes.BottomSheetTop
         ) {
             MapLayerContent(
                 map = map,
                 config = currentConfig,
-                themeColors = themeColors,
                 onConfigChange = { newConfig ->
                     if (newConfig.showTraffic != currentConfig.showTraffic) {
                         onTrafficToggle(newConfig.showTraffic)
@@ -221,27 +217,18 @@ fun MapLayerButton(
 }
 
 /**
- * 腾讯地图样式枚举
+ * 腾讯地图类型枚举
  *
- * 个性化样式说明（需在腾讯地图控制台配置）：
- * - 白浅：浅色风格，适合日间使用
- * - 墨渊：深色风格，适合夜间使用
- *
- * 样式 ID 对应控制台中"我的样式"的序号（1-3）
+ * 地图类型：标准地图、卫星地图
+ * 地图风格（浅色/深色）由光照预设自动控制
  */
 private enum class MapStyleType(
     val mapType: Int,
-    val customStyleId: Int?,  // 个性化样式 ID，null 表示使用基础样式
     val displayName: String,
     val description: String
 ) {
-    // 基础样式
-    STANDARD(TencentMap.MAP_TYPE_NORMAL, null, "标准", "默认地图样式"),
-    SATELLITE(TencentMap.MAP_TYPE_SATELLITE, null, "卫星", "高清卫星影像"),
-
-    // 个性化样式（需要在控制台配置并绑定 Key）
-    BAIQIAN(TencentMap.MAP_TYPE_NORMAL, 1, "白浅", "浅色风格，日间适用"),
-    MOYUAN(TencentMap.MAP_TYPE_NORMAL, 2, "墨渊", "深色风格，夜间适用")
+    STANDARD(TencentMap.MAP_TYPE_NORMAL, "标准", "默认地图样式"),
+    SATELLITE(TencentMap.MAP_TYPE_SATELLITE, "卫星", "高清卫星影像")
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -249,11 +236,11 @@ private enum class MapStyleType(
 private fun MapLayerContent(
     map: TencentMap,
     config: MapLayerConfig,
-    themeColors: MapThemeColors,
     onConfigChange: (MapLayerConfig) -> Unit,
     onClose: () -> Unit
 ) {
     val context = LocalContext.current
+    val haptics = rememberHaptics()
 
     // 从本地存储加载样式
     val savedStyleName = remember { MapSettingsManager.loadMapStyle(context) }
@@ -263,159 +250,54 @@ private fun MapLayerContent(
     var currentStyle by remember { mutableStateOf(initialStyle) }
     val scrollState = rememberScrollState()
 
-    // 首次加载时应用保存的样式
+    // 首次加载时应用保存的地图类型
     LaunchedEffect(Unit) {
-        // 设置地图类型
         map.mapType = currentStyle.mapType
-
-        // 如果是个性化样式，设置样式 ID
-        currentStyle.customStyleId?.let { styleId ->
-            map.setMapStyle(styleId)
-        } ?: run {
-            // 如果不是个性化样式，重置为默认样式
-            map.setMapStyle(0)
-        }
     }
 
-    CompositionLocalProvider(LocalMapThemeColors provides themeColors) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .verticalScroll(scrollState)
-                .padding(horizontal = 20.dp)
-                .padding(bottom = 32.dp)
-        ) {
-            // 标题
-            Text(
-                text = "地图样式",
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold,
-                color = themeColors.onSurface,
-                modifier = Modifier.padding(bottom = 16.dp)
-            )
-
-        // 基础样式（标准、卫星）
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .verticalScroll(scrollState)
+            .padding(horizontal = 20.dp)
+            .padding(bottom = 32.dp)
+    ) {
+        // 标题
         Text(
-            text = "基础样式",
-            fontSize = 13.sp,
-            fontWeight = FontWeight.Medium,
-            color = themeColors.onSurfaceVariant,
-            modifier = Modifier.padding(bottom = 8.dp)
+            text = "地图样式",
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.padding(bottom = 16.dp)
         )
 
-        FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+        // 地图样式（可视化卡片）
+        Text(
+            text = "地图类型",
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(bottom = 12.dp)
+        )
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            MapStyleType.entries.filter { it.customStyleId == null }.forEach { style ->
-                FilterChip(
-                    selected = currentStyle == style,
+            MapStyleType.entries.forEach { style ->
+                MapStyleCard(
+                    style = style,
+                    isSelected = currentStyle == style,
                     onClick = {
+                        haptics.click()  // 地图图层切换：模拟按下实体开关的质感
                         map.mapType = style.mapType
-                        // 基础样式不需要个性化样式，重置为 0
-                        map.setMapStyle(0)
                         currentStyle = style
                         MapSettingsManager.saveMapStyle(context, style.name)
                     },
-                    label = {
-                        Text(
-                            text = style.displayName,
-                            fontWeight = if (currentStyle == style) FontWeight.SemiBold else FontWeight.Normal
-                        )
-                    },
-                    leadingIcon = if (currentStyle == style) {
-                        {
-                            Icon(
-                                imageVector = Icons.Default.Check,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-                    } else null,
-                    colors = FilterChipDefaults.filterChipColors(
-                        containerColor = themeColors.surfaceVariant,
-                        labelColor = themeColors.onSurfaceVariant,
-                        selectedContainerColor = themeColors.primary,
-                        selectedLabelColor = Color.White,
-                        selectedLeadingIconColor = Color.White
-                    ),
-                    border = FilterChipDefaults.filterChipBorder(
-                        borderColor = themeColors.border,
-                        selectedBorderColor = Color.Transparent,
-                        enabled = true,
-                        selected = currentStyle == style
-                    )
+                    modifier = Modifier.weight(1f)
                 )
             }
         }
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // 个性化样式（白浅、墨渊）
-        Text(
-            text = "个性化样式",
-            fontSize = 13.sp,
-            fontWeight = FontWeight.Medium,
-            color = themeColors.onSurfaceVariant,
-            modifier = Modifier.padding(bottom = 8.dp)
-        )
-
-        FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            MapStyleType.entries.filter { it.customStyleId != null }.forEach { style ->
-                FilterChip(
-                    selected = currentStyle == style,
-                    onClick = {
-                        // 个性化样式需要使用 MAP_TYPE_NORMAL
-                        map.mapType = TencentMap.MAP_TYPE_NORMAL
-                        // 设置个性化样式 ID
-                        style.customStyleId?.let { styleId ->
-                            map.setMapStyle(styleId)
-                        }
-                        currentStyle = style
-                        MapSettingsManager.saveMapStyle(context, style.name)
-                    },
-                    label = {
-                        Text(
-                            text = style.displayName,
-                            fontWeight = if (currentStyle == style) FontWeight.SemiBold else FontWeight.Normal
-                        )
-                    },
-                    leadingIcon = if (currentStyle == style) {
-                        {
-                            Icon(
-                                imageVector = Icons.Default.Check,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-                    } else null,
-                    colors = FilterChipDefaults.filterChipColors(
-                        containerColor = themeColors.surfaceVariant,
-                        labelColor = themeColors.onSurfaceVariant,
-                        selectedContainerColor = themeColors.primary,
-                        selectedLabelColor = Color.White,
-                        selectedLeadingIconColor = Color.White
-                    ),
-                    border = FilterChipDefaults.filterChipBorder(
-                        borderColor = themeColors.border,
-                        selectedBorderColor = Color.Transparent,
-                        enabled = true,
-                        selected = currentStyle == style
-                    )
-                )
-            }
-        }
-
-        // 个性化样式提示
-        Text(
-            text = "需在腾讯地图控制台配置并绑定 Key",
-            fontSize = 11.sp,
-            color = themeColors.onSurfaceVariant.copy(alpha = 0.6f),
-            modifier = Modifier.padding(top = 4.dp)
-        )
 
         Spacer(modifier = Modifier.height(28.dp))
 
@@ -424,89 +306,75 @@ private fun MapLayerContent(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(1.dp)
-                .background(themeColors.border)
+                .background(MaterialTheme.colorScheme.outlineVariant)
         )
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // 地图功能（紧凑网格布局）
+        // MONET: 地图功能 - 使用 Filter Chips (过滤胶囊)
+        // 只保留高频功能：实时路况、3D建筑
         Text(
             text = "地图功能",
             fontSize = 16.sp,
             fontWeight = FontWeight.SemiBold,
-            color = themeColors.onSurface,
+            color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.padding(bottom = 12.dp)
         )
 
-        // 第一行：路况、3D建筑、地标、3D视角
-        Row(
+        // 流式布局排列 Filter Chips
+        @OptIn(ExperimentalLayoutApi::class)
+        FlowRow(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            CompactFeatureIcon(
-                icon = { TrafficIcon(config.showTraffic) },
-                label = "路况",
-                isEnabled = config.showTraffic,
-                onClick = { onConfigChange(config.copy(showTraffic = !config.showTraffic)) },
-                modifier = Modifier.weight(1f)
-            )
-            CompactFeatureIcon(
-                icon = { BuildingIcon(config.show3dBuildings) },
-                label = "3D建筑",
-                isEnabled = config.show3dBuildings,
-                onClick = { onConfigChange(config.copy(show3dBuildings = !config.show3dBuildings)) },
-                modifier = Modifier.weight(1f)
-            )
-            CompactFeatureIcon(
-                icon = { LandmarkIcon(config.showLandmarkIcons) },
-                label = "地标",
-                isEnabled = config.showLandmarkIcons,
-                onClick = { onConfigChange(config.copy(showLandmarkIcons = !config.showLandmarkIcons)) },
-                modifier = Modifier.weight(1f)
-            )
-            CompactFeatureIcon(
-                icon = { ThreeDViewIcon(config.is3DViewEnabled) },
-                label = "3D视角",
-                isEnabled = config.is3DViewEnabled,
+            // 实时路况
+            FilterChip(
+                selected = config.showTraffic,
                 onClick = {
-                    val newEnabled = !config.is3DViewEnabled
-                    onConfigChange(config.copy(is3DViewEnabled = newEnabled))
-                    TencentMapCameraHelper.toggle3DView(map, newEnabled)
+                    haptics.click()  // Filter Chip 开关：轻微的确认感
+                    onConfigChange(config.copy(showTraffic = !config.showTraffic))
                 },
-                modifier = Modifier.weight(1f)
+                label = { Text("实时路况") },
+                leadingIcon = if (config.showTraffic) {
+                    {
+                        Icon(
+                            imageVector = Icons.Default.Check,
+                            contentDescription = null,
+                            modifier = Modifier.size(FilterChipDefaults.IconSize)
+                        )
+                    }
+                } else null,
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = MaterialTheme.colorScheme.primary,
+                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
+                    selectedLeadingIconColor = MaterialTheme.colorScheme.onPrimary
+                )
             )
-        }
 
-        Spacer(modifier = Modifier.height(10.dp))
-
-        // 第二行：地点标签、道路标签、兴趣点
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            CompactFeatureIcon(
-                icon = { LabelIcon(config.showPlaceLabels) },
-                label = "地点",
-                isEnabled = config.showPlaceLabels,
-                onClick = { onConfigChange(config.copy(showPlaceLabels = !config.showPlaceLabels)) },
-                modifier = Modifier.weight(1f)
+            // 3D建筑
+            FilterChip(
+                selected = config.show3dBuildings,
+                onClick = {
+                    haptics.click()  // Filter Chip 开关：轻微的确认感
+                    onConfigChange(config.copy(show3dBuildings = !config.show3dBuildings))
+                },
+                label = { Text("3D建筑") },
+                leadingIcon = if (config.show3dBuildings) {
+                    {
+                        Icon(
+                            imageVector = Icons.Default.Check,
+                            contentDescription = null,
+                            modifier = Modifier.size(FilterChipDefaults.IconSize)
+                        )
+                    }
+                } else null,
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = MaterialTheme.colorScheme.primary,
+                    selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
+                    selectedLeadingIconColor = MaterialTheme.colorScheme.onPrimary
+                )
             )
-            CompactFeatureIcon(
-                icon = { RoadLabelIcon(config.showRoadLabels) },
-                label = "道路",
-                isEnabled = config.showRoadLabels,
-                onClick = { onConfigChange(config.copy(showRoadLabels = !config.showRoadLabels)) },
-                modifier = Modifier.weight(1f)
-            )
-            CompactFeatureIcon(
-                icon = { PoiIcon(config.showPointOfInterestLabels) },
-                label = "兴趣点",
-                isEnabled = config.showPointOfInterestLabels,
-                onClick = { onConfigChange(config.copy(showPointOfInterestLabels = !config.showPointOfInterestLabels)) },
-                modifier = Modifier.weight(1f)
-            )
-            // 占位，保持对齐
-            Spacer(modifier = Modifier.weight(1f))
         }
 
         Spacer(modifier = Modifier.height(24.dp))
@@ -516,68 +384,122 @@ private fun MapLayerContent(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(1.dp)
-                .background(themeColors.border)
+                .background(MaterialTheme.colorScheme.outlineVariant)
         )
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // 光照设置
+        // 光照设置 - 使用 Segmented Button
         Text(
             text = "光照效果",
             fontSize = 16.sp,
             fontWeight = FontWeight.SemiBold,
-            color = themeColors.onSurface,
+            color = MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.padding(bottom = 16.dp)
         )
 
-        // 自动选项（第一行，显示当前实际使用的光照）
+        // 当前自动计算的光照提示
         val currentAutoPreset = LightPreset.calculateByTime()
-        AutoLightPresetChip(
-            isSelected = config.lightPreset == LightPreset.AUTO,
-            currentPreset = currentAutoPreset,
-            onClick = { onConfigChange(config.copy(lightPreset = LightPreset.AUTO)) },
+        if (config.lightPreset == LightPreset.AUTO) {
+            Surface(
+                shape = FindMyShapes.Small,
+                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.1f),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = currentAutoPreset.icon,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "当前自动应用: ${currentAutoPreset.displayName}",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+        }
+
+        // Segmented Button Row
+        SingleChoiceSegmentedButtonRow(
             modifier = Modifier.fillMaxWidth()
-        )
-
-        Spacer(modifier = Modifier.height(10.dp))
-
-        // 手动选项（第二行）
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            LightPreset.entries.filter { it != LightPreset.AUTO }.forEach { preset ->
-                LightPresetChip(
-                    preset = preset,
-                    isSelected = config.lightPreset == preset,
-                    onClick = { onConfigChange(config.copy(lightPreset = preset)) },
-                    modifier = Modifier.weight(1f)
-                )
+            LightPreset.entries.forEachIndexed { index, preset ->
+                SegmentedButton(
+                    selected = config.lightPreset == preset,
+                    onClick = {
+                        haptics.click()  // 光照设置切换：清脆的点击感
+                        onConfigChange(config.copy(lightPreset = preset))
+                    },
+                    shape = SegmentedButtonDefaults.itemShape(
+                        index = index,
+                        count = LightPreset.entries.size
+                    ),
+                    icon = {
+                        SegmentedButtonDefaults.Icon(active = config.lightPreset == preset) {
+                            Icon(
+                                imageVector = preset.icon,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    },
+                    colors = SegmentedButtonDefaults.colors(
+                        activeContainerColor = MaterialTheme.colorScheme.primary,
+                        activeContentColor = MaterialTheme.colorScheme.onPrimary,
+                        inactiveContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        inactiveContentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                ) {
+                    Text(
+                        text = preset.displayName,
+                        fontSize = 12.sp,
+                        fontWeight = if (config.lightPreset == preset) FontWeight.SemiBold else FontWeight.Normal
+                    )
+                }
             }
         }
 
         Spacer(modifier = Modifier.height(16.dp))
-        }
     }
 }
 
+/**
+ * 地图样式可视化卡片
+ * 显示地图预览缩略图，选中时显示边框和对勾
+ */
 @Composable
 private fun MapStyleCard(
     style: MapStyleType,
     isSelected: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
-    val themeColors = LocalMapThemeColors.current
+    val primaryColor = MaterialTheme.colorScheme.primary
     val borderColor by animateColorAsState(
-        targetValue = if (isSelected) themeColors.primary else Color.Transparent,
+        targetValue = if (isSelected) primaryColor else MaterialTheme.colorScheme.outlineVariant,
         animationSpec = tween(200),
         label = "border"
+    )
+    val borderWidth by animateFloatAsState(
+        targetValue = if (isSelected) 2.5f else 1f,
+        animationSpec = tween(200),
+        label = "borderWidth"
     )
 
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier
-            .width(100.dp)
+        modifier = modifier
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -585,46 +507,41 @@ private fun MapStyleCard(
             )
     ) {
         Surface(
-            modifier = Modifier.size(100.dp, 72.dp),
-            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(80.dp),
+            shape = FindMyShapes.Medium,
             shadowElevation = if (isSelected) 4.dp else 1.dp,
-            color = Color.White
+            color = Color.White,
+            border = androidx.compose.foundation.BorderStroke(borderWidth.dp, borderColor)
         ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(
-                        brush = Brush.verticalGradient(
-                            colors = listOf(
-                                borderColor.copy(alpha = 0.1f),
-                                Color.Transparent
-                            )
-                        )
-                    )
-            ) {
+            Box(modifier = Modifier.fillMaxSize()) {
+                // 地图预览
                 when (style) {
                     MapStyleType.STANDARD -> StandardMapPreview()
                     MapStyleType.SATELLITE -> SatelliteMapPreview()
-                    MapStyleType.BAIQIAN -> BaiqianMapPreview()
-                    MapStyleType.MOYUAN -> MoyuanMapPreview()
                 }
 
-                // 选中指示器
-                if (isSelected) {
+                // 选中指示器（右上角对勾）
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = isSelected,
+                    enter = fadeIn() + scaleIn(),
+                    exit = fadeOut() + scaleOut(),
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(6.dp)
+                ) {
                     Box(
                         modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(6.dp)
-                            .size(20.dp)
-                            .background(themeColors.primary, CircleShape),
+                            .size(22.dp)
+                            .background(primaryColor, CircleShape),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = Icons.Default.Check,
                             contentDescription = null,
-                            tint = Color.White,
-                            modifier = Modifier.size(12.dp)
+                            tint = MaterialTheme.colorScheme.onPrimary,
+                            modifier = Modifier.size(14.dp)
                         )
                     }
                 }
@@ -637,7 +554,15 @@ private fun MapStyleCard(
             text = style.displayName,
             fontSize = 13.sp,
             fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-            color = if (isSelected) themeColors.primary else themeColors.onSurface
+            color = if (isSelected) primaryColor else MaterialTheme.colorScheme.onSurface
+        )
+
+        // 描述文字
+        Text(
+            text = style.description,
+            fontSize = 10.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+            maxLines = 1
         )
     }
 }
@@ -653,9 +578,9 @@ private fun CompactFeatureIcon(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val themeColors = LocalMapThemeColors.current
+    val primaryColor = MaterialTheme.colorScheme.primary
     val backgroundColor by animateColorAsState(
-        targetValue = if (isEnabled) themeColors.primary else themeColors.surfaceVariant,
+        targetValue = if (isEnabled) primaryColor else MaterialTheme.colorScheme.surfaceVariant,
         animationSpec = tween(200),
         label = "bg"
     )
@@ -682,7 +607,7 @@ private fun CompactFeatureIcon(
             text = label,
             fontSize = 11.sp,
             fontWeight = if (isEnabled) FontWeight.Medium else FontWeight.Normal,
-            color = if (isEnabled) themeColors.primary else themeColors.onSurfaceVariant,
+            color = if (isEnabled) primaryColor else MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1
         )
     }
@@ -695,14 +620,14 @@ private fun LightPresetChip(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val themeColors = LocalMapThemeColors.current
+    val primaryColor = MaterialTheme.colorScheme.primary
     val backgroundColor by animateColorAsState(
-        targetValue = if (isSelected) themeColors.primary else themeColors.surfaceVariant,
+        targetValue = if (isSelected) primaryColor else MaterialTheme.colorScheme.surfaceVariant,
         animationSpec = tween(200),
         label = "bg"
     )
     val contentColor by animateColorAsState(
-        targetValue = if (isSelected) Color.White else themeColors.onSurfaceVariant,
+        targetValue = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
         animationSpec = tween(200),
         label = "content"
     )
@@ -752,14 +677,14 @@ private fun AutoLightPresetChip(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val themeColors = LocalMapThemeColors.current
+    val primaryColor = MaterialTheme.colorScheme.primary
     val backgroundColor by animateColorAsState(
-        targetValue = if (isSelected) themeColors.primary else themeColors.surfaceVariant,
+        targetValue = if (isSelected) primaryColor else MaterialTheme.colorScheme.surfaceVariant,
         animationSpec = tween(200),
         label = "bg"
     )
     val contentColor by animateColorAsState(
-        targetValue = if (isSelected) Color.White else themeColors.onSurfaceVariant,
+        targetValue = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
         animationSpec = tween(200),
         label = "content"
     )
@@ -799,7 +724,7 @@ private fun AutoLightPresetChip(
             // 显示当前自动计算的光照
             Surface(
                 shape = RoundedCornerShape(6.dp),
-                color = if (isSelected) Color.White.copy(alpha = 0.2f) else themeColors.primary.copy(alpha = 0.1f)
+                color = if (isSelected) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.2f) else primaryColor.copy(alpha = 0.1f)
             ) {
                 Row(
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
@@ -808,7 +733,7 @@ private fun AutoLightPresetChip(
                     Icon(
                         imageVector = currentPreset.icon,
                         contentDescription = null,
-                        tint = if (isSelected) Color.White else themeColors.primary,
+                        tint = if (isSelected) MaterialTheme.colorScheme.onPrimary else primaryColor,
                         modifier = Modifier.size(14.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
@@ -816,7 +741,7 @@ private fun AutoLightPresetChip(
                         text = "当前: ${currentPreset.displayName}",
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Normal,
-                        color = if (isSelected) Color.White else themeColors.primary
+                        color = if (isSelected) MaterialTheme.colorScheme.onPrimary else primaryColor
                     )
                 }
             }
@@ -866,8 +791,7 @@ private fun TrafficIcon(isEnabled: Boolean) {
 
 @Composable
 private fun BuildingIcon(isEnabled: Boolean) {
-    val themeColors = LocalMapThemeColors.current
-    val iconColor = if (isEnabled) Color.White else themeColors.onSurfaceVariant
+    val iconColor = if (isEnabled) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
     Canvas(modifier = Modifier.size(22.dp)) {
         val w = size.width
         val h = size.height
@@ -900,9 +824,8 @@ private fun BuildingIcon(isEnabled: Boolean) {
 
 @Composable
 private fun LandmarkIcon(isEnabled: Boolean) {
-    val themeColors = LocalMapThemeColors.current
-    val iconColor = if (isEnabled) Color.White else themeColors.onSurfaceVariant
-    val starColor = if (isEnabled) themeColors.primary else Color.White
+    val iconColor = if (isEnabled) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+    val starColor = if (isEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onPrimary
     Canvas(modifier = Modifier.size(22.dp)) {
         val w = size.width
         val h = size.height
@@ -939,8 +862,7 @@ private fun LandmarkIcon(isEnabled: Boolean) {
 
 @Composable
 private fun LabelIcon(isEnabled: Boolean) {
-    val themeColors = LocalMapThemeColors.current
-    val iconColor = if (isEnabled) Color.White else themeColors.onSurfaceVariant
+    val iconColor = if (isEnabled) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
     Canvas(modifier = Modifier.size(22.dp)) {
         val w = size.width
         val h = size.height
@@ -971,10 +893,9 @@ private fun LabelIcon(isEnabled: Boolean) {
 
 @Composable
 private fun RoadLabelIcon(isEnabled: Boolean) {
-    val themeColors = LocalMapThemeColors.current
-    val iconColor = if (isEnabled) Color.White else themeColors.onSurfaceVariant
-    val roadColor = if (isEnabled) Color.White.copy(alpha = 0.3f) else Color(0xFFE2E8F0)
-    val textColor = if (isEnabled) themeColors.primary else Color.White
+    val iconColor = if (isEnabled) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+    val roadColor = if (isEnabled) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.3f) else Color(0xFFE2E8F0)
+    val textColor = if (isEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onPrimary
     Canvas(modifier = Modifier.size(22.dp)) {
         val w = size.width
         val h = size.height
@@ -1007,9 +928,8 @@ private fun RoadLabelIcon(isEnabled: Boolean) {
 
 @Composable
 private fun PoiIcon(isEnabled: Boolean) {
-    val themeColors = LocalMapThemeColors.current
-    val iconColor = if (isEnabled) Color.White else themeColors.onSurfaceVariant
-    val dotColor = if (isEnabled) themeColors.primary else Color.White
+    val iconColor = if (isEnabled) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+    val dotColor = if (isEnabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onPrimary
     Canvas(modifier = Modifier.size(22.dp)) {
         val w = size.width
         val h = size.height
@@ -1034,8 +954,7 @@ private fun PoiIcon(isEnabled: Boolean) {
 
 @Composable
 private fun ThreeDViewIcon(isEnabled: Boolean) {
-    val themeColors = LocalMapThemeColors.current
-    val color = if (isEnabled) Color.White else themeColors.onSurfaceVariant
+    val color = if (isEnabled) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
     Canvas(modifier = Modifier.size(24.dp)) {
         val w = size.width
         val h = size.height
@@ -1133,130 +1052,3 @@ private fun SatelliteMapPreview() {
     }
 }
 
-@Composable
-private fun NightMapPreview() {
-    Canvas(modifier = Modifier.fillMaxSize()) {
-        val w = size.width
-        val h = size.height
-
-        // 夜间深色背景
-        drawRect(color = Color(0xFF1A1A2E))
-
-        // 街道网格（深灰色）
-        val streetColor = Color(0xFF2D2D44)
-        drawLine(streetColor, Offset(0f, h * 0.3f), Offset(w, h * 0.3f), 3f)
-        drawLine(streetColor, Offset(0f, h * 0.7f), Offset(w, h * 0.7f), 3f)
-        drawLine(streetColor, Offset(w * 0.3f, 0f), Offset(w * 0.3f, h), 3f)
-        drawLine(streetColor, Offset(w * 0.7f, 0f), Offset(w * 0.7f, h), 3f)
-
-        // 建筑物（深蓝灰色块）
-        val buildingColor = Color(0xFF252540)
-        drawRect(buildingColor, topLeft = Offset(w * 0.05f, h * 0.05f), size = Size(w * 0.2f, h * 0.2f))
-        drawRect(buildingColor, topLeft = Offset(w * 0.75f, h * 0.4f), size = Size(w * 0.2f, h * 0.25f))
-        drawRect(buildingColor, topLeft = Offset(w * 0.4f, h * 0.75f), size = Size(w * 0.25f, h * 0.2f))
-
-        // 灯光效果（暖黄色小点）
-        val lightColor = Color(0xFFFFC107)
-        drawCircle(lightColor, 3f, Offset(w * 0.15f, h * 0.15f))
-        drawCircle(lightColor, 3f, Offset(w * 0.85f, h * 0.52f))
-        drawCircle(lightColor, 3f, Offset(w * 0.52f, h * 0.85f))
-    }
-}
-
-/**
- * 白浅样式预览（浅色个性化样式）
- */
-@Composable
-private fun BaiqianMapPreview() {
-    Canvas(modifier = Modifier.fillMaxSize()) {
-        val w = size.width
-        val h = size.height
-
-        // 白浅风格：浅灰白色背景
-        drawRect(color = Color(0xFFF5F5F5))
-
-        // 道路（淡灰色）
-        val roadColor = Color(0xFFFFFFFF)
-        drawLine(roadColor, Offset(w * 0.3f, 0f), Offset(w * 0.3f, h), 4f)
-        drawLine(roadColor, Offset(w * 0.7f, 0f), Offset(w * 0.7f, h), 4f)
-        drawLine(roadColor, Offset(0f, h * 0.4f), Offset(w, h * 0.4f), 4f)
-        drawLine(roadColor, Offset(0f, h * 0.7f), Offset(w, h * 0.7f), 4f)
-
-        // 建筑区块（极淡灰色）
-        val buildingColor = Color(0xFFE8E8E8)
-        drawRoundRect(
-            buildingColor,
-            Offset(w * 0.05f, h * 0.05f),
-            Size(w * 0.2f, h * 0.25f),
-            CornerRadius(4f)
-        )
-        drawRoundRect(
-            buildingColor,
-            Offset(w * 0.75f, h * 0.45f),
-            Size(w * 0.2f, h * 0.2f),
-            CornerRadius(4f)
-        )
-
-        // 公园（淡绿色）
-        drawCircle(Color(0xFFE0F0E0), w * 0.1f, Offset(w * 0.5f, h * 0.55f))
-
-        // 水域（淡蓝色）
-        drawRoundRect(
-            Color(0xFFE0F0F8),
-            Offset(w * 0.1f, h * 0.75f),
-            Size(w * 0.25f, h * 0.15f),
-            CornerRadius(4f)
-        )
-    }
-}
-
-/**
- * 墨渊样式预览（深色个性化样式）
- */
-@Composable
-private fun MoyuanMapPreview() {
-    Canvas(modifier = Modifier.fillMaxSize()) {
-        val w = size.width
-        val h = size.height
-
-        // 墨渊风格：深墨色背景
-        drawRect(color = Color(0xFF1C1C1E))
-
-        // 道路（深灰色）
-        val roadColor = Color(0xFF2C2C2E)
-        drawLine(roadColor, Offset(w * 0.3f, 0f), Offset(w * 0.3f, h), 4f)
-        drawLine(roadColor, Offset(w * 0.7f, 0f), Offset(w * 0.7f, h), 4f)
-        drawLine(roadColor, Offset(0f, h * 0.4f), Offset(w, h * 0.4f), 4f)
-        drawLine(roadColor, Offset(0f, h * 0.7f), Offset(w, h * 0.7f), 4f)
-
-        // 建筑区块（深灰色）
-        val buildingColor = Color(0xFF252527)
-        drawRoundRect(
-            buildingColor,
-            Offset(w * 0.05f, h * 0.05f),
-            Size(w * 0.2f, h * 0.25f),
-            CornerRadius(4f)
-        )
-        drawRoundRect(
-            buildingColor,
-            Offset(w * 0.75f, h * 0.45f),
-            Size(w * 0.2f, h * 0.2f),
-            CornerRadius(4f)
-        )
-
-        // 公园（深绿色）
-        drawCircle(Color(0xFF1E3A1E), w * 0.1f, Offset(w * 0.5f, h * 0.55f))
-
-        // 水域（深蓝色）
-        drawRoundRect(
-            Color(0xFF1A2A3A),
-            Offset(w * 0.1f, h * 0.75f),
-            Size(w * 0.25f, h * 0.15f),
-            CornerRadius(4f)
-        )
-
-        // 主干道标记（淡色线条提示）
-        val accentColor = Color(0xFF3A3A3C)
-        drawLine(accentColor, Offset(w * 0.5f, 0f), Offset(w * 0.5f, h), 2f)
-    }
-}
