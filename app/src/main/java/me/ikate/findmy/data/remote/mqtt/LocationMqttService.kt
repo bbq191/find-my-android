@@ -5,6 +5,7 @@ import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -51,59 +52,68 @@ class LocationMqttService(
     private val geofenceManager by lazy { GeofenceManager(context) }
     private val geofenceEventHandler by lazy { GeofenceEventHandler.getInstance(context) }
 
-    // 位置更新流
+    // 位置更新流（高频，缓冲区较大）
+    // 使用 DROP_OLDEST 策略：当缓冲区满时丢弃最旧的消息，保证新消息不阻塞
     private val _locationUpdates = MutableSharedFlow<Device>(
         replay = 0,
-        extraBufferCapacity = 50
+        extraBufferCapacity = 50,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST
     )
     val locationUpdates: Flow<Device> = _locationUpdates.asSharedFlow()
 
     // 在线状态更新流
     private val _presenceUpdates = MutableSharedFlow<Pair<String, Boolean>>(
         replay = 0,
-        extraBufferCapacity = 50
+        extraBufferCapacity = 50,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST
     )
     val presenceUpdates: Flow<Pair<String, Boolean>> = _presenceUpdates.asSharedFlow()
 
-    // 共享邀请请求流
+    // 共享邀请请求流（重要消息，使用 SUSPEND 策略确保不丢失）
     private val _shareRequestUpdates = MutableSharedFlow<ShareRequestMessage>(
-        replay = 0,
-        extraBufferCapacity = 20
+        replay = 1,  // 保留最新一条，防止订阅者错过
+        extraBufferCapacity = 20,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST
     )
     val shareRequestUpdates: Flow<ShareRequestMessage> = _shareRequestUpdates.asSharedFlow()
 
-    // 共享邀请响应流
+    // 共享邀请响应流（重要消息）
     private val _shareResponseUpdates = MutableSharedFlow<ShareResponseMessage>(
-        replay = 0,
-        extraBufferCapacity = 20
+        replay = 1,
+        extraBufferCapacity = 20,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST
     )
     val shareResponseUpdates: Flow<ShareResponseMessage> = _shareResponseUpdates.asSharedFlow()
 
     // 请求消息流（位置请求、发声请求等）
     private val _requestUpdates = MutableSharedFlow<RequestMessage>(
-        replay = 0,
-        extraBufferCapacity = 20
+        replay = 1,
+        extraBufferCapacity = 20,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST
     )
     val requestUpdates: Flow<RequestMessage> = _requestUpdates.asSharedFlow()
 
     // 共享暂停状态更新流
     private val _sharePauseUpdates = MutableSharedFlow<SharePauseMessage>(
-        replay = 0,
-        extraBufferCapacity = 20
+        replay = 1,
+        extraBufferCapacity = 20,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST
     )
     val sharePauseUpdates: Flow<SharePauseMessage> = _sharePauseUpdates.asSharedFlow()
 
-    // 围栏事件更新流
+    // 围栏事件更新流（重要通知）
     private val _geofenceEventUpdates = MutableSharedFlow<GeofenceEventMessage>(
-        replay = 0,
-        extraBufferCapacity = 20
+        replay = 1,
+        extraBufferCapacity = 20,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST
     )
     val geofenceEventUpdates: Flow<GeofenceEventMessage> = _geofenceEventUpdates.asSharedFlow()
 
     // 围栏同步通知流
     private val _geofenceSyncUpdates = MutableSharedFlow<GeofenceSyncMessage>(
-        replay = 0,
-        extraBufferCapacity = 20
+        replay = 1,
+        extraBufferCapacity = 20,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST
     )
     val geofenceSyncUpdates: Flow<GeofenceSyncMessage> = _geofenceSyncUpdates.asSharedFlow()
 

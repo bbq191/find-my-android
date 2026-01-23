@@ -119,6 +119,8 @@ class LostModeService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        // 移除所有待执行的 Handler 回调，防止内存泄漏
+        handler.removeCallbacksAndMessages(null)
         unregisterScreenUnlockReceiver()
     }
 

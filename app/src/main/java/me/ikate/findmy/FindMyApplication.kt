@@ -1,18 +1,22 @@
 package me.ikate.findmy
 
 import android.app.Application
+import android.os.Build
+import android.os.StrictMode
 import android.util.Log
 import com.tencent.map.geolocation.TencentLocationManager
 import com.tencent.tencentmap.mapsdk.maps.TencentMapInitializer
 import me.ikate.findmy.crash.CrashMonitor
 import me.ikate.findmy.crash.CrashUploadWorker
 import me.ikate.findmy.di.allModules
+import me.ikate.findmy.domain.communication.CommunicationManager
 import me.ikate.findmy.push.FCMManager
 import me.ikate.findmy.service.GeofenceServiceController
 import me.ikate.findmy.service.MqttForegroundService
 import me.ikate.findmy.service.TencentLocationService
 import me.ikate.findmy.util.PrivacyManager
 import me.ikate.findmy.util.SecurePreferences
+import org.koin.android.ext.android.inject
 import org.koin.android.ext.koin.androidContext
 import org.koin.android.ext.koin.androidLogger
 import org.koin.core.context.startKoin
@@ -21,6 +25,8 @@ import org.koin.core.logger.Level
 /**
  * FindMy 应用入口
  * 负责全局初始化
+ *
+ * 单例生命周期由 Koin 统一管理，避免手动 instance 模式导致的内存泄漏
  */
 class FindMyApplication : Application() {
 
@@ -28,9 +34,16 @@ class FindMyApplication : Application() {
         private const val TAG = "FindMyApplication"
     }
 
+    // Koin 注入的单例（由 Koin 管理生命周期）
+    private val communicationManager: CommunicationManager by inject()
+    private val geofenceServiceController: GeofenceServiceController by inject()
+
     override fun onCreate() {
         super.onCreate()
         Log.d(TAG, "FindMyApplication 启动")
+
+        // StrictMode 初始化（仅 Debug 构建，检测主线程违规和资源泄漏）
+        initStrictMode()
 
         // 崩溃监控初始化（必须最先执行，捕获后续初始化中的崩溃）
         initCrashMonitor()
@@ -55,9 +68,35 @@ class FindMyApplication : Application() {
         // 后台唤醒依赖 FCM 高优先级消息（Android 12+ 唯一可靠方式）
         MqttForegroundService.start(this)
 
-        // 初始化围栏服务智能开关控制器
+        // 初始化通讯管理器（通过 Koin 注入，由 Koin 管理生命周期）
+        // 注意：initialize() 内部有防重复调用保护
+        initCommunicationManager()
+
+        // 初始化围栏服务智能开关控制器（通过 Koin 注入，由 Koin 管理生命周期）
         // 根据数据库中是否有激活围栏，自动决定是否启动围栏监控前台服务
         initGeofenceServiceController()
+    }
+
+    /**
+     * 初始化通讯管理器
+     *
+     * 功能：
+     * - 统一管理 MQTT + FCM 通讯
+     * - 智能重连（指数退避 + 网络感知）
+     * - 离线消息队列管理
+     * - 消息去重
+     *
+     * 生命周期由 Koin 管理，Application 销毁时自动释放资源
+     */
+    private fun initCommunicationManager() {
+        try {
+            // communicationManager 由 Koin 注入，调用 initialize() 启动内部功能
+            // initialize() 内部有防重复调用保护
+            communicationManager.initialize()
+            Log.d(TAG, "通讯管理器初始化成功（由 Koin 管理生命周期）")
+        } catch (e: Exception) {
+            Log.e(TAG, "通讯管理器初始化失败", e)
+        }
     }
 
     /**
@@ -66,11 +105,14 @@ class FindMyApplication : Application() {
      * 智能开关策略：
      * - 有激活围栏 → 启动 GeofenceForegroundService（高频位置监控，IMPORTANCE_LOW 通知）
      * - 无激活围栏 → 停止前台服务，切换到低功耗模式（FCM + WorkManager 心跳）
+     *
+     * 生命周期由 Koin 管理，Application 销毁时自动释放资源
      */
     private fun initGeofenceServiceController() {
         try {
-            GeofenceServiceController.getInstance(this).initialize()
-            Log.d(TAG, "围栏服务智能开关控制器初始化成功")
+            // geofenceServiceController 由 Koin 注入，调用 initialize() 启动内部功能
+            geofenceServiceController.initialize()
+            Log.d(TAG, "围栏服务智能开关控制器初始化成功（由 Koin 管理生命周期）")
         } catch (e: Exception) {
             Log.e(TAG, "围栏服务智能开关控制器初始化失败", e)
         }
@@ -142,5 +184,55 @@ class FindMyApplication : Application() {
                 Log.w(TAG, "FCM Token 获取失败")
             }
         }
+    }
+
+    /**
+     * 初始化 StrictMode（仅 Debug 构建）
+     *
+     * 功能：
+     * - 检测主线程上的磁盘读写、网络访问等耗时操作
+     * - 检测资源泄漏（未关闭的 Cursor、未释放的 SQLite 对象等）
+     * - 检测 Activity 泄漏
+     *
+     * 注意：
+     * - 仅在 Debug 构建中启用，Release 构建自动跳过
+     * - 违规行为会记录到 Logcat（tag: StrictMode）
+     * - 配合 LeakCanary 使用效果更佳
+     */
+    private fun initStrictMode() {
+        if (!BuildConfig.DEBUG) {
+            Log.d(TAG, "Release 构建，跳过 StrictMode 初始化")
+            return
+        }
+
+        Log.d(TAG, "初始化 StrictMode（Debug 模式）")
+
+        // 线程策略：检测主线程上的违规操作
+        StrictMode.setThreadPolicy(
+            StrictMode.ThreadPolicy.Builder()
+                .detectDiskReads()           // 检测磁盘读取
+                .detectDiskWrites()          // 检测磁盘写入
+                .detectNetwork()             // 检测网络访问
+                .detectCustomSlowCalls()     // 检测自定义慢调用
+                .penaltyLog()                // 记录到 Logcat
+                // .penaltyDeath()           // 严格模式：违规时崩溃（开发后期可启用）
+                .build()
+        )
+
+        // VM 策略：检测内存泄漏和资源泄漏
+        StrictMode.setVmPolicy(
+            StrictMode.VmPolicy.Builder()
+                .detectLeakedSqlLiteObjects()      // 检测未关闭的 SQLite 对象
+                .detectLeakedClosableObjects()     // 检测未关闭的 Closeable 对象
+                .detectActivityLeaks()             // 检测 Activity 泄漏
+                .detectLeakedRegistrationObjects() // 检测未注销的 BroadcastReceiver 等
+                .detectFileUriExposure()           // 检测 file:// URI 暴露
+                .detectCleartextNetwork()          // 检测明文网络传输
+                .penaltyLog()                      // 记录到 Logcat
+                // .penaltyDeath()                 // 严格模式：违规时崩溃
+                .build()
+        )
+
+        Log.d(TAG, "StrictMode 初始化完成，违规行为将记录到 Logcat (tag: StrictMode)")
     }
 }

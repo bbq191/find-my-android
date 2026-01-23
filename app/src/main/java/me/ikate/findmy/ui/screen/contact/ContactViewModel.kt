@@ -9,7 +9,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import me.ikate.findmy.data.model.Contact
 import me.ikate.findmy.data.model.Device
 import me.ikate.findmy.data.model.ShareDirection
@@ -649,7 +651,10 @@ class ContactViewModel(
     fun bindContact(shareId: String, contactUri: android.net.Uri) {
         viewModelScope.launch {
             try {
-                val (name, photoUrl) = queryContactInfo(contactUri)
+                // 在 IO 线程执行 ContentResolver 查询，避免阻塞主线程
+                val (name, photoUrl) = withContext(Dispatchers.IO) {
+                    queryContactInfo(contactUri)
+                }
 
                 if (name != null) {
                     val result = contactRepository.bindContact(shareId, name, photoUrl)

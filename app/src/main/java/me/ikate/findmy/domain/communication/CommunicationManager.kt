@@ -584,19 +584,40 @@ class CommunicationManager private constructor(private val context: Context) {
     )
 
     /**
+     * 注销网络回调（确保资源释放，防止内存泄漏）
+     * 可在适当时机调用（如 Application.onTerminate 或明确不需要网络监听时）
+     */
+    private fun unregisterNetworkCallback() {
+        networkCallback?.let { callback ->
+            try {
+                val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE)
+                    as ConnectivityManager
+                connectivityManager.unregisterNetworkCallback(callback)
+                Log.d(TAG, "NetworkCallback 已注销")
+            } catch (e: IllegalArgumentException) {
+                // 回调已注销或从未注册，忽略
+                Log.w(TAG, "NetworkCallback 注销时异常（可能已注销）: ${e.message}")
+            } finally {
+                networkCallback = null
+            }
+        }
+    }
+
+    /**
      * 释放资源
      */
     fun destroy() {
         Log.d(TAG, "销毁通讯管理器")
 
+        // 标记为未初始化，允许重新初始化
+        isInitialized = false
+
         stopReconnect()
         queueFlushJob?.cancel()
+        queueFlushJob = null
 
-        networkCallback?.let {
-            val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE)
-                as ConnectivityManager
-            connectivityManager.unregisterNetworkCallback(it)
-        }
+        // 注销网络回调，防止内存泄漏
+        unregisterNetworkCallback()
 
         processedMessages.clear()
         scope.cancel()

@@ -115,37 +115,67 @@ fun TencentMapViewWrapper(
     // 准备 Marker 图标
     val currentIcon = remember { AppIconHelper.getCurrentIcon(context) }
 
-    // 加载图标 Bitmap
-    val avatarBitmap = remember(currentIcon) {
+    // 加载图标 Bitmap（使用 mutableStateOf + DisposableEffect 管理生命周期，防止内存泄漏）
+    val avatarBitmapState = remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+    val pigBitmapState = remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+    val togetherBitmapState = remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+
+    // 加载并管理 avatarBitmap 生命周期
+    DisposableEffect(currentIcon) {
         val isGirl = currentIcon == AppIconHelper.AppIcon.GIRL
         val resourceId = if (isGirl) {
             context.resources.getIdentifier("marker_girl", "drawable", context.packageName)
         } else {
             context.resources.getIdentifier("marker_boy", "drawable", context.packageName)
         }
-        if (resourceId != 0) {
+        val bitmap = if (resourceId != 0) {
             BitmapFactory.decodeResource(context.resources, resourceId)
         } else null
+        avatarBitmapState.value = bitmap
+
+        onDispose {
+            bitmap?.recycle()
+            avatarBitmapState.value = null
+        }
     }
 
-    val pigBitmap = remember {
+    // 加载并管理 pigBitmap 生命周期
+    DisposableEffect(Unit) {
         val resourceId = context.resources.getIdentifier("marker_pig", "drawable", context.packageName)
-        if (resourceId != 0) {
+        val bitmap = if (resourceId != 0) {
             BitmapFactory.decodeResource(context.resources, resourceId)
         } else null
+        pigBitmapState.value = bitmap
+
+        onDispose {
+            bitmap?.recycle()
+            pigBitmapState.value = null
+        }
     }
 
-    val togetherBitmap = remember(currentIcon) {
+    // 加载并管理 togetherBitmap 生命周期
+    DisposableEffect(currentIcon) {
         val isGirl = currentIcon == AppIconHelper.AppIcon.GIRL
         val resourceId = if (isGirl) {
             context.resources.getIdentifier("marker_together_g", "drawable", context.packageName)
         } else {
             context.resources.getIdentifier("marker_together_b", "drawable", context.packageName)
         }
-        if (resourceId != 0) {
+        val bitmap = if (resourceId != 0) {
             BitmapFactory.decodeResource(context.resources, resourceId)
         } else null
+        togetherBitmapState.value = bitmap
+
+        onDispose {
+            bitmap?.recycle()
+            togetherBitmapState.value = null
+        }
     }
+
+    // 获取当前 Bitmap 值（供后续使用）
+    val avatarBitmap = avatarBitmapState.value
+    val pigBitmap = pigBitmapState.value
+    val togetherBitmap = togetherBitmapState.value
 
     // 获取当前设备
     val currentDevice = devices.find { it.id == currentDeviceId }

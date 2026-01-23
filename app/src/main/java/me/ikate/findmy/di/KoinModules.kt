@@ -9,7 +9,9 @@ import me.ikate.findmy.data.repository.AuthRepository
 import me.ikate.findmy.data.repository.ContactRepository
 import me.ikate.findmy.data.repository.DeviceRepository
 import me.ikate.findmy.data.repository.GeofenceRepository
+import me.ikate.findmy.domain.communication.CommunicationManager
 import me.ikate.findmy.service.GeofenceManager
+import me.ikate.findmy.service.GeofenceServiceController
 import me.ikate.findmy.ui.screen.contact.ContactViewModel
 import me.ikate.findmy.ui.screen.main.MainViewModel
 import me.ikate.findmy.util.DeviceIdProvider
@@ -66,9 +68,23 @@ val mqttModule = module {
 /**
  * Koin 服务模块
  * 提供位置、通知等服务依赖
+ *
+ * 注意：所有单例使用 Koin 统一管理，确保依赖注入一致性
+ * 这些单例使用 applicationContext，不会导致 Activity/Fragment 泄漏
+ * destroy() 方法可在需要时手动调用（如测试场景）
  */
 val serviceModule = module {
     single { DeviceIdProvider.getInstance(androidContext()) }
+
+    // 通讯管理器（统一管理 MQTT + FCM）
+    // 使用 applicationContext，不会泄漏 Activity
+    // 内部有 destroy() 方法可用于显式清理
+    single { CommunicationManager.getInstance(androidContext()) }
+
+    // 围栏服务控制器（智能启停前台服务）
+    // 使用 applicationContext，不会泄漏 Activity
+    // 内部有 destroy() 方法可用于显式清理
+    single { GeofenceServiceController.getInstance(androidContext()) }
 }
 
 /**

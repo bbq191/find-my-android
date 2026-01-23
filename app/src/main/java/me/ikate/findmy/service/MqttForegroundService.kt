@@ -309,14 +309,22 @@ class MqttForegroundService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
-        instance = null
         Log.d(TAG, "MqttForegroundService 销毁")
 
-        // 取消所有协程
+        // 重置请求监听标志（必须在 scope.cancel() 之前，确保新实例可以重新订阅）
+        isObservingRequests = false
+
+        // 先取消所有协程（防止正在执行的协程访问已销毁的资源）
         serviceScope.cancel()
 
         // 释放资源
         locationReportService.destroy()
+
+        // 最后清除实例引用（确保所有清理工作完成后才允许创建新实例）
+        // 使用同步确保线程安全
+        synchronized(Companion::class.java) {
+            instance = null
+        }
     }
 
     /**

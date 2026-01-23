@@ -188,4 +188,7 @@ dependencies {
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
+
+    // LeakCanary 内存泄漏检测（仅 Debug 构建，自动初始化）
+    debugImplementation(libs.leakcanary.android)
 }

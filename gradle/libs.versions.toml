@@ -45,6 +45,8 @@ securityCrypto = "1.1.0"
 koin = "4.1.1"
 # Google Play Services (Activity Recognition)
 playServicesLocation = "21.3.0"
+# LeakCanary 内存泄漏检测（仅 Debug 构建）
+leakcanary = "2.14"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -89,3 +91,5 @@ koin-android = { group = "io.insert-koin", name = "koin-android", version.ref = 
 koin-androidx-compose = { group = "io.insert-koin", name = "koin-androidx-compose", version.ref = "koin" }
 # Google Play Services Location (含 Activity Recognition)
 play-services-location = { group = "com.google.android.gms", name = "play-services-location", version.ref = "playServicesLocation" }
+# LeakCanary 内存泄漏检测（仅 Debug 构建）
+leakcanary-android = { group = "com.squareup.leakcanary", name = "leakcanary-android", version.ref = "leakcanary" }
