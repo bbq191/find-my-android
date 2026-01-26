@@ -25,8 +25,7 @@ fun TabContent(
     modifier: Modifier = Modifier,
     // People Tab 参数
     contacts: List<Contact>,
-    requestingLocationFor: String?,
-    trackingContactUid: String?,
+    refreshingContacts: Set<String>,
     geofenceContactIds: Set<String>,
     onContactClick: (Contact) -> Unit,
     onAddContactClick: () -> Unit,
@@ -37,7 +36,7 @@ fun TabContent(
     onRemoveContact: (Contact) -> Unit,
     onAcceptShare: (Contact) -> Unit,
     onRejectShare: (Contact) -> Unit,
-    onRefreshAndTrack: (String) -> Unit,
+    onRefreshLocation: (String) -> Unit,
     onPlaySound: (String) -> Unit,
     onStopSound: () -> Unit,
     isRinging: Boolean,
@@ -84,8 +83,7 @@ fun TabContent(
         when (tab) {
             FindMyTab.PEOPLE -> PeopleTab(
                 contacts = contacts,
-                requestingLocationFor = requestingLocationFor,
-                trackingContactUid = trackingContactUid,
+                refreshingContacts = refreshingContacts,
                 geofenceContactIds = geofenceContactIds,
                 onContactClick = onContactClick,
                 onAddContactClick = onAddContactClick,
@@ -96,7 +94,7 @@ fun TabContent(
                 onRemoveContact = onRemoveContact,
                 onAcceptShare = onAcceptShare,
                 onRejectShare = onRejectShare,
-                onRefreshAndTrack = onRefreshAndTrack,
+                onRefreshLocation = onRefreshLocation,
                 onPlaySound = onPlaySound,
                 onStopSound = onStopSound,
                 isRinging = isRinging,

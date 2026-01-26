@@ -64,8 +64,7 @@ import me.ikate.findmy.ui.screen.main.components.ContactListItem
 @Composable
 fun PeopleTab(
     contacts: List<Contact>,
-    requestingLocationFor: String? = null,
-    trackingContactUid: String? = null,
+    refreshingContacts: Set<String> = emptySet(),
     geofenceContactIds: Set<String> = emptySet(),
     onContactClick: (Contact) -> Unit,
     onAddContactClick: () -> Unit,
@@ -76,7 +75,7 @@ fun PeopleTab(
     onRemoveContact: (Contact) -> Unit = {},
     onAcceptShare: (Contact) -> Unit = {},
     onRejectShare: (Contact) -> Unit = {},
-    onRefreshAndTrack: (String) -> Unit = {},
+    onRefreshLocation: (String) -> Unit = {},
     onPlaySound: (String) -> Unit = {},
     onStopSound: () -> Unit = {},
     isRinging: Boolean = false,
@@ -193,15 +192,11 @@ fun PeopleTab(
                     key = { _, contact -> contact.id }
                 ) { _, contact ->
                     val isExpanded = expandedContactId == contact.id
-                    val isRequesting = requestingLocationFor == contact.targetUserId
-                    val isTracking = trackingContactUid == contact.targetUserId
 
                     ContactListItem(
                         contact = contact,
                         myDevice = null,
                         isExpanded = isExpanded,
-                        isRequestingLocation = isRequesting,
-                        isTracking = isTracking,
                         onClick = {
                             // 点击卡片：定位到地图
                             onContactClick(contact)
@@ -211,9 +206,9 @@ fun PeopleTab(
                             contactForDetail = contact
                         },
                         onAvatarClick = {
-                            // 点击头像：跳转到地图 + 开始追踪
+                            // 点击头像：刷新位置 + 跳转到地图（iOS Find My 风格）
                             onContactClick(contact)
-                            contact.targetUserId?.let { onRefreshAndTrack(it) }
+                            contact.targetUserId?.let { onRefreshLocation(it) }
                         },
                         onExpandClick = {
                             // 点击展开按钮（已废弃，保留兼容）

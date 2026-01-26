@@ -134,9 +134,7 @@ fun MainScreen(
     val showAddDialog by contactViewModel.showAddDialog.collectAsState()
     val isLoading by contactViewModel.isLoading.collectAsState()
     val errorMessage by contactViewModel.errorMessage.collectAsState()
-    val requestingLocationFor by contactViewModel.requestingLocationFor.collectAsState() // 正在请求位置的联系人
-    val trackingContactUid by contactViewModel.trackingContactUid.collectAsState() // 正在实时追踪的联系人
-    val trackingStates by contactViewModel.trackingStates.collectAsState() // 追踪状态 Map（用于地图脉冲动画）
+    val refreshingContacts by contactViewModel.refreshingContacts.collectAsState() // 正在刷新位置的联系人
     val ringingContactUid by contactViewModel.ringingContactUid.collectAsState() // 正在响铃的联系人
 
     // 获取当前设备实时朝向
@@ -299,37 +297,6 @@ fun MainScreen(
         }
     }
 
-    // 追踪上一次的追踪状态，用于检测状态变化
-    var lastTrackingState by remember { mutableStateOf<me.ikate.findmy.service.TrackingState?>(null) }
-
-    // 监听追踪状态变化，显示 Snackbar 通知
-    LaunchedEffect(trackingContactUid, trackingStates) {
-        trackingContactUid?.let { uid ->
-            val currentState = trackingStates[uid]
-            val contact = contacts.find { it.targetUserId == uid }
-            val contactName = contact?.name ?: "联系人"
-
-            // 只在状态实际变化时显示通知
-            if (currentState != null && currentState != lastTrackingState) {
-                lastTrackingState = currentState
-                when (currentState) {
-                    me.ikate.findmy.service.TrackingState.WAITING -> {
-                        snackbarHostState.showSnackbar("正在获取「$contactName」的位置...")
-                    }
-                    me.ikate.findmy.service.TrackingState.SUCCESS -> {
-                        snackbarHostState.showSnackbar("已获取「$contactName」的最新位置")
-                    }
-                    me.ikate.findmy.service.TrackingState.FAILED -> {
-                        snackbarHostState.showSnackbar("获取「$contactName」位置失败")
-                    }
-                    else -> { /* IDLE, CONNECTED 不显示通知 */ }
-                }
-            }
-        } ?: run {
-            // 追踪结束时重置状态
-            lastTrackingState = null
-        }
-    }
 
     // 使用 Box 包裹所有内容，确保按钮在最上层
     Box(
@@ -357,9 +324,6 @@ fun MainScreen(
                         mapLayerConfig = mapLayerConfig,
                         bottomPadding = bottomSheetOffsetDp + 8.dp,
                         trackingTargetId = trackingTargetId,
-                        trackingContactUid = trackingContactUid,
-                        trackingStates = trackingStates,
-                        allContacts = contacts,  // 用于脉冲动画查找联系人位置
                         onMapReady = { map ->
                             viewModel.setTencentMap(map)
                             if (locationPermissionsState.allPermissionsGranted) {
@@ -382,7 +346,9 @@ fun MainScreen(
                         onContactMarkerClick = { contact ->
                             // 先检查权限，只有权限满足才允许定位联系人
                             contact.targetUserId?.let { targetUid ->
-                                contactViewModel.refreshAndTrack(targetUid)
+                                contactViewModel.refreshLocation(targetUid)
+                                // 设置高频刷新（iOS Find My 风格）
+                                viewModel.setFocusedContact(targetUid)
                             }
 
                             val (hasPermission, _) = PermissionGuideHelper.checkLocationSharePermissions(context)
@@ -438,8 +404,7 @@ fun MainScreen(
                     selectedTab = selectedTab,
                     // People Tab 参数
                     contacts = contacts,
-                    requestingLocationFor = requestingLocationFor,
-                    trackingContactUid = trackingContactUid,
+                    refreshingContacts = refreshingContacts,
                     geofenceContactIds = geofenceContactIds,
                     onContactClick = { contact ->
                         // 点击联系人卡片：仅定位到地图，不触发追踪
@@ -480,8 +445,10 @@ fun MainScreen(
                     onRemoveContact = { contact -> contactViewModel.removeContact(contact) },
                     onAcceptShare = { contact -> contactViewModel.acceptShare(contact.id) },
                     onRejectShare = { contact -> contactViewModel.rejectShare(contact.id) },
-                    onRefreshAndTrack = { targetUid ->
-                        contactViewModel.refreshAndTrack(targetUid)
+                    onRefreshLocation = { targetUid ->
+                        contactViewModel.refreshLocation(targetUid)
+                        // 设置高频刷新（iOS Find My 风格）
+                        viewModel.setFocusedContact(targetUid)
                     },
                     onPlaySound = { targetUid -> contactViewModel.requestPlaySound(targetUid) },
                     onStopSound = { contactViewModel.stopRinging() },

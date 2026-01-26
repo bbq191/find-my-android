@@ -42,6 +42,9 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
+        // 设置 120Hz 高刷新率
+        setHighRefreshRate()
+
         // 初始化隐私合规（腾讯定位 SDK 要求）
         // 返回 true 表示需要显示隐私弹窗
         showPrivacyDialog = PrivacyManager.initPrivacy(this)
@@ -91,6 +94,16 @@ class MainActivity : ComponentActivity() {
                     MainScreen()
                 }
             }
+        }
+    }
+
+    /**
+     * 设置屏幕刷新率为 120Hz
+     * 适用于 Samsung Galaxy S24 Ultra 等支持高刷新率的设备
+     */
+    private fun setHighRefreshRate() {
+        window.attributes = window.attributes.apply {
+            preferredRefreshRate = 120f
         }
     }
 }

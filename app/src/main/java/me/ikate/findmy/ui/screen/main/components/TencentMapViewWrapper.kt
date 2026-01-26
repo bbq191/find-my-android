@@ -37,7 +37,6 @@ import me.ikate.findmy.data.model.Contact
 import me.ikate.findmy.data.model.Device
 import me.ikate.findmy.data.model.ShareStatus
 import me.ikate.findmy.data.model.latLngOf
-import me.ikate.findmy.service.TrackingState
 import android.util.Log
 import android.app.Activity
 import me.ikate.findmy.util.AppIconHelper
@@ -64,9 +63,6 @@ import kotlin.math.sqrt
  * @param mapLayerConfig 地图图层配置
  * @param bottomPadding 底部 padding
  * @param trackingTargetId 正在追踪的目标 ID（设备 ID 或联系人 ID，null 表示不追踪）
- * @param trackingContactUid 正在追踪的联系人 UID（用于脉冲动画）
- * @param trackingStates 追踪状态 Map（用于脉冲动画颜色）
- * @param allContacts 完整联系人列表（用于脉冲动画查找位置，不受 tab 过滤影响）
  * @param onMapReady 地图准备完成回调
  * @param onMarkerClick Marker 点击回调
  * @param onContactMarkerClick 联系人 Marker 点击回调
@@ -84,9 +80,6 @@ fun TencentMapViewWrapper(
     mapLayerConfig: MapLayerConfig = MapLayerConfig(),
     bottomPadding: Dp = 0.dp,
     trackingTargetId: String? = null,
-    trackingContactUid: String? = null,
-    trackingStates: Map<String, TrackingState> = emptyMap(),
-    allContacts: List<Contact> = emptyList(),  // 用于脉冲动画查找联系人位置
     onMapReady: (TencentMap) -> Unit = {},
     onMarkerClick: (Device) -> Unit = {},
     onContactMarkerClick: (Contact) -> Unit = {},
@@ -220,12 +213,6 @@ fun TencentMapViewWrapper(
     val contactMarkersRef = remember { mutableStateOf<Map<String, SmoothMarker>>(emptyMap()) }
     val contactCirclesRef = remember { mutableStateOf<Map<String, Circle>>(emptyMap()) }
 
-    // 追踪脉冲动画相关状态
-    val pulseCircleRef = remember { mutableStateOf<Circle?>(null) }
-    val pulseAnimatorRef = remember { mutableStateOf<ValueAnimator?>(null) }
-    val lastTrackingContactUidRef = remember { mutableStateOf<String?>(null) }
-    val lastPulseStateRef = remember { mutableStateOf<TrackingState?>(null) }
-
     // 设备优化动画配置（针对三星 S24 Ultra 等高刷屏设备优化）
     val animConfig = remember { DeviceOptimizationConfig.getAnimationConfig() }
 
@@ -304,11 +291,6 @@ fun TencentMapViewWrapper(
             cameraAnimatorRef.value = null
             // 取消所有联系人的 SmoothMarker 动画
             contactMarkersRef.value.values.forEach { it.cancel() }
-            // 取消脉冲动画
-            pulseAnimatorRef.value?.cancel()
-            pulseAnimatorRef.value = null
-            pulseCircleRef.value?.remove()
-            pulseCircleRef.value = null
             if (isMapCreated.value) {
                 mapView.onDestroy()
                 isMapCreated.value = false
@@ -417,144 +399,6 @@ fun TencentMapViewWrapper(
                         lastTrackingPositionRef = lastTrackingPositionRef,
                         animConfig = animConfig
                     )
-
-                    // 追踪脉冲动画逻辑
-                    val tencentMap = view.map
-                    val currentTrackingState = trackingContactUid?.let { trackingStates[it] }
-                    // 使用 allContacts 查找联系人，而不是可能为空的 contacts
-                    val trackedContact = trackingContactUid?.let { uid ->
-                        allContacts.find { it.targetUserId == uid }
-                    }
-
-                    // 检测追踪目标或状态是否变化
-                    val uidChanged = trackingContactUid != lastTrackingContactUidRef.value
-                    val stateChanged = currentTrackingState != lastPulseStateRef.value
-
-                    // 只在追踪目标或状态变化时更新脉冲圈
-                    if (uidChanged || stateChanged) {
-                        lastTrackingContactUidRef.value = trackingContactUid
-                        lastPulseStateRef.value = currentTrackingState
-
-                        // 移除旧的脉冲圈和动画
-                        pulseAnimatorRef.value?.cancel()
-                        pulseAnimatorRef.value = null
-                        pulseCircleRef.value?.remove()
-                        pulseCircleRef.value = null
-
-                        if (trackingContactUid != null && trackedContact?.location != null) {
-                            val location = trackedContact.location
-
-                            when (currentTrackingState) {
-                                TrackingState.WAITING, TrackingState.CONNECTED -> {
-                                    val pulseColor = if (currentTrackingState == TrackingState.WAITING) {
-                                        0x80FFC107.toInt()  // 黄色半透明
-                                    } else {
-                                        0x802196F3.toInt()  // 蓝色半透明
-                                    }
-
-                                    // 创建脉冲圈
-                                    val pulseCircle = tencentMap.addCircle(
-                                        CircleOptions()
-                                            .center(location)
-                                            .radius(20.0)
-                                            .fillColor(pulseColor)
-                                            .strokeColor(pulseColor or 0xFF000000.toInt())
-                                            .strokeWidth(2f)
-                                    )
-                                    pulseCircleRef.value = pulseCircle
-
-                                    // 创建脉冲动画
-                                    val animator = ValueAnimator.ofFloat(20f, 100f).apply {
-                                        duration = 1200
-                                        repeatCount = ValueAnimator.INFINITE
-                                        repeatMode = ValueAnimator.RESTART
-                                        interpolator = LinearInterpolator()
-                                        addUpdateListener { anim ->
-                                            try {
-                                                val radius = anim.animatedValue as Float
-                                                val alpha = 1f - (radius - 20f) / 80f
-                                                pulseCircle.radius = radius.toDouble()
-                                                val baseColor = pulseColor and 0x00FFFFFF
-                                                val newAlpha = (alpha * 128).toInt().coerceIn(0, 255)
-                                                pulseCircle.fillColor = (newAlpha shl 24) or baseColor
-                                            } catch (e: Exception) {
-                                                // 忽略动画更新异常
-                                            }
-                                        }
-                                        start()
-                                    }
-                                    pulseAnimatorRef.value = animator
-                                }
-
-                                TrackingState.SUCCESS -> {
-                                    val pulseColor = 0x804CAF50.toInt()  // 绿色半透明
-                                    // 成功时显示短暂闪烁
-                                    val pulseCircle = tencentMap.addCircle(
-                                        CircleOptions()
-                                            .center(location)
-                                            .radius(50.0)
-                                            .fillColor(pulseColor)
-                                            .strokeColor(0xFF4CAF50.toInt())
-                                            .strokeWidth(3f)
-                                    )
-                                    pulseCircleRef.value = pulseCircle
-
-                                    // 淡出动画
-                                    val animator = ValueAnimator.ofFloat(1f, 0f).apply {
-                                        duration = 1500
-                                        addUpdateListener { anim ->
-                                            try {
-                                                val alpha = anim.animatedValue as Float
-                                                val newAlpha = (alpha * 128).toInt().coerceIn(0, 255)
-                                                pulseCircle.fillColor = (newAlpha shl 24) or 0x004CAF50
-                                            } catch (e: Exception) {
-                                                // 忽略动画更新异常
-                                            }
-                                        }
-                                        start()
-                                    }
-                                    pulseAnimatorRef.value = animator
-                                }
-
-                                TrackingState.FAILED -> {
-                                    val pulseColor = 0x80F44336.toInt()  // 红色半透明
-                                    // 失败时显示短暂闪烁
-                                    val pulseCircle = tencentMap.addCircle(
-                                        CircleOptions()
-                                            .center(location)
-                                            .radius(50.0)
-                                            .fillColor(pulseColor)
-                                            .strokeColor(0xFFF44336.toInt())
-                                            .strokeWidth(3f)
-                                    )
-                                    pulseCircleRef.value = pulseCircle
-
-                                    // 淡出动画
-                                    val animator = ValueAnimator.ofFloat(1f, 0f).apply {
-                                        duration = 1500
-                                        addUpdateListener { anim ->
-                                            try {
-                                                val alpha = anim.animatedValue as Float
-                                                val newAlpha = (alpha * 128).toInt().coerceIn(0, 255)
-                                                pulseCircle.fillColor = (newAlpha shl 24) or 0x00F44336
-                                            } catch (e: Exception) {
-                                                // 忽略动画更新异常
-                                            }
-                                        }
-                                        start()
-                                    }
-                                    pulseAnimatorRef.value = animator
-                                }
-
-                                else -> {
-                                    // IDLE 或 null 状态，不显示脉冲
-                                }
-                            }
-                        }
-                    } else if (pulseCircleRef.value != null && trackedContact?.location != null) {
-                        // 状态未变但需要更新位置
-                        pulseCircleRef.value?.center = trackedContact.location
-                    }
                 } catch (e: ArrayIndexOutOfBoundsException) {
                     // 腾讯地图 SDK 内部并发 bug，忽略此异常
                     Log.w("TencentMapWrapper", "SDK 内部并发异常（已忽略）: ${e.message}")

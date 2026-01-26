@@ -3,9 +3,7 @@ package me.ikate.findmy.service
 import android.content.Context
 import android.util.Log
 import com.google.gson.Gson
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -16,25 +14,10 @@ import me.ikate.findmy.data.repository.DeviceRepository
 import me.ikate.findmy.push.PushWebhookService
 
 /**
- * 追踪状态枚举
- * 用于表示联系人位置追踪的详细状态
- */
-enum class TrackingState {
-    /** 空闲，未追踪 */
-    IDLE,
-    /** 等待中，启动追踪等待连接（黄色） */
-    WAITING,
-    /** 已连接，追踪中（蓝色旋转动画） */
-    CONNECTED,
-    /** 追踪成功，位置已刷新（绿色），短暂显示后回到 IDLE */
-    SUCCESS,
-    /** 追踪失败，连接不成功（灰色） */
-    FAILED
-}
-
-/**
- * 位置追踪管理器
- * 使用 MQTT 进行位置请求和追踪（替代 Firestore）
+ * 位置刷新管理器（简化版）
+ * iOS Find My 风格：单击即刷新，无状态机
+ *
+ * 使用 MQTT 进行位置请求
  */
 class LocationTrackingManager(
     private val context: Context,
@@ -43,97 +26,113 @@ class LocationTrackingManager(
 ) {
     companion object {
         private const val TAG = "LocationTrackingManager"
-        private const val REQUEST_TIMEOUT_MS = 10_000L
-        private const val TRACKING_DURATION_MS = 60_000L
-        private const val SUCCESS_DISPLAY_MS = 2_000L  // 成功状态显示时间
-        private const val DEBOUNCE_MS = 400L           // 防双击误操作
-        private const val COOLDOWN_AFTER_SUCCESS_MS = 3_000L  // SUCCESS 后冷却期
+        private const val REFRESH_INDICATOR_DURATION_MS = 5_000L  // 刷新指示器显示时间
+        private const val DEBOUNCE_MS = 1_000L  // 防双击误操作
     }
 
-    // 正在请求位置更新的联系人 UID
-    private val _requestingLocationFor = MutableStateFlow<String?>(null)
-    val requestingLocationFor: StateFlow<String?> = _requestingLocationFor.asStateFlow()
+    // 正在刷新位置的联系人 UID 集合（用于显示加载指示器）
+    private val _refreshingContacts = MutableStateFlow<Set<String>>(emptySet())
+    val refreshingContacts: StateFlow<Set<String>> = _refreshingContacts.asStateFlow()
 
-    // 正在连续追踪的联系人 UID
-    private val _trackingContactUid = MutableStateFlow<String?>(null)
-    val trackingContactUid: StateFlow<String?> = _trackingContactUid.asStateFlow()
-
-    // 追踪状态 Map: targetUid -> TrackingState
-    private val _trackingStates = MutableStateFlow<Map<String, TrackingState>>(emptyMap())
-    val trackingStates: StateFlow<Map<String, TrackingState>> = _trackingStates.asStateFlow()
-
-    // 追踪任务 Map: targetUid -> Job（用于取消追踪）
-    private val trackingJobs = mutableMapOf<String, Job>()
-
-    // 每个联系人的上次请求时间（用于防抖和冷却期）
+    // 每个联系人的上次请求时间（用于防抖）
     private val lastRequestTime = mutableMapOf<String, Long>()
-
-    // 追踪期间是否收到过位置更新（用于判断追踪成功/失败）
-    private val hasReceivedLocation = mutableMapOf<String, Boolean>()
 
     // 错误消息
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage: StateFlow<String?> = _errorMessage.asStateFlow()
 
     /**
-     * 获取指定联系人的追踪状态
+     * 检查指定联系人是否正在刷新
      */
-    fun getTrackingState(targetUid: String): TrackingState {
-        return _trackingStates.value[targetUid] ?: TrackingState.IDLE
+    fun isRefreshing(targetUid: String): Boolean {
+        return _refreshingContacts.value.contains(targetUid)
     }
 
     /**
-     * 更新追踪状态
+     * 请求刷新联系人位置（单次请求）
+     * iOS Find My 风格：单击即刷新，无追踪状态
+     *
+     * @param currentUid 当前用户 UID
+     * @param targetUid 目标联系人 UID
      */
-    private fun updateTrackingState(targetUid: String, state: TrackingState) {
-        val currentStates = _trackingStates.value.toMutableMap()
-        if (state == TrackingState.IDLE) {
-            currentStates.remove(targetUid)
-        } else {
-            currentStates[targetUid] = state
+    fun requestRefresh(currentUid: String?, targetUid: String) {
+        Log.i(TAG, "========================================")
+        Log.i(TAG, "[刷新位置] 触发刷新")
+        Log.i(TAG, "[刷新位置] currentUid: $currentUid")
+        Log.i(TAG, "[刷新位置] targetUid: $targetUid")
+        Log.i(TAG, "========================================")
+
+        if (currentUid == null) {
+            Log.w(TAG, "[刷新位置] 当前用户未登录，无法刷新")
+            return
         }
-        _trackingStates.value = currentStates
-        Log.d(TAG, "[追踪状态] $targetUid -> $state")
+
+        val now = System.currentTimeMillis()
+        val lastTime = lastRequestTime[targetUid] ?: 0L
+
+        // 防抖：防止快速连续点击
+        if (now - lastTime < DEBOUNCE_MS) {
+            Log.d(TAG, "[刷新位置] 防抖保护：忽略快速连续点击 (间隔=${now - lastTime}ms)")
+            return
+        }
+
+        // 记录请求时间
+        lastRequestTime[targetUid] = now
+
+        // 添加到刷新集合
+        addRefreshingContact(targetUid)
+
+        scope.launch {
+            try {
+                // 先上报自己的位置（互惠原则）
+                Log.i(TAG, "[刷新位置] 上报自己的位置...")
+                reportMyLocationFirst()
+
+                // 发送单次位置请求
+                Log.i(TAG, "[刷新位置] 发送位置请求...")
+                sendMqttRequest(
+                    currentUid = currentUid,
+                    targetUid = targetUid,
+                    type = "single"
+                )
+
+                // 5秒后自动移除刷新状态
+                delay(REFRESH_INDICATOR_DURATION_MS)
+                removeRefreshingContact(targetUid)
+
+            } catch (e: Exception) {
+                Log.e(TAG, "[刷新位置] 失败: ${e.message}", e)
+                removeRefreshingContact(targetUid)
+                _errorMessage.value = "刷新失败: ${e.localizedMessage}"
+            }
+        }
     }
 
     /**
-     * 标记收到位置更新
-     * 在追踪期间收到位置时调用，不改变状态，只记录已收到位置
-     * 追踪结束时会根据此标记判断是 SUCCESS 还是 FAILED
+     * 添加正在刷新的联系人
+     */
+    private fun addRefreshingContact(targetUid: String) {
+        val current = _refreshingContacts.value.toMutableSet()
+        current.add(targetUid)
+        _refreshingContacts.value = current
+    }
+
+    /**
+     * 移除正在刷新的联系人
+     */
+    private fun removeRefreshingContact(targetUid: String) {
+        val current = _refreshingContacts.value.toMutableSet()
+        current.remove(targetUid)
+        _refreshingContacts.value = current
+    }
+
+    /**
+     * 标记收到位置更新（可立即清除刷新状态）
      */
     fun onLocationReceived(targetUid: String) {
-        val currentState = getTrackingState(targetUid)
-        if (currentState == TrackingState.CONNECTED || currentState == TrackingState.WAITING) {
-            hasReceivedLocation[targetUid] = true
-            Log.d(TAG, "[追踪] 收到位置更新: $targetUid (追踪继续)")
-        }
-    }
-
-    /**
-     * 标记追踪成功（内部使用）
-     * 追踪周期结束且期间收到过位置时调用
-     */
-    private fun markTrackingSuccess(targetUid: String) {
-        scope.launch {
-            updateTrackingState(targetUid, TrackingState.SUCCESS)
-            delay(SUCCESS_DISPLAY_MS)
-            if (_trackingStates.value[targetUid] == TrackingState.SUCCESS) {
-                updateTrackingState(targetUid, TrackingState.IDLE)
-            }
-        }
-    }
-
-    /**
-     * 标记追踪失败（内部使用）
-     * 追踪周期结束且期间未收到任何位置时调用
-     */
-    private fun markTrackingFailed(targetUid: String) {
-        scope.launch {
-            updateTrackingState(targetUid, TrackingState.FAILED)
-            delay(SUCCESS_DISPLAY_MS)
-            if (_trackingStates.value[targetUid] == TrackingState.FAILED) {
-                updateTrackingState(targetUid, TrackingState.IDLE)
-            }
+        if (_refreshingContacts.value.contains(targetUid)) {
+            Log.d(TAG, "[刷新位置] 收到位置更新，清除刷新状态: $targetUid")
+            removeRefreshingContact(targetUid)
         }
     }
 
@@ -146,7 +145,6 @@ class LocationTrackingManager(
         type: String,
         additionalData: Map<String, Any> = emptyMap(),
         errorMessagePrefix: String = "请求失败",
-        reportLocationFirst: Boolean = false,
         onSuccess: (() -> Unit)? = null
     ) {
         if (currentUid == null) {
@@ -161,12 +159,6 @@ class LocationTrackingManager(
                 Log.i(TAG, "[位置请求] 请求者UID: $currentUid")
                 Log.i(TAG, "[位置请求] 目标UID: $targetUid")
                 Log.i(TAG, "[位置请求] 时间戳: ${System.currentTimeMillis()}")
-
-                // 根据需要先上报自己的位置
-                if (reportLocationFirst) {
-                    Log.d(TAG, "[位置请求] 先上报自己的位置...")
-                    reportMyLocationFirst()
-                }
 
                 // 通过 MQTT 发送请求
                 if (MqttConfig.isConfigured()) {
@@ -194,10 +186,10 @@ class LocationTrackingManager(
                     val publishResult = mqttManager.publish(topic, payload)
                     publishResult.fold(
                         onSuccess = {
-                            Log.i(TAG, "[位置请求] ✓ MQTT 消息发送成功: $type -> $targetUid")
+                            Log.i(TAG, "[位置请求] MQTT 消息发送成功: $type -> $targetUid")
                         },
                         onFailure = { error ->
-                            Log.e(TAG, "[位置请求] ✗ MQTT 消息发送失败: ${error.message}", error)
+                            Log.e(TAG, "[位置请求] MQTT 消息发送失败: ${error.message}", error)
                         }
                     )
                 } else {
@@ -235,9 +227,6 @@ class LocationTrackingManager(
                 "single" -> {
                     PushWebhookService.sendLocationRequest(targetUid, currentUid)
                 }
-                "continuous" -> {
-                    PushWebhookService.startContinuousTracking(targetUid, currentUid)
-                }
                 "play_sound" -> {
                     PushWebhookService.playSound(targetUid, currentUid)
                 }
@@ -269,256 +258,26 @@ class LocationTrackingManager(
                 onFailure = { error ->
                     when (error) {
                         is PushWebhookService.TokenNotRegisteredException -> {
-                            Log.w(TAG, "FCM 推送失败: 目标用户 $targetUid 未注册 Token（可能未安装应用或未登录）")
+                            Log.w(TAG, "FCM 推送失败: 目标用户 $targetUid 未注册 Token")
                         }
                         is PushWebhookService.TokenInvalidException -> {
-                            Log.w(TAG, "FCM 推送失败: 目标用户 $targetUid 的 Token 已失效（需要对方重新打开应用）")
+                            Log.w(TAG, "FCM 推送失败: 目标用户 $targetUid 的 Token 已失效")
                         }
                         is PushWebhookService.TokenExpiredException -> {
                             Log.w(TAG, "FCM 推送失败: Token 已过期")
                         }
                         is PushWebhookService.RateLimitException -> {
-                            Log.w(TAG, "FCM 推送失败: 请求频率超限，稍后重试")
+                            Log.w(TAG, "FCM 推送失败: 请求频率超限")
                         }
                         else -> {
                             Log.w(TAG, "FCM 推送失败: ${error.message}")
                         }
                     }
-                    // FCM 推送失败不影响主流程（MQTT 是主通道）
                 }
             )
         } catch (e: Exception) {
-            // 推送失败不影响主流程
             Log.w(TAG, "推送 Webhook 异常: ${e.message}")
         }
-    }
-
-    /**
-     * 请求联系人的实时位置更新
-     */
-    fun requestLocationUpdate(currentUid: String?, targetUid: String) {
-        if (currentUid == null) {
-            Log.w(TAG, "当前用户未登录，无法请求位置更新")
-            return
-        }
-
-        scope.launch {
-            try {
-                _requestingLocationFor.value = targetUid
-                Log.d(TAG, "请求位置更新: targetUid=$targetUid")
-
-                // 先上报自己的最新位置
-                reportMyLocationFirst()
-
-                // 通过 MQTT 发送位置请求
-                sendMqttRequest(
-                    currentUid = currentUid,
-                    targetUid = targetUid,
-                    type = "single",
-                    reportLocationFirst = false
-                )
-
-                // 超时后清除加载状态
-                delay(REQUEST_TIMEOUT_MS)
-                if (_requestingLocationFor.value == targetUid) {
-                    _requestingLocationFor.value = null
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "请求位置更新失败", e)
-                _requestingLocationFor.value = null
-                _errorMessage.value = "请求失败: ${e.localizedMessage}"
-            }
-        }
-    }
-
-    /**
-     * 开始短时实时追踪（60秒高频位置更新）
-     */
-    fun startContinuousTracking(currentUid: String?, targetUid: String) {
-        if (currentUid == null) {
-            Log.w(TAG, "当前用户未登录，无法开始追踪")
-            return
-        }
-
-        scope.launch {
-            try {
-                _trackingContactUid.value = targetUid
-                Log.d(TAG, "开始连续追踪: targetUid=$targetUid")
-
-                // 先上报自己的位置
-                reportMyLocationFirst()
-
-                // 通过 MQTT 发送连续追踪请求
-                sendMqttRequest(
-                    currentUid = currentUid,
-                    targetUid = targetUid,
-                    type = "continuous",
-                    reportLocationFirst = false
-                )
-
-                // 60秒后自动清除追踪状态
-                delay(TRACKING_DURATION_MS)
-                if (_trackingContactUid.value == targetUid) {
-                    _trackingContactUid.value = null
-                    Log.d(TAG, "连续追踪已自动结束（60秒超时）")
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "开始连续追踪失败", e)
-                _trackingContactUid.value = null
-                _errorMessage.value = "启动追踪失败: ${e.localizedMessage}"
-            }
-        }
-    }
-
-    /**
-     * 停止连续追踪
-     */
-    fun stopContinuousTracking(currentUid: String?, targetUid: String) {
-        // 取消追踪任务
-        trackingJobs[targetUid]?.cancel()
-        trackingJobs.remove(targetUid)
-
-        // 清除状态
-        _trackingContactUid.value = null
-        _requestingLocationFor.value = null
-        updateTrackingState(targetUid, TrackingState.IDLE)
-
-        sendMqttRequest(
-            currentUid = currentUid,
-            targetUid = targetUid,
-            type = "stop_continuous",
-            errorMessagePrefix = "停止追踪失败"
-        )
-    }
-
-    /**
-     * 刷新并追踪（点击头像触发）
-     * 先刷新一次位置，然后开始 60 秒的连续追踪
-     *
-     * 状态变化: WAITING(黄色) → CONNECTED(蓝色) → SUCCESS(绿色) → IDLE
-     */
-    fun refreshAndTrack(currentUid: String?, targetUid: String) {
-        Log.i(TAG, "========================================")
-        Log.i(TAG, "[刷新追踪] 触发点击事件")
-        Log.i(TAG, "[刷新追踪] currentUid: $currentUid")
-        Log.i(TAG, "[刷新追踪] targetUid: $targetUid")
-        Log.i(TAG, "========================================")
-
-        if (currentUid == null) {
-            Log.w(TAG, "[刷新追踪] 当前用户未登录，无法刷新并追踪")
-            return
-        }
-
-        val now = System.currentTimeMillis()
-        val lastTime = lastRequestTime[targetUid] ?: 0L
-        val currentState = getTrackingState(targetUid)
-
-        // 1. 防抖：防止双击误操作（400ms 内忽略重复点击）
-        if (now - lastTime < DEBOUNCE_MS) {
-            Log.d(TAG, "[刷新追踪] 防抖保护：忽略快速连续点击 (间隔=${now - lastTime}ms)")
-            return
-        }
-
-        // 2. 冷却期：SUCCESS 状态下不允许立即重新请求（避免刚收到位置就重复请求）
-        if (currentState == TrackingState.SUCCESS) {
-            Log.d(TAG, "[刷新追踪] 冷却期保护：正在显示成功状态，请稍后重试")
-            return
-        }
-
-        // 3. 已在追踪中（WAITING/CONNECTED/FAILED）则停止追踪
-        if (currentState != TrackingState.IDLE) {
-            Log.d(TAG, "[刷新追踪] 已在追踪中，停止追踪: targetUid=$targetUid, state=$currentState")
-            stopContinuousTracking(currentUid, targetUid)
-            lastRequestTime[targetUid] = now
-            return
-        }
-
-        // 记录请求时间
-        lastRequestTime[targetUid] = now
-
-        // 取消之前的追踪任务（如果有）
-        trackingJobs[targetUid]?.cancel()
-
-        val job = scope.launch {
-            try {
-                // 重置位置接收标记
-                hasReceivedLocation[targetUid] = false
-
-                // 步骤1: 设置等待状态（黄色）
-                updateTrackingState(targetUid, TrackingState.WAITING)
-                _requestingLocationFor.value = targetUid
-                Log.i(TAG, "[刷新追踪] 步骤1: 状态 -> WAITING (黄色)")
-
-                // 先上报自己的最新位置
-                Log.i(TAG, "[刷新追踪] 步骤2: 上报自己的位置（互惠原则）")
-                reportMyLocationFirst()
-
-                // 发送单次位置请求（立即刷新）
-                Log.i(TAG, "[刷新追踪] 步骤3: 发送单次位置请求 (type=single)")
-                sendMqttRequest(
-                    currentUid = currentUid,
-                    targetUid = targetUid,
-                    type = "single",
-                    reportLocationFirst = false
-                )
-
-                // 短暂延迟后进入连接状态
-                Log.i(TAG, "[刷新追踪] 步骤4: 等待500ms后进入连接状态...")
-                delay(500L)
-
-                // 步骤5: 设置连接状态（蓝色）
-                updateTrackingState(targetUid, TrackingState.CONNECTED)
-                _requestingLocationFor.value = null
-                _trackingContactUid.value = targetUid
-                Log.i(TAG, "[刷新追踪] 步骤5: 状态 -> CONNECTED (蓝色)")
-
-                // 发送连续追踪请求
-                Log.i(TAG, "[刷新追踪] 步骤6: 发送连续追踪请求 (type=continuous)")
-                sendMqttRequest(
-                    currentUid = currentUid,
-                    targetUid = targetUid,
-                    type = "continuous",
-                    reportLocationFirst = false
-                )
-
-                Log.i(TAG, "[刷新追踪] 步骤7: 持续追踪中... (60秒)")
-
-                // 60秒后自动结束追踪
-                delay(TRACKING_DURATION_MS)
-                if (_trackingContactUid.value == targetUid) {
-                    _trackingContactUid.value = null
-                    val currentState = _trackingStates.value[targetUid]
-                    if (currentState == TrackingState.CONNECTED || currentState == TrackingState.WAITING) {
-                        // 根据是否收到过位置判断成功/失败
-                        val received = hasReceivedLocation[targetUid] == true
-                        if (received) {
-                            Log.i(TAG, "[刷新追踪] 步骤8: 追踪完成，期间收到位置 -> SUCCESS")
-                            markTrackingSuccess(targetUid)
-                        } else {
-                            Log.i(TAG, "[刷新追踪] 步骤8: 追踪完成，未收到位置 -> FAILED")
-                            markTrackingFailed(targetUid)
-                        }
-                    } else {
-                        updateTrackingState(targetUid, TrackingState.IDLE)
-                        Log.i(TAG, "[刷新追踪] 步骤8: 追踪已结束 -> IDLE")
-                    }
-                    // 清理标记
-                    hasReceivedLocation.remove(targetUid)
-                }
-            } catch (e: CancellationException) {
-                // 协程取消是正常行为（用户主动停止追踪），不视为错误
-                Log.d(TAG, "[刷新追踪] 追踪已取消")
-                throw e  // 重新抛出，保持协程取消传播
-            } catch (e: Exception) {
-                Log.e(TAG, "[刷新追踪] ✗ 失败: ${e.message}", e)
-                _requestingLocationFor.value = null
-                _trackingContactUid.value = null
-                updateTrackingState(targetUid, TrackingState.IDLE)
-                _errorMessage.value = "刷新追踪失败: ${e.localizedMessage}"
-            }
-        }
-
-        trackingJobs[targetUid] = job
     }
 
     /**
@@ -565,7 +324,7 @@ class LocationTrackingManager(
         sendMqttRequest(
             currentUid = currentUid,
             targetUid = targetUid,
-            type = "lost_mode",  // 使用 RequestMessage.TYPE_LOST_MODE 常量值
+            type = "lost_mode",
             additionalData = mapOf(
                 "message" to message,
                 "phoneNumber" to phoneNumber,
@@ -582,7 +341,7 @@ class LocationTrackingManager(
         sendMqttRequest(
             currentUid = currentUid,
             targetUid = targetUid,
-            type = "disable_lost_mode",  // 使用 RequestMessage.TYPE_DISABLE_LOST_MODE 常量值
+            type = "disable_lost_mode",
             errorMessagePrefix = "关闭丢失模式失败"
         )
     }
@@ -595,10 +354,10 @@ class LocationTrackingManager(
         val result = locationReportService.reportCurrentLocation()
         result.fold(
             onSuccess = {
-                Log.i(TAG, "[上报位置] ✓ 我的位置已上报成功")
+                Log.i(TAG, "[上报位置] 我的位置已上报成功")
             },
             onFailure = {
-                Log.w(TAG, "[上报位置] ✗ 上报失败: ${it.message}")
+                Log.w(TAG, "[上报位置] 上报失败: ${it.message}")
             }
         )
     }

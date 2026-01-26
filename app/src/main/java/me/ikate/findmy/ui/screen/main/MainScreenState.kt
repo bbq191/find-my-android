@@ -41,8 +41,7 @@ class MainScreenState(
     val showAddDialog: Boolean,
     val isLoading: Boolean,
     val errorMessage: String?,
-    val requestingLocationFor: String?,
-    val trackingContactUid: String?,
+    val refreshingContacts: Set<String>,
     val ringingContactUid: String?,
 
     // 权限引导状态

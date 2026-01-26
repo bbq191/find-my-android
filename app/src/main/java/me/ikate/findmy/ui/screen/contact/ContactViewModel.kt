@@ -111,10 +111,8 @@ class ContactViewModel(
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading.asStateFlow()
 
-    // 追踪状态（委托给 TrackingManager）
-    val requestingLocationFor: StateFlow<String?> = trackingManager.requestingLocationFor
-    val trackingContactUid: StateFlow<String?> = trackingManager.trackingContactUid
-    val trackingStates: StateFlow<Map<String, me.ikate.findmy.service.TrackingState>> = trackingManager.trackingStates
+    // 刷新状态（委托给 TrackingManager）
+    val refreshingContacts: StateFlow<Set<String>> = trackingManager.refreshingContacts
 
     // 响铃状态 - 跟踪正在请求响铃的联系人
     private val _ringingContactUid = MutableStateFlow<String?>(null)
@@ -149,19 +147,19 @@ class ContactViewModel(
     }
 
     /**
-     * 监听位置更新，当收到追踪目标的位置更新时记录
-     * 追踪期间持续收到位置，不改变状态，60秒后根据是否收到过位置判断成功/失败
+     * 监听位置更新
+     * 收到位置更新时清除对应联系人的刷新状态
      */
     private fun observeLocationUpdates() {
         viewModelScope.launch {
             try {
                 mqttService.locationUpdates.collect { device ->
-                    // 检查是否是正在追踪的联系人
-                    val trackingUid = trackingManager.trackingContactUid.value
-                    if (trackingUid != null && device.ownerId == trackingUid) {
-                        Log.i(TAG, "[位置更新] 收到追踪目标的位置更新: ${device.ownerId}")
-                        // 记录收到位置（追踪继续，不改变状态）
-                        trackingManager.onLocationReceived(trackingUid)
+                    // 收到位置更新，清除刷新状态
+                    device.ownerId?.let { ownerId ->
+                        if (trackingManager.isRefreshing(ownerId)) {
+                            Log.d(TAG, "[位置更新] 收到位置更新，清除刷新状态: $ownerId")
+                            trackingManager.onLocationReceived(ownerId)
+                        }
                     }
                 }
             } catch (e: Exception) {
@@ -635,7 +633,7 @@ class ContactViewModel(
             result.fold(
                 onSuccess = {
                     contact.targetUserId?.let { targetUid ->
-                        requestLocationUpdate(targetUid)
+                        refreshLocation(targetUid)
                     }
                 },
                 onFailure = { error ->
@@ -701,49 +699,37 @@ class ContactViewModel(
     }
 
     // ====================================================================
-    // 位置追踪（委托给 TrackingManager）
+    // 位置刷新（委托给 TrackingManager）
     // ====================================================================
 
-    fun requestLocationUpdate(targetUid: String) {
-        trackingManager.requestLocationUpdate(_currentUser.value?.uid, targetUid)
-    }
-
-    fun startContinuousTracking(targetUid: String) {
-        trackingManager.startContinuousTracking(_currentUser.value?.uid, targetUid)
-    }
-
-    fun stopContinuousTracking(targetUid: String) {
-        trackingManager.stopContinuousTracking(_currentUser.value?.uid, targetUid)
-    }
-
     /**
-     * 获取指定联系人的追踪状态
+     * 检查指定联系人是否正在刷新位置
      */
-    fun getTrackingState(targetUid: String): me.ikate.findmy.service.TrackingState {
-        return trackingManager.getTrackingState(targetUid)
+    fun isRefreshing(targetUid: String): Boolean {
+        return trackingManager.isRefreshing(targetUid)
     }
 
     /**
-     * 刷新并追踪（点击头像触发）
-     * 如果已在追踪则停止，否则刷新并开始追踪
+     * 刷新联系人位置（点击头像触发）
+     * iOS Find My 风格：单击即刷新
      *
      * 注意：执行前会检查定位权限和电池优化权限
      */
-    fun refreshAndTrack(targetUid: String) {
+    fun refreshLocation(targetUid: String) {
         Log.i(TAG, "========================================")
-        Log.i(TAG, "[ContactViewModel] 刷新追踪被调用")
+        Log.i(TAG, "[ContactViewModel] 刷新位置被调用")
         Log.i(TAG, "[ContactViewModel] targetUid: $targetUid")
         Log.i(TAG, "[ContactViewModel] currentUser.uid: ${_currentUser.value?.uid}")
         Log.i(TAG, "========================================")
 
         val hasPermission = checkAndGuidePermissions {
-            Log.i(TAG, "[ContactViewModel] 权限检查通过（回调），执行 trackingManager.refreshAndTrack")
-            trackingManager.refreshAndTrack(_currentUser.value?.uid, targetUid)
+            Log.i(TAG, "[ContactViewModel] 权限检查通过（回调），执行 trackingManager.requestRefresh")
+            trackingManager.requestRefresh(_currentUser.value?.uid, targetUid)
         }
 
         if (hasPermission) {
-            Log.i(TAG, "[ContactViewModel] 权限检查通过（立即），执行 trackingManager.refreshAndTrack")
-            trackingManager.refreshAndTrack(_currentUser.value?.uid, targetUid)
+            Log.i(TAG, "[ContactViewModel] 权限检查通过（立即），执行 trackingManager.requestRefresh")
+            trackingManager.requestRefresh(_currentUser.value?.uid, targetUid)
         } else {
             Log.w(TAG, "[ContactViewModel] 权限检查未通过，等待用户授权")
         }

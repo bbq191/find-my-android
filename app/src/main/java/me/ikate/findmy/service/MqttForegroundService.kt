@@ -34,6 +34,9 @@ import me.ikate.findmy.data.repository.AuthRepository
 import me.ikate.findmy.data.repository.ContactRepository
 import me.ikate.findmy.data.repository.DeviceRepository
 import me.ikate.findmy.domain.statemachine.LocationStateMachine
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.ProcessLifecycleOwner
 
 /**
  * MQTT 前台服务
@@ -183,6 +186,24 @@ class MqttForegroundService : Service() {
     // 位置状态机
     private lateinit var stateMachine: LocationStateMachine
 
+    // 智能位置同步管理器
+    private lateinit var smartLocationSyncManager: SmartLocationSyncManager
+
+    // 应用生命周期观察者
+    private val lifecycleObserver = object : DefaultLifecycleObserver {
+        override fun onStart(owner: LifecycleOwner) {
+            // 应用进入前台
+            Log.d(TAG, "应用进入前台（通过 ProcessLifecycleOwner）")
+            smartLocationSyncManager.onAppForeground()
+        }
+
+        override fun onStop(owner: LifecycleOwner) {
+            // 应用进入后台
+            Log.d(TAG, "应用进入后台（通过 ProcessLifecycleOwner）")
+            smartLocationSyncManager.onAppBackground()
+        }
+    }
+
     // 防止重复订阅请求流
     @Volatile
     private var isObservingRequests = false
@@ -200,6 +221,13 @@ class MqttForegroundService : Service() {
         // 初始化位置状态机
         stateMachine = LocationStateMachine.getInstance(applicationContext)
         observeStateMachine()
+
+        // 初始化智能位置同步管理器
+        smartLocationSyncManager = SmartLocationSyncManager.getInstance(applicationContext)
+        smartLocationSyncManager.initialize()
+
+        // 注册应用生命周期观察者
+        ProcessLifecycleOwner.get().lifecycle.addObserver(lifecycleObserver)
 
         // 创建通知渠道
         createNotificationChannel()
@@ -313,6 +341,9 @@ class MqttForegroundService : Service() {
 
         // 重置请求监听标志（必须在 scope.cancel() 之前，确保新实例可以重新订阅）
         isObservingRequests = false
+
+        // 取消注册应用生命周期观察者
+        ProcessLifecycleOwner.get().lifecycle.removeObserver(lifecycleObserver)
 
         // 先取消所有协程（防止正在执行的协程访问已销毁的资源）
         serviceScope.cancel()

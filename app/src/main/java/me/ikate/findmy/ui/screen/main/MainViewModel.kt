@@ -29,6 +29,7 @@ import me.ikate.findmy.push.FCMMessageHandler
 import me.ikate.findmy.service.ActivityRecognitionManager
 import me.ikate.findmy.service.LocationReportService
 import me.ikate.findmy.service.SmartLocationConfig
+import me.ikate.findmy.service.SmartLocationSyncManager
 import me.ikate.findmy.ui.screen.main.components.SheetValue
 import me.ikate.findmy.util.TencentMapCameraHelper
 import me.ikate.findmy.worker.LocationReportWorker
@@ -61,6 +62,9 @@ class MainViewModel(
 
     // 活动识别管理器（智能位置上报）
     private val activityRecognitionManager = ActivityRecognitionManager(application)
+
+    // 智能位置同步管理器（iOS Find My 风格持续同步）
+    private val smartLocationSyncManager = SmartLocationSyncManager.getInstance(application)
 
     // 智能位置上报是否已启动
     private var isSmartLocationStarted = false
@@ -119,6 +123,8 @@ class MainViewModel(
         reportLocationNow()
         // 初始化位置上报（智能模式或传统模式）
         initLocationReporting()
+        // 初始化智能位置同步管理器（iOS Find My 风格持续同步）
+        smartLocationSyncManager.initialize()
     }
 
     /**
@@ -789,6 +795,48 @@ class MainViewModel(
         )
 
         Log.d(TAG, "触发立即智能位置上报 (强制: $forceReport)")
+    }
+
+    // ==================== 智能位置同步（iOS Find My 风格） ====================
+
+    /**
+     * 设置选中的联系人
+     * 会触发 SmartLocationSyncManager 的高频刷新（每5秒）
+     *
+     * @param contactUid 联系人 UID，null 表示取消选中
+     */
+    fun setFocusedContact(contactUid: String?) {
+        smartLocationSyncManager.setFocusedContact(contactUid)
+    }
+
+    /**
+     * 应用进入前台
+     * 应在 MainActivity 的 onResume 中调用
+     */
+    fun onAppForeground() {
+        smartLocationSyncManager.onAppForeground()
+    }
+
+    /**
+     * 应用进入后台
+     * 应在 MainActivity 的 onPause 中调用
+     */
+    fun onAppBackground() {
+        smartLocationSyncManager.onAppBackground()
+    }
+
+    /**
+     * 刷新所有联系人位置
+     */
+    fun refreshAllContactLocations() {
+        smartLocationSyncManager.refreshAllContacts()
+    }
+
+    /**
+     * 刷新单个联系人位置
+     */
+    fun refreshContactLocation(targetUid: String) {
+        smartLocationSyncManager.refreshContact(targetUid)
     }
 
     override fun onCleared() {

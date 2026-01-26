@@ -139,6 +139,9 @@ dependencies {
     // ViewModel Compose
     implementation(libs.androidx.lifecycle.viewmodel.compose)
 
+    // Lifecycle Process (用于监听应用前后台状态)
+    implementation(libs.androidx.lifecycle.process)
+
     // 腾讯地图 SDK（地图 + 定位）
     implementation(libs.tencent.map.vector.sdk)
     implementation(libs.tencent.location.sdk)

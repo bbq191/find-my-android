@@ -57,8 +57,7 @@ fun ContactListPanel(
     myDevice: Device? = null,
     myAddress: String? = null,
     contacts: List<Contact>,
-    requestingLocationFor: String? = null,
-    trackingContactUid: String? = null,
+    refreshingContacts: Set<String> = emptySet(),
     onContactClick: (Contact) -> Unit,
     onAddContactClick: () -> Unit,
     onNavigate: (Contact) -> Unit = {},
@@ -68,7 +67,7 @@ fun ContactListPanel(
     onRemoveContact: (Contact) -> Unit = {},
     onAcceptShare: (Contact) -> Unit = {},
     onRejectShare: (Contact) -> Unit = {},
-    onRefreshAndTrack: (String) -> Unit = {},
+    onRefreshLocation: (String) -> Unit = {},
     onPlaySound: (String) -> Unit = {},
     onStopSound: () -> Unit = {},
     isRinging: Boolean = false,
@@ -154,15 +153,13 @@ fun ContactListPanel(
             contacts = contacts,
             myDevice = myDevice,
             expandedContactId = expandedContactId,
-            requestingLocationFor = requestingLocationFor,
-            trackingContactUid = trackingContactUid,
             onContactClick = { contact ->
                 // 点击联系人卡片：定位到地图
                 onContactClick(contact)
             },
             onAvatarClick = { contact ->
-                // 点击头像：开始追踪
-                contact.targetUserId?.let { onRefreshAndTrack(it) }
+                // 点击头像：刷新位置（iOS Find My 风格）
+                contact.targetUserId?.let { onRefreshLocation(it) }
             },
             onExpandClick = { contact ->
                 // 点击展开按钮（已废弃）
@@ -322,10 +319,8 @@ private fun ContactList(
     contacts: List<Contact>,
     myDevice: Device?,
     expandedContactId: String?,
-    requestingLocationFor: String?,
-    trackingContactUid: String?,
-    onContactClick: (Contact) -> Unit,  // 点击卡片：定位追踪
-    onAvatarClick: (Contact) -> Unit,   // 点击头像：开始追踪
+    onContactClick: (Contact) -> Unit,  // 点击卡片：定位到地图
+    onAvatarClick: (Contact) -> Unit,   // 点击头像：刷新位置
     onExpandClick: (Contact) -> Unit,   // 点击展开按钮（已废弃）
     onNavigate: (Contact) -> Unit,
     onPauseShare: (Contact) -> Unit,
@@ -347,15 +342,11 @@ private fun ContactList(
 
             items(contacts, key = { it.id }) { contact ->
                 val isExpanded = expandedContactId == contact.id
-                val isRequesting = requestingLocationFor == contact.targetUserId
-                val isTracking = trackingContactUid == contact.targetUserId
 
                 ContactListItem(
                     contact = contact,
                     myDevice = myDevice,
                     isExpanded = isExpanded,
-                    isRequestingLocation = isRequesting,
-                    isTracking = isTracking,
                     onClick = { onContactClick(contact) },
                     onAvatarClick = { onAvatarClick(contact) },
                     onExpandClick = { onExpandClick(contact) },
