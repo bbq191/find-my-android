@@ -73,6 +73,9 @@ object MqttConfig {
     /** 围栏同步主题前缀 (用于围栏配置同步) */
     const val TOPIC_GEOFENCE_SYNC_PREFIX = "findmy/geofence/sync/"
 
+    /** 调试消息主题前缀 (用于远程调试) */
+    const val TOPIC_DEBUG_PREFIX = "findmy/debug/"
+
     /**
      * 获取用户的位置主题
      * @param userId 用户 ID
@@ -156,6 +159,14 @@ object MqttConfig {
      * @return 围栏同步主题，如 "findmy/geofence/sync/uid123"
      */
     fun getGeofenceSyncTopic(userId: String): String = "$TOPIC_GEOFENCE_SYNC_PREFIX$userId"
+
+    /**
+     * 获取用户的调试消息接收主题
+     * 用户订阅此主题来接收来自其他设备的调试反馈
+     * @param userId 用户 ID
+     * @return 调试消息主题，如 "findmy/debug/uid123"
+     */
+    fun getDebugTopic(userId: String): String = "$TOPIC_DEBUG_PREFIX$userId"
 
     /**
      * 生成客户端 ID

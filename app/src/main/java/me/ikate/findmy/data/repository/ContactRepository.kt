@@ -797,24 +797,47 @@ class ContactRepository(private val context: Context) {
      * 3. 我没有暂停与该用户的共享
      */
     suspend fun shouldRespondToRequest(requesterUid: String): Boolean {
+        Log.i(TAG, "========== [响应检查] 开始检查 ==========")
+        Log.i(TAG, "[响应检查] 请求者UID: $requesterUid")
+
         return try {
-            val contact = contactDao.getByTargetUserId(requesterUid) ?: return false
+            // 检查1: 联系人是否存在
+            val contact = contactDao.getByTargetUserId(requesterUid)
+            if (contact == null) {
+                Log.w(TAG, "[响应检查] ✗ 失败: 联系人不存在 (requesterUid=$requesterUid)")
+                // 打印所有联系人以便排查
+                val allContacts = contactDao.getAll()
+                Log.w(TAG, "[响应检查] 当前联系人列表 (共${allContacts.size}个):")
+                allContacts.forEach { c ->
+                    Log.w(TAG, "[响应检查]   - targetUserId=${c.targetUserId}, name=${c.name}, status=${c.shareStatus}, isPaused=${c.isPaused}")
+                }
+                return false
+            }
 
-            // 检查共享状态是否为 ACCEPTED
+            Log.i(TAG, "[响应检查] ✓ 联系人存在: name=${contact.name}, id=${contact.id}")
+            Log.i(TAG, "[响应检查]   shareStatus=${contact.shareStatus}")
+            Log.i(TAG, "[响应检查]   shareDirection=${contact.shareDirection}")
+            Log.i(TAG, "[响应检查]   isPaused=${contact.isPaused}")
+            Log.i(TAG, "[响应检查]   expireTime=${contact.expireTime}")
+
+            // 检查2: 共享状态是否为 ACCEPTED
             if (contact.shareStatus != ShareStatus.ACCEPTED.name) {
-                Log.d(TAG, "忽略请求: 共享状态不是 ACCEPTED (${contact.shareStatus})")
+                Log.w(TAG, "[响应检查] ✗ 失败: 共享状态不是 ACCEPTED (当前=${contact.shareStatus})")
                 return false
             }
+            Log.i(TAG, "[响应检查] ✓ 共享状态正确: ACCEPTED")
 
-            // 检查是否暂停了共享
+            // 检查3: 是否暂停了共享
             if (contact.isPaused) {
-                Log.d(TAG, "忽略请求: 共享已暂停")
+                Log.w(TAG, "[响应检查] ✗ 失败: 共享已暂停")
                 return false
             }
+            Log.i(TAG, "[响应检查] ✓ 共享未暂停")
 
+            Log.i(TAG, "[响应检查] ✓ 所有检查通过，将响应请求")
             true
         } catch (e: Exception) {
-            Log.e(TAG, "检查请求响应条件失败", e)
+            Log.e(TAG, "[响应检查] ✗ 异常: ${e.message}", e)
             false
         }
     }

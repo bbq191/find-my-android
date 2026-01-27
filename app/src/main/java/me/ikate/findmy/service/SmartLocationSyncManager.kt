@@ -14,9 +14,11 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import me.ikate.findmy.data.model.Contact
+import me.ikate.findmy.data.remote.mqtt.MqttConnectionManager.ConnectionState
 import me.ikate.findmy.data.model.ShareDirection
 import me.ikate.findmy.data.model.ShareStatus
 import me.ikate.findmy.data.repository.ContactRepository
@@ -98,6 +100,27 @@ class SmartLocationSyncManager(
         scope.launch {
             contactRepository.observeMyContacts().collect { contacts ->
                 updateSubscriptions(contacts)
+            }
+        }
+
+        // 监听 MQTT 连接状态：连接成功后重新触发订阅
+        // 解决启动时 MQTT 未连接导致订阅被跳过的问题
+        scope.launch {
+            try {
+                val mqttManager = DeviceRepository.getMqttManager(context)
+                val mqttService = DeviceRepository.getMqttService(context)
+                mqttManager.connectionState
+                    .filter { it is ConnectionState.Connected }
+                    .collect {
+                        Log.i(TAG, "[连接恢复] MQTT 已连接，清除订阅缓存并重新订阅...")
+                        // 清除内存中的订阅缓存，确保重新向 broker 订阅
+                        subscribedContacts.clear()
+                        mqttService.clearSubscribedUsers()
+                        val contacts = contactRepository.observeMyContacts().first()
+                        updateSubscriptions(contacts)
+                    }
+            } catch (e: Exception) {
+                Log.e(TAG, "[连接恢复] 监听 MQTT 连接状态失败", e)
             }
         }
 
@@ -225,7 +248,21 @@ class SmartLocationSyncManager(
      * 根据联系人列表变化自动订阅/取消订阅
      */
     private suspend fun updateSubscriptions(contacts: List<Contact>) {
+        val mqttManager = DeviceRepository.getMqttManager(context)
         val mqttService = DeviceRepository.getMqttService(context)
+
+        Log.i(TAG, "[订阅更新] 开始更新订阅，联系人总数: ${contacts.size}, MQTT连接: ${mqttManager.isConnected()}")
+
+        // 检查 MQTT 是否已连接
+        if (!mqttManager.isConnected()) {
+            Log.w(TAG, "[订阅更新] MQTT 未连接，跳过订阅更新")
+            return
+        }
+
+        // 打印每个联系人的订阅资格诊断
+        contacts.forEach { contact ->
+            Log.d(TAG, "[订阅诊断] ${contact.name}: status=${contact.shareStatus}, direction=${contact.shareDirection}, paused=${contact.isPaused}, targetUserId=${contact.targetUserId}")
+        }
 
         // 计算需要订阅的联系人
         val shouldSubscribe = contacts.filter { contact ->
@@ -235,12 +272,18 @@ class SmartLocationSyncManager(
              contact.shareDirection == ShareDirection.MUTUAL)
         }.mapNotNull { it.targetUserId }.toSet()
 
+        Log.i(TAG, "[订阅更新] 符合订阅条件: ${shouldSubscribe.size}, 已订阅缓存: ${subscribedContacts.size}")
+
         // 新增订阅
         val toSubscribe = shouldSubscribe - subscribedContacts
         toSubscribe.forEach { uid ->
-            mqttService.subscribeToUser(uid)
-            subscribedContacts.add(uid)
-            Log.d(TAG, "订阅联系人位置: $uid")
+            val result = mqttService.subscribeToUser(uid)
+            if (result.isSuccess) {
+                subscribedContacts.add(uid)
+                Log.d(TAG, "订阅联系人位置: $uid")
+            } else {
+                Log.e(TAG, "订阅联系人位置失败: $uid")
+            }
         }
 
         // 取消订阅

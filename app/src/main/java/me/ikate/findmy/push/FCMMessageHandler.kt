@@ -33,9 +33,13 @@ object FCMMessageHandler {
      * 用于后台唤醒定位等静默操作
      */
     fun handleDataMessage(context: Context, message: String?) {
-        Log.d(TAG, "处理数据消息: $message")
+        Log.i(TAG, "========== [FCM消息] 收到数据消息 ==========")
+        Log.i(TAG, "[FCM消息] 消息内容: $message")
 
-        if (message.isNullOrBlank()) return
+        if (message.isNullOrBlank()) {
+            Log.w(TAG, "[FCM消息] ✗ 消息为空，忽略")
+            return
+        }
 
         // FCM 唤醒后确保 MQTT 连接
         try {
@@ -110,11 +114,13 @@ object FCMMessageHandler {
      * 支持单次定位和持续追踪两种模式
      */
     private fun handleLocationRequest(context: Context, jsonObject: com.google.gson.JsonObject) {
-        Log.d(TAG, "处理位置请求")
+        Log.i(TAG, "========== [FCM位置请求] 开始处理 ==========")
 
         val requesterId = jsonObject.get("requesterId")?.asString ?: ""
         val mode = jsonObject.get("mode")?.asString ?: "single"  // single 或 continuous
-        Log.d(TAG, "位置请求来自: $requesterId, 模式: $mode")
+        Log.i(TAG, "[FCM位置请求] 请求者UID: $requesterId")
+        Log.i(TAG, "[FCM位置请求] 请求模式: $mode")
+        Log.i(TAG, "[FCM位置请求] 原始数据: $jsonObject")
 
         when (mode) {
             "continuous" -> {
@@ -146,6 +152,7 @@ object FCMMessageHandler {
             }
             else -> {
                 // 默认单次定位
+                Log.i(TAG, "[FCM位置请求] → 单次定位模式，启动 LocationReportWorker")
                 val workRequest = OneTimeWorkRequestBuilder<me.ikate.findmy.worker.LocationReportWorker>()
                     .setInputData(
                         workDataOf(
@@ -156,7 +163,7 @@ object FCMMessageHandler {
                     .build()
 
                 WorkManager.getInstance(context).enqueue(workRequest)
-                Log.d(TAG, "已触发位置上报任务")
+                Log.i(TAG, "[FCM位置请求] ✓ LocationReportWorker 已入队")
             }
         }
     }

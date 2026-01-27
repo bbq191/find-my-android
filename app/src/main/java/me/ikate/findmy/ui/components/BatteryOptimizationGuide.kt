@@ -91,7 +91,7 @@ fun BatteryOptimizationGuideDialog(
                 Text(
                     text = if (isIgnoringBatteryOptimizations)
                         "电池优化已关闭，后台服务运行正常。"
-                    else "为确保定位服务稳定运行，请关闭电池优化。",
+                    else "为确保定位服务稳定运行，请关闭电池优化并将应用加入不休眠列表。",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -326,15 +326,15 @@ private fun getSamsungOptimizationSteps(): List<String> {
 
     return if (isOneUI6Plus) {
         listOf(
-            "电池和设备维护 → 电池",
-            "后台使用限制 → 深度睡眠应用 → 移除 FindMy",
-            "不休眠的应用 → 添加 FindMy",
-            "应用程序 → FindMy → 电池 → 无限制"
+            "设置 → 应用程序 → FindMy → 电池",
+            "选择「无限制」(而非「已优化」)",
+            "返回 → 电池 → 后台使用限制",
+            "确认 FindMy 不在「深度睡眠」列表中"
         )
     } else {
         listOf(
             "应用程序 → FindMy → 电池 → 无限制",
-            "电池 → 后台使用限制 → 从深度睡眠列表移除 FindMy"
+            "电池 → 后台使用限制 → 不休眠的应用 → 添加 FindMy"
         )
     }
 }

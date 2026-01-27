@@ -58,4 +58,52 @@ object TimeFormatter {
     fun isOnline(lastUpdateTime: Long): Boolean {
         return (System.currentTimeMillis() - lastUpdateTime) < 5 * 60 * 1000
     }
+
+    /**
+     * 判断位置是否可能已过期（超过 30 分钟未更新）
+     * 用于提示用户当前显示的位置可能是 MQTT Retained 消息（缓存的旧数据）
+     * @param lastUpdateTime 最后更新时间戳
+     * @return 是否可能已过期
+     */
+    fun isLocationStale(lastUpdateTime: Long): Boolean {
+        if (lastUpdateTime <= 0) return true
+        return (System.currentTimeMillis() - lastUpdateTime) > 30 * 60 * 1000  // 30分钟
+    }
+
+    /**
+     * 判断位置是否严重过期（超过 24 小时未更新）
+     * @param lastUpdateTime 最后更新时间戳
+     * @return 是否严重过期
+     */
+    fun isLocationVeryStale(lastUpdateTime: Long): Boolean {
+        if (lastUpdateTime <= 0) return true
+        return (System.currentTimeMillis() - lastUpdateTime) > 24 * 60 * 60 * 1000  // 24小时
+    }
+
+    /**
+     * 获取位置新鲜度状态
+     * @param lastUpdateTime 最后更新时间戳
+     * @return LocationFreshness 枚举
+     */
+    fun getLocationFreshness(lastUpdateTime: Long): LocationFreshness {
+        if (lastUpdateTime <= 0) return LocationFreshness.UNKNOWN
+        val diff = System.currentTimeMillis() - lastUpdateTime
+        return when {
+            diff < 5 * 60 * 1000 -> LocationFreshness.FRESH       // 5分钟内
+            diff < 30 * 60 * 1000 -> LocationFreshness.RECENT     // 30分钟内
+            diff < 24 * 60 * 60 * 1000 -> LocationFreshness.STALE // 24小时内
+            else -> LocationFreshness.VERY_STALE                   // 超过24小时
+        }
+    }
+
+    /**
+     * 位置新鲜度枚举
+     */
+    enum class LocationFreshness {
+        FRESH,       // 新鲜（5分钟内）
+        RECENT,      // 较新（30分钟内）
+        STALE,       // 可能过期（24小时内）
+        VERY_STALE,  // 严重过期（超过24小时）
+        UNKNOWN      // 未知（无时间戳）
+    }
 }

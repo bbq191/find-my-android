@@ -60,6 +60,7 @@ import me.ikate.findmy.data.model.ShareDirection
 import me.ikate.findmy.data.model.ShareStatus
 import me.ikate.findmy.ui.theme.FindMyShapes
 import me.ikate.findmy.util.TimeFormatter
+import androidx.compose.material.icons.filled.Warning
 
 /**
  * 联系人详情 BottomSheet
@@ -92,6 +93,7 @@ fun ContactDetailBottomSheet(
                     contact.shareDirection == ShareDirection.MUTUAL)
     val canNavigate = contact.location != null && contact.isLocationAvailable
     val isOnline = TimeFormatter.isOnline(contact.lastUpdateTime ?: 0L)
+    val locationFreshness = TimeFormatter.getLocationFreshness(contact.lastUpdateTime ?: 0L)
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -122,6 +124,11 @@ fun ContactDetailBottomSheet(
         ) {
             // 联系人信息头部
             ContactHeader(contact = contact, isOnline = isOnline)
+
+            // 位置过期警告提示
+            if (contact.location != null && !contact.isPaused) {
+                LocationFreshnessWarning(freshness = locationFreshness)
+            }
 
             Spacer(modifier = Modifier.height(24.dp))
 
@@ -165,6 +172,67 @@ fun ContactDetailBottomSheet(
                     onRemoveContact()
                     onDismiss()
                 }
+            )
+        }
+    }
+}
+
+/**
+ * 位置新鲜度警告提示
+ * 当位置可能过期时显示警告，帮助用户理解当前位置可能是缓存的旧数据
+ */
+@Composable
+private fun LocationFreshnessWarning(
+    freshness: TimeFormatter.LocationFreshness
+) {
+    // 只有在位置可能过期时才显示警告
+    if (freshness == TimeFormatter.LocationFreshness.FRESH ||
+        freshness == TimeFormatter.LocationFreshness.RECENT) {
+        return
+    }
+
+    val (message, backgroundColor, contentColor) = when (freshness) {
+        TimeFormatter.LocationFreshness.STALE -> Triple(
+            "位置可能已过期，对方设备可能离线",
+            MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.5f),
+            MaterialTheme.colorScheme.onTertiaryContainer
+        )
+        TimeFormatter.LocationFreshness.VERY_STALE -> Triple(
+            "位置已超过 24 小时未更新",
+            MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f),
+            MaterialTheme.colorScheme.onErrorContainer
+        )
+        else -> Triple(
+            "位置信息不可用",
+            MaterialTheme.colorScheme.surfaceContainerHigh,
+            MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+
+    Spacer(modifier = Modifier.height(12.dp))
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        color = backgroundColor
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Default.Warning,
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+                tint = contentColor
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodySmall,
+                color = contentColor
             )
         }
     }

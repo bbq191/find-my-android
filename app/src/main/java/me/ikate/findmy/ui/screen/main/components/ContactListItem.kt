@@ -304,6 +304,7 @@ private fun DeviceStatusRow(contact: Contact) {
     val timeText = TimeFormatter.formatUpdateTime(contact.lastUpdateTime ?: 0L)
     val deviceName = contact.deviceName ?: "未知设备"
     val battery = contact.battery ?: 100
+    val locationFreshness = TimeFormatter.getLocationFreshness(contact.lastUpdateTime ?: 0L)
 
     // 电量状态颜色
     val isLowBattery = battery <= 20
@@ -353,10 +354,23 @@ private fun DeviceStatusRow(contact: Contact) {
             }
         }
 
-        // 时间胶囊 (Chip)
+        // 时间胶囊 (Chip) - 位置过期时显示警告色
+        val isLocationStale = locationFreshness == TimeFormatter.LocationFreshness.STALE ||
+                locationFreshness == TimeFormatter.LocationFreshness.VERY_STALE
+        val timeChipColor = when (locationFreshness) {
+            TimeFormatter.LocationFreshness.VERY_STALE -> MaterialTheme.colorScheme.errorContainer
+            TimeFormatter.LocationFreshness.STALE -> MaterialTheme.colorScheme.tertiaryContainer
+            else -> MaterialTheme.colorScheme.surfaceContainerHigh
+        }
+        val timeContentColor = when (locationFreshness) {
+            TimeFormatter.LocationFreshness.VERY_STALE -> MaterialTheme.colorScheme.onErrorContainer
+            TimeFormatter.LocationFreshness.STALE -> MaterialTheme.colorScheme.onTertiaryContainer
+            else -> MaterialTheme.colorScheme.onSurfaceVariant
+        }
+
         Surface(
             shape = RoundedCornerShape(12.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            color = timeChipColor,
             modifier = Modifier.height(24.dp)
         ) {
             Row(
@@ -368,12 +382,12 @@ private fun DeviceStatusRow(contact: Contact) {
                     imageVector = Icons.Default.Schedule,
                     contentDescription = "更新时间",
                     modifier = Modifier.size(14.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    tint = timeContentColor
                 )
                 Text(
                     text = timeText,
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = timeContentColor,
                     fontWeight = FontWeight.Medium
                 )
             }

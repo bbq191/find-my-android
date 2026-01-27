@@ -34,6 +34,7 @@ import me.ikate.findmy.data.remote.mqtt.message.ShareRequestMessage
 import me.ikate.findmy.data.remote.mqtt.message.ShareResponseMessage
 import me.ikate.findmy.data.remote.mqtt.message.ShareResponseType
 import me.ikate.findmy.domain.communication.CommunicationManager
+import me.ikate.findmy.util.DeviceIdProvider
 
 /**
  * 位置 MQTT 服务
@@ -197,6 +198,10 @@ class LocationMqttService(
                 Log.i(TAG, "[MQTT消息] → 类型: 围栏同步")
                 handleGeofenceSyncMessage(message.payload)
             }
+            message.topic.startsWith(MqttConfig.TOPIC_DEBUG_PREFIX) -> {
+                Log.i(TAG, "[MQTT消息] → 类型: 调试消息")
+                handleDebugMessage(message.payload)
+            }
             else -> {
                 Log.w(TAG, "[MQTT消息] → 类型: 未知主题")
             }
@@ -205,46 +210,48 @@ class LocationMqttService(
 
     /**
      * 处理位置消息
+     * 仅处理联系人（他人）的位置更新，忽略自己发布后被 MQTT 回传的消息
      */
     private suspend fun handleLocationMessage(payload: String) {
-        Log.i(TAG, "[位置消息] 开始处理位置更新...")
         val locationMessage = LocationMessage.fromJson(payload)
-        if (locationMessage != null) {
-            Log.i(TAG, "========== [位置消息] 收到位置更新 ==========")
-            Log.i(TAG, "[位置消息] 用户ID: ${locationMessage.userId}")
-            Log.i(TAG, "[位置消息] 设备名: ${locationMessage.deviceName}")
-            Log.i(TAG, "[位置消息] 坐标: (${locationMessage.latitude}, ${locationMessage.longitude})")
-            Log.i(TAG, "[位置消息] 精度: ${locationMessage.accuracy}m")
-            Log.i(TAG, "[位置消息] 电量: ${locationMessage.battery}%")
-            Log.i(TAG, "[位置消息] 时间戳: ${locationMessage.timestamp}")
-            Log.i(TAG, "[位置消息] 坐标系: ${locationMessage.coordType}")
-
-            // 保存到设备表
-            Log.d(TAG, "[位置消息] 步骤1: 保存到设备表...")
-            database.deviceDao().insertOrUpdate(locationMessage.toEntity())
-
-            // 同时更新联系人表的位置信息（包含电量和设备名）
-            Log.d(TAG, "[位置消息] 步骤2: 更新联系人表位置信息...")
-            database.contactDao().updateLocation(
-                targetUserId = locationMessage.userId,
-                latitude = locationMessage.latitude,
-                longitude = locationMessage.longitude,
-                lastUpdateTime = locationMessage.timestamp,
-                deviceName = locationMessage.customName ?: locationMessage.deviceName,
-                battery = locationMessage.battery
-            )
-
-            // 步骤3: 检查围栏触发
-            Log.d(TAG, "[位置消息] 步骤3: 检查围栏触发...")
-            checkGeofenceTrigger(locationMessage.userId, locationMessage.latitude, locationMessage.longitude)
-
-            // 步骤4: 发送到流
-            Log.d(TAG, "[位置消息] 步骤4: 发送到 locationUpdates 流...")
-            _locationUpdates.emit(locationMessage.toDomain())
-            Log.i(TAG, "[位置消息] ✓ 位置更新处理完成")
-        } else {
+        if (locationMessage == null) {
             Log.w(TAG, "[位置消息] ✗ 无法解析位置消息: ${payload.take(200)}")
+            return
         }
+
+        // 过滤自己的位置消息（自己发布后会被 MQTT 回传，无需处理）
+        val myUserId = DeviceIdProvider.getInstance(context).getDeviceId()
+        if (locationMessage.userId == myUserId) {
+            Log.d(TAG, "[位置消息] 忽略自己的位置回传: ${locationMessage.userId}")
+            return
+        }
+
+        Log.i(TAG, "========== [位置消息] 收到联系人位置更新 ==========")
+        Log.i(TAG, "[位置消息] 用户ID: ${locationMessage.userId}")
+        Log.i(TAG, "[位置消息] 设备名: ${locationMessage.deviceName}")
+        Log.i(TAG, "[位置消息] 坐标: (${locationMessage.latitude}, ${locationMessage.longitude})")
+        Log.i(TAG, "[位置消息] 电量: ${locationMessage.battery}%")
+        Log.i(TAG, "[位置消息] 时间戳: ${locationMessage.timestamp}")
+
+        // 步骤1: 保存到设备表
+        database.deviceDao().insertOrUpdate(locationMessage.toEntity())
+
+        // 步骤2: 更新联系人表的位置信息（包含电量和设备名）
+        database.contactDao().updateLocation(
+            targetUserId = locationMessage.userId,
+            latitude = locationMessage.latitude,
+            longitude = locationMessage.longitude,
+            lastUpdateTime = locationMessage.timestamp,
+            deviceName = locationMessage.customName ?: locationMessage.deviceName,
+            battery = locationMessage.battery
+        )
+
+        // 步骤3: 检查围栏触发
+        checkGeofenceTrigger(locationMessage.userId, locationMessage.latitude, locationMessage.longitude)
+
+        // 步骤4: 发送到流
+        _locationUpdates.emit(locationMessage.toDomain())
+        Log.i(TAG, "[位置消息] ✓ 位置更新处理完成: ${locationMessage.userId}")
     }
 
     /**
@@ -408,6 +415,45 @@ class LocationMqttService(
         } else {
             Log.w(TAG, "无法解析围栏同步消息: ${payload.take(100)}")
         }
+    }
+
+    /**
+     * 处理调试消息（来自其他设备的调试反馈）
+     */
+    private fun handleDebugMessage(payload: String) {
+        try {
+            val json = com.google.gson.JsonParser.parseString(payload).asJsonObject
+            val fromUid = json.get("fromUid")?.asString ?: "unknown"
+            val status = json.get("status")?.asString ?: "unknown"
+            val message = json.get("message")?.asString ?: ""
+            val timestamp = json.get("timestamp")?.asLong ?: 0
+
+            Log.i(TAG, "")
+            Log.i(TAG, "╔════════════════════════════════════════════════════════════════╗")
+            Log.i(TAG, "║  [远程调试ACK] 收到对端反馈                                     ║")
+            Log.i(TAG, "╠════════════════════════════════════════════════════════════════╣")
+            Log.i(TAG, "║  来源设备: $fromUid")
+            Log.i(TAG, "║  状态: $status")
+            Log.i(TAG, "║  消息: $message")
+            Log.i(TAG, "║  时间戳: $timestamp")
+            Log.i(TAG, "╚════════════════════════════════════════════════════════════════╝")
+            Log.i(TAG, "")
+        } catch (e: Exception) {
+            Log.w(TAG, "[调试消息] 解析失败: ${e.message}")
+        }
+    }
+
+    /**
+     * 订阅调试消息主题
+     */
+    suspend fun subscribeToDebugTopic(userId: String): Result<Unit> {
+        val debugTopic = MqttConfig.getDebugTopic(userId)
+        val result = mqttManager.subscribe(debugTopic, qos = 0)
+        result.fold(
+            onSuccess = { Log.d(TAG, "已订阅调试主题: $userId") },
+            onFailure = { Log.e(TAG, "订阅调试主题失败: $userId", it) }
+        )
+        return result
     }
 
     /**
@@ -726,22 +772,41 @@ class LocationMqttService(
      */
     suspend fun subscribeToUser(userId: String): Result<Unit> {
         if (subscribedUsers.contains(userId)) {
+            Log.d(TAG, "[订阅用户] 已在本地订阅列表中: $userId，跳过")
             return Result.success(Unit)
         }
 
+        // 只订阅 location 主题（节省 EMQX 订阅配额，每个主题占 1 个配额）
+        // presence 不再订阅：在线状态可通过 location 更新时间推断
         val locationTopic = MqttConfig.getLocationTopic(userId)
-        val presenceTopic = MqttConfig.getPresenceTopic(userId)
 
-        val locationResult = mqttManager.subscribe(locationTopic, qos = 1)
-        val presenceResult = mqttManager.subscribe(presenceTopic, qos = 1)
+        Log.i(TAG, "[订阅用户] 开始订阅: $userId")
+        Log.i(TAG, "[订阅用户] 位置主题: $locationTopic")
 
-        return if (locationResult.isSuccess && presenceResult.isSuccess) {
-            subscribedUsers.add(userId)
-            Log.d(TAG, "已订阅用户: $userId")
-            Result.success(Unit)
-        } else {
-            Result.failure(Exception("订阅失败"))
+        for (attempt in 1..3) {
+            val result = mqttManager.subscribe(locationTopic, qos = 1)
+            if (result.isSuccess) {
+                subscribedUsers.add(userId)
+                Log.i(TAG, "[订阅用户] ✓ 订阅成功: $userId (第${attempt}次, 当前订阅数: ${subscribedUsers.size})")
+                return Result.success(Unit)
+            } else {
+                Log.w(TAG, "[订阅用户] ✗ 订阅失败: $userId (第${attempt}次): ${result.exceptionOrNull()?.message}")
+                if (attempt < 3) kotlinx.coroutines.delay(500L * attempt)
+            }
         }
+
+        Log.e(TAG, "[订阅用户] ✗ 订阅最终失败: $userId (已重试3次)")
+        return Result.failure(Exception("位置主题订阅失败"))
+    }
+
+    /**
+     * 清除已订阅用户缓存
+     * 用于 MQTT 重连后强制重新订阅（因为 broker 端订阅已丢失）
+     */
+    fun clearSubscribedUsers() {
+        val count = subscribedUsers.size
+        subscribedUsers.clear()
+        Log.i(TAG, "[订阅缓存] 已清除订阅缓存，原有 $count 个用户")
     }
 
     /**
@@ -749,10 +814,8 @@ class LocationMqttService(
      */
     suspend fun unsubscribeFromUser(userId: String): Result<Unit> {
         val locationTopic = MqttConfig.getLocationTopic(userId)
-        val presenceTopic = MqttConfig.getPresenceTopic(userId)
 
         mqttManager.unsubscribe(locationTopic)
-        mqttManager.unsubscribe(presenceTopic)
         subscribedUsers.remove(userId)
 
         Log.d(TAG, "已取消订阅用户: $userId")

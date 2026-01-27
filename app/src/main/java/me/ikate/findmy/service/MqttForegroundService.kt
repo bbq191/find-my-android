@@ -462,14 +462,32 @@ class MqttForegroundService : Service() {
 
                 // 订阅当前用户的主题
                 val userId = authRepository.getCurrentUserId()
+                Log.i(TAG, "========== [MQTT初始化] 开始订阅主题 ==========")
+                Log.i(TAG, "[MQTT初始化] 当前用户ID: $userId")
+                Log.i(TAG, "[MQTT初始化] MQTT连接状态: ${mqttManager.isConnected()}")
                 if (userId != null) {
-                    // 订阅位置主题
-                    mqttService.subscribeToUser(userId)
+                    // 清理旧版本遗留的无用订阅（持久会话会保留旧订阅）
+                    // 这些主题不再需要，释放 EMQX 订阅配额
+                    Log.i(TAG, "[MQTT初始化] 清理旧版遗留订阅...")
+                    mqttManager.unsubscribe(MqttConfig.getLocationTopic(userId))   // 自己的 location
+                    mqttManager.unsubscribe(MqttConfig.getPresenceTopic(userId))   // 自己的 presence
+                    mqttManager.unsubscribe(MqttConfig.getDebugTopic(userId))      // debug
+                    // 清理联系人的 presence 订阅（新版只订阅 location）
+                    val existingContacts = contactRepository.observeMyContacts().first()
+                    existingContacts.forEach { contact ->
+                        contact.targetUserId?.let { targetId ->
+                            mqttManager.unsubscribe(MqttConfig.getPresenceTopic(targetId))
+                        }
+                    }
+                    Log.i(TAG, "[MQTT初始化] 旧订阅清理完成")
 
-                    // 订阅共享主题
+                    // 注意：不订阅自己的 location/presence（自己发布的消息无需订阅回来）
+                    // EMQX 订阅数有限（如 10 个），必须精打细算
+
+                    // 订阅共享主题（接收邀请和响应）— 2个主题
                     mqttService.subscribeToShareTopics(userId)
 
-                    // 订阅请求主题
+                    // 订阅请求主题（位置请求、发声等）— 1个主题
                     val requestResult = mqttService.subscribeToRequestTopic(userId)
                     if (requestResult.isSuccess) {
                         Log.d(TAG, "已订阅请求主题")
@@ -477,17 +495,26 @@ class MqttForegroundService : Service() {
                         observeRequests(mqttService)
                     }
 
-                    // 订阅暂停状态主题
+                    // 订阅暂停状态主题 — 1个主题
                     mqttService.subscribeToSharePauseTopic(userId)
 
-                    // 订阅围栏主题（事件 + 同步）
+                    // 订阅围栏主题（事件 + 同步）— 2个主题
                     val geofenceResult = mqttService.subscribeToGeofenceTopics(userId)
                     if (geofenceResult.isSuccess) {
                         Log.d(TAG, "已订阅围栏主题")
                     }
 
-                    // 订阅已有联系人的位置主题（恢复订阅）
-                    subscribeToExistingContacts(mqttService)
+                    // 系统主题合计：6个（share/request + share/response + requests + share/pause + geofence/events + geofence/sync）
+                    // 剩余配额可用于联系人订阅（每个联系人 1 个 location 主题）
+                    Log.i(TAG, "[MQTT初始化] 系统主题订阅完成（6个），开始订阅联系人...")
+
+                    // 确保 MQTT 连接状态正确后再订阅联系人
+                    if (mqttManager.isConnected()) {
+                        // 订阅已有联系人的位置主题（恢复订阅）
+                        subscribeToExistingContacts(mqttService)
+                    } else {
+                        Log.w(TAG, "MQTT 连接状态异常，跳过联系人订阅")
+                    }
 
                     // 发送离线消息队列
                     val sentCount = mqttService.flushPendingMessages()
@@ -511,25 +538,31 @@ class MqttForegroundService : Service() {
             val contacts = contactRepository.observeMyContacts().first()
             var subscribedCount = 0
 
+            Log.i(TAG, "========== [恢复订阅] 开始订阅现有联系人 ==========")
+            Log.d(TAG, "[恢复订阅] 联系人总数: ${contacts.size}")
+
             contacts.forEach { contact ->
+                Log.i(TAG, "[恢复订阅] 检查: ${contact.name}, status=${contact.shareStatus}, direction=${contact.shareDirection}, paused=${contact.isPaused}, targetUserId=${contact.targetUserId}")
+
                 // 只订阅已接受共享且对方共享给我的联系人（包括双向共享）
-                if (contact.shareStatus == ShareStatus.ACCEPTED &&
-                    (contact.shareDirection == ShareDirection.THEY_SHARE_TO_ME ||
-                     contact.shareDirection == ShareDirection.MUTUAL) &&
-                    !contact.isPaused) {
-                    contact.targetUserId?.let { targetUserId ->
-                        mqttService.subscribeToUser(targetUserId)
-                        subscribedCount++
-                        Log.d(TAG, "订阅联系人位置: $targetUserId (${contact.name})")
-                    }
+                val statusOk = contact.shareStatus == ShareStatus.ACCEPTED
+                val directionOk = contact.shareDirection == ShareDirection.THEY_SHARE_TO_ME ||
+                     contact.shareDirection == ShareDirection.MUTUAL
+                val notPaused = !contact.isPaused
+                val hasTargetId = contact.targetUserId != null
+
+                if (statusOk && directionOk && notPaused && hasTargetId) {
+                    mqttService.subscribeToUser(contact.targetUserId!!)
+                    subscribedCount++
+                    Log.i(TAG, "[恢复订阅] ✓ 订阅: ${contact.targetUserId} (${contact.name})")
+                } else {
+                    Log.w(TAG, "[恢复订阅] ✗ 跳过: ${contact.name} (status=$statusOk, direction=$directionOk, notPaused=$notPaused, hasTargetId=$hasTargetId)")
                 }
             }
 
-            if (subscribedCount > 0) {
-                Log.d(TAG, "已订阅 $subscribedCount 个联系人的位置主题")
-            }
+            Log.i(TAG, "[恢复订阅] 完成，已订阅 $subscribedCount 个联系人")
         } catch (e: Exception) {
-            Log.e(TAG, "订阅联系人位置主题失败", e)
+            Log.e(TAG, "[恢复订阅] 订阅联系人位置主题失败", e)
         }
     }
 
@@ -547,7 +580,11 @@ class MqttForegroundService : Service() {
         serviceScope.launch {
             try {
                 mqttService.requestUpdates.collect { request ->
-                    Log.d(TAG, "收到请求: type=${request.type}, from=${request.requesterUid}")
+                    Log.i(TAG, "========== [MQTT请求] 收到请求 ==========")
+                    Log.i(TAG, "[MQTT请求] 请求类型: ${request.type}")
+                    Log.i(TAG, "[MQTT请求] 请求者UID: ${request.requesterUid}")
+                    Log.i(TAG, "[MQTT请求] 目标UID: ${request.targetUid}")
+                    Log.i(TAG, "[MQTT请求] 时间戳: ${request.timestamp}")
                     handleRequest(request)
                 }
             } catch (e: Exception) {
@@ -562,12 +599,22 @@ class MqttForegroundService : Service() {
      */
     private fun handleRequest(request: RequestMessage) {
         serviceScope.launch {
+            Log.i(TAG, "[MQTT请求] 开始处理请求...")
+
+            // 发送调试 ACK：告诉请求者"我收到了你的请求"
+            sendDebugAck(request.requesterUid, "REQUEST_RECEIVED", "收到请求: type=${request.type}")
+
             // 检查是否应该响应该请求
             val shouldRespond = contactRepository.shouldRespondToRequest(request.requesterUid)
             if (!shouldRespond) {
-                Log.d(TAG, "忽略来自 ${request.requesterUid} 的请求: 共享已暂停或无效")
+                Log.w(TAG, "[MQTT请求] ✗ 拒绝响应: 共享已暂停或无效 (from=${request.requesterUid})")
+                // 发送调试 ACK：告诉请求者"权限检查失败"
+                sendDebugAck(request.requesterUid, "PERMISSION_DENIED", "权限检查失败: 共享已暂停或联系人不存在")
                 return@launch
             }
+            Log.i(TAG, "[MQTT请求] ✓ 权限检查通过，开始执行请求")
+            // 发送调试 ACK：权限检查通过
+            sendDebugAck(request.requesterUid, "PERMISSION_OK", "权限检查通过，开始上报位置")
 
             when (request.type) {
                 RequestMessage.TYPE_SINGLE -> {
@@ -644,6 +691,34 @@ class MqttForegroundService : Service() {
             onSuccess = { Log.d(TAG, "位置上报成功") },
             onFailure = { Log.e(TAG, "位置上报失败", it) }
         )
+    }
+
+    /**
+     * 发送调试 ACK 消息（用于远程调试，让请求者知道目标设备的处理状态）
+     * 消息发送到 findmy/debug/{targetUid}
+     */
+    private fun sendDebugAck(targetUid: String, status: String, message: String) {
+        serviceScope.launch {
+            try {
+                val myUid = authRepository.getCurrentUserId() ?: return@launch
+                val mqttManager = DeviceRepository.getMqttManager(applicationContext)
+
+                val debugData = mapOf(
+                    "fromUid" to myUid,
+                    "status" to status,
+                    "message" to message,
+                    "timestamp" to System.currentTimeMillis()
+                )
+
+                val topic = "findmy/debug/$targetUid"
+                val payload = com.google.gson.Gson().toJson(debugData)
+
+                mqttManager.publish(topic, payload, qos = 0, retained = false)
+                Log.d(TAG, "[调试ACK] 已发送: $status -> $targetUid")
+            } catch (e: Exception) {
+                Log.w(TAG, "[调试ACK] 发送失败: ${e.message}")
+            }
+        }
     }
 
     /**

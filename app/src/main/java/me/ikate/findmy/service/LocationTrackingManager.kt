@@ -226,14 +226,21 @@ class LocationTrackingManager(
         type: String,
         additionalData: Map<String, Any>
     ) {
+        Log.i(TAG, "========== [FCM推送] 开始发送 ==========")
+        Log.i(TAG, "[FCM推送] 目标UID: $targetUid")
+        Log.i(TAG, "[FCM推送] 请求者UID: $currentUid")
+        Log.i(TAG, "[FCM推送] 请求类型: $type")
+
         if (!PushWebhookService.isConfigured()) {
-            Log.d(TAG, "推送 Webhook 未配置，跳过")
+            Log.w(TAG, "[FCM推送] ✗ Cloud Functions URL 未配置，跳过")
             return
         }
+        Log.i(TAG, "[FCM推送] ✓ Cloud Functions 已配置")
 
         try {
             val result = when (type) {
                 "single" -> {
+                    Log.i(TAG, "[FCM推送] 调用 sendLocationRequest...")
                     PushWebhookService.sendLocationRequest(targetUid, currentUid)
                 }
                 "play_sound" -> {
@@ -255,37 +262,42 @@ class LocationTrackingManager(
                     PushWebhookService.disableLostMode(targetUid, currentUid)
                 }
                 else -> {
-                    Log.d(TAG, "未知请求类型，跳过推送: $type")
+                    Log.d(TAG, "[FCM推送] 未知请求类型，跳过: $type")
                     Result.success(PushWebhookService.ApiResponse(success = true))
                 }
             }
 
             result.fold(
                 onSuccess = { response ->
-                    Log.d(TAG, "FCM 推送发送成功: $type (messageId=${response.messageId})")
+                    Log.i(TAG, "[FCM推送] ✓ 发送成功!")
+                    Log.i(TAG, "[FCM推送]   messageId: ${response.messageId}")
+                    Log.i(TAG, "[FCM推送]   success: ${response.success}")
                 },
                 onFailure = { error ->
                     when (error) {
                         is PushWebhookService.TokenNotRegisteredException -> {
-                            Log.w(TAG, "FCM 推送失败: 目标用户 $targetUid 未注册 Token")
+                            Log.e(TAG, "[FCM推送] ✗ 失败: 目标用户 $targetUid 未注册 FCM Token")
+                            Log.e(TAG, "[FCM推送]   对端设备可能从未打开过APP，或者Token注册失败")
                         }
                         is PushWebhookService.TokenInvalidException -> {
-                            Log.w(TAG, "FCM 推送失败: 目标用户 $targetUid 的 Token 已失效")
+                            Log.e(TAG, "[FCM推送] ✗ 失败: 目标用户 $targetUid 的 Token 已失效")
+                            Log.e(TAG, "[FCM推送]   对端设备需要重新打开APP以刷新Token")
                         }
                         is PushWebhookService.TokenExpiredException -> {
-                            Log.w(TAG, "FCM 推送失败: Token 已过期")
+                            Log.e(TAG, "[FCM推送] ✗ 失败: Token 已过期")
                         }
                         is PushWebhookService.RateLimitException -> {
-                            Log.w(TAG, "FCM 推送失败: 请求频率超限")
+                            Log.w(TAG, "[FCM推送] ✗ 失败: 请求频率超限")
                         }
                         else -> {
-                            Log.w(TAG, "FCM 推送失败: ${error.message}")
+                            Log.e(TAG, "[FCM推送] ✗ 失败: ${error.message}")
+                            Log.e(TAG, "[FCM推送]   错误类型: ${error.javaClass.simpleName}")
                         }
                     }
                 }
             )
         } catch (e: Exception) {
-            Log.w(TAG, "推送 Webhook 异常: ${e.message}")
+            Log.e(TAG, "[FCM推送] ✗ 异常: ${e.message}", e)
         }
     }
 

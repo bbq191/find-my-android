@@ -1,16 +1,9 @@
 package me.ikate.findmy.ui.screen.main.tabs
 
-import android.content.ComponentName
-import android.content.Context
-import android.content.Intent
-import android.content.pm.PackageManager
-import android.net.Uri
-import android.provider.Settings
 import me.ikate.findmy.ui.components.PermissionSecurityScreen
 import me.ikate.findmy.ui.components.getPermissionStatusSummary
 import me.ikate.findmy.util.PermissionStatusChecker
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -24,15 +17,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.AppShortcut
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Info
@@ -40,20 +29,16 @@ import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.Security
-import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Warning
 import me.ikate.findmy.ui.theme.FindMyShapes
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -67,9 +52,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -77,12 +60,12 @@ import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import coil3.request.crossfade
 import kotlinx.coroutines.launch
-import me.ikate.findmy.BuildConfig
-import me.ikate.findmy.R
 import me.ikate.findmy.data.model.User
+import me.ikate.findmy.ui.screen.main.tabs.components.AboutSheet
+import me.ikate.findmy.ui.screen.main.tabs.components.AppIconSheet
 import me.ikate.findmy.ui.screen.main.tabs.components.EditProfileSheet
+import me.ikate.findmy.ui.screen.main.tabs.components.LicensesScreen
 import me.ikate.findmy.ui.screen.main.tabs.components.MyQrCodeSheet
-import me.ikate.findmy.util.ProfileHelper
 
 /**
  * 我的 Tab
@@ -103,9 +86,9 @@ fun MeTab(
     val context = LocalContext.current
     var showEditProfileSheet by remember { mutableStateOf(false) }
     var showQrCodeSheet by remember { mutableStateOf(false) }
-    var showAppIconDialog by remember { mutableStateOf(false) }
-
-    var showAboutDialog by remember { mutableStateOf(false) }
+    var showAppIconSheet by remember { mutableStateOf(false) }
+    var showAboutSheet by remember { mutableStateOf(false) }
+    var showLicensesScreen by remember { mutableStateOf(false) }
     var showPermissionSecurityScreen by remember { mutableStateOf(false) }
 
     // 权限状态
@@ -140,18 +123,26 @@ fun MeTab(
         )
     }
 
-    // 应用图标选择对话框
-    if (showAppIconDialog) {
-        AppIconDialog(
-            onDismiss = { showAppIconDialog = false }
+    // 应用图标选择 BottomSheet
+    if (showAppIconSheet) {
+        AppIconSheet(
+            onDismiss = { showAppIconSheet = false }
         )
     }
 
-    // 关于对话框
-    if (showAboutDialog) {
-        AboutDialog(
-            onDismiss = { showAboutDialog = false }
+    // 关于 BottomSheet
+    if (showAboutSheet) {
+        AboutSheet(
+            onDismiss = { showAboutSheet = false }
         )
+    }
+
+    // 开源协议全屏页面
+    if (showLicensesScreen) {
+        LicensesScreen(
+            onBack = { showLicensesScreen = false }
+        )
+        return
     }
 
     // 权限与安全页面
@@ -195,9 +186,10 @@ fun MeTab(
             // 设置选项
             item {
                 SettingsSection(
-                    onAppIconClick = { showAppIconDialog = true },
+                    onAppIconClick = { showAppIconSheet = true },
                     onPermissionSecurityClick = { showPermissionSecurityScreen = true },
-                    onAboutClick = { showAboutDialog = true },
+                    onAboutClick = { showAboutSheet = true },
+                    onLicensesClick = { showLicensesScreen = true },
                     permissionStatusSummary = getPermissionStatusSummary(permissionStatus)
                 )
             }
@@ -442,15 +434,9 @@ private fun SettingsSection(
     onAppIconClick: () -> Unit,
     onPermissionSecurityClick: () -> Unit,
     onAboutClick: () -> Unit,
+    onLicensesClick: () -> Unit,
     permissionStatusSummary: String
 ) {
-    var showLicensesDialog by remember { mutableStateOf(false) }
-
-    // 开源协议对话框
-    if (showLicensesDialog) {
-        LicensesDialog(onDismiss = { showLicensesDialog = false })
-    }
-
     // 判断权限是否完整
     val hasPermissionWarning = permissionStatusSummary.contains("未") ||
                                 permissionStatusSummary.contains("关闭") ||
@@ -498,7 +484,7 @@ private fun SettingsSection(
                     icon = Icons.Default.Description,
                     title = "开源协议",
                     subtitle = "查看第三方开源库许可",
-                    onClick = { showLicensesDialog = true }
+                    onClick = onLicensesClick
                 )
             }
         }
@@ -611,497 +597,3 @@ private fun SettingsItem(
         )
     }
 }
-
-/**
- * 应用图标选择对话框
- */
-@Composable
-private fun AppIconDialog(
-    onDismiss: () -> Unit
-) {
-    val context = LocalContext.current
-    val packageManager = context.packageManager
-
-    // 图标选项
-    data class IconOption(
-        val name: String,
-        val componentName: String,
-        val iconRes: Int
-    )
-
-    val iconOptions = listOf(
-        IconOption("男孩", ".MainActivityBoy", R.mipmap.ic_launcher_boy),
-        IconOption("女孩", ".MainActivityGirl", R.mipmap.ic_launcher_girl)
-    )
-
-    // 获取当前启用的图标
-    var currentIcon by remember {
-        mutableStateOf(
-            iconOptions.firstOrNull { option ->
-                try {
-                    val componentName = ComponentName(context.packageName, context.packageName + option.componentName)
-                    packageManager.getComponentEnabledSetting(componentName) == PackageManager.COMPONENT_ENABLED_STATE_ENABLED
-                } catch (_: Exception) {
-                    false
-                }
-            }?.componentName ?: ".MainActivityBoy"
-        )
-    }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Text(
-                text = "选择应用图标",
-                fontWeight = FontWeight.SemiBold
-            )
-        },
-        text = {
-            Column(
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Text(
-                    text = "选择你喜欢的图标样式",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly
-                ) {
-                    iconOptions.forEach { option ->
-                        val isSelected = currentIcon == option.componentName
-
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(12.dp))
-                                .clickable {
-                                    // 切换图标
-                                    iconOptions.forEach { opt ->
-                                        val componentName = ComponentName(
-                                            context.packageName,
-                                            context.packageName + opt.componentName
-                                        )
-                                        val newState = if (opt.componentName == option.componentName) {
-                                            PackageManager.COMPONENT_ENABLED_STATE_ENABLED
-                                        } else {
-                                            PackageManager.COMPONENT_ENABLED_STATE_DISABLED
-                                        }
-                                        packageManager.setComponentEnabledSetting(
-                                            componentName,
-                                            newState,
-                                            PackageManager.DONT_KILL_APP
-                                        )
-                                    }
-                                    currentIcon = option.componentName
-                                }
-                                .padding(12.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(64.dp)
-                                    .clip(RoundedCornerShape(16.dp))
-                                    .border(
-                                        width = if (isSelected) 3.dp else 1.dp,
-                                        color = if (isSelected) {
-                                            MaterialTheme.colorScheme.primary
-                                        } else {
-                                            MaterialTheme.colorScheme.outlineVariant
-                                        },
-                                        shape = RoundedCornerShape(16.dp)
-                                    ),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                AsyncImage(
-                                    model = option.iconRes,
-                                    contentDescription = option.name,
-                                    modifier = Modifier
-                                        .size(56.dp)
-                                        .clip(RoundedCornerShape(12.dp))
-                                )
-                                if (isSelected) {
-                                    Box(
-                                        modifier = Modifier
-                                            .align(Alignment.BottomEnd)
-                                            .size(20.dp)
-                                            .clip(CircleShape)
-                                            .background(MaterialTheme.colorScheme.primary),
-                                        contentAlignment = Alignment.Center
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Check,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(14.dp),
-                                            tint = MaterialTheme.colorScheme.onPrimary
-                                        )
-                                    }
-                                }
-                            }
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                text = option.name,
-                                style = MaterialTheme.typography.labelMedium,
-                                color = if (isSelected) {
-                                    MaterialTheme.colorScheme.primary
-                                } else {
-                                    MaterialTheme.colorScheme.onSurface
-                                }
-                            )
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Text(
-                    text = "切换图标后，桌面图标可能需要几秒钟才能更新",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text(
-                    text = "完成",
-                    fontWeight = FontWeight.SemiBold
-                )
-            }
-        },
-        shape = RoundedCornerShape(16.dp)
-    )
-}
-
-/**
- * 获取当前启用的应用图标资源
- */
-private fun getCurrentAppIconRes(context: Context): Int {
-    val packageManager = context.packageManager
-    val packageName = context.packageName
-
-    // 检查女孩图标是否启用
-    return try {
-        val girlComponent = ComponentName(packageName, "$packageName.MainActivityGirl")
-        if (packageManager.getComponentEnabledSetting(girlComponent) == PackageManager.COMPONENT_ENABLED_STATE_ENABLED) {
-            R.mipmap.ic_launcher_girl
-        } else {
-            R.mipmap.ic_launcher_boy
-        }
-    } catch (_: Exception) {
-        R.mipmap.ic_launcher_boy // 默认男孩图标
-    }
-}
-
-/**
- * 关于对话框
- */
-@Composable
-private fun AboutDialog(
-    onDismiss: () -> Unit
-) {
-    val context = LocalContext.current
-    val currentIconRes = remember { getCurrentAppIconRes(context) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Text(
-                text = "关于",
-                fontWeight = FontWeight.SemiBold
-            )
-        },
-        text = {
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                // 应用图标（跟随当前设置）
-                AsyncImage(
-                    model = currentIconRes,
-                    contentDescription = "应用图标",
-                    modifier = Modifier
-                        .size(72.dp)
-                        .clip(RoundedCornerShape(16.dp))
-                )
-
-                // 应用名称
-                Text(
-                    text = context.getString(R.string.app_name),
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold
-                )
-
-                // 版本信息
-                Text(
-                    text = "版本 ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // 描述
-                Text(
-                    text = "一款位置共享与设备查找应用，帮助您与家人朋友保持联系",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // 功能列表
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    listOf(
-                        "实时位置共享" to "与家人朋友共享位置",
-                        "设备查找" to "远程响铃、丢失模式",
-                        "地理围栏" to "到达/离开指定区域提醒",
-                        "智能定位" to "根据活动状态智能上报"
-                    ).forEach { (title, desc) ->
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Check,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp),
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                            Column {
-                                Text(
-                                    text = title,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    fontWeight = FontWeight.Medium,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                                Text(
-                                    text = desc,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text(
-                    text = "确定",
-                    fontWeight = FontWeight.SemiBold
-                )
-            }
-        },
-        shape = RoundedCornerShape(16.dp)
-    )
-}
-
-/**
- * 开源协议对话框
- */
-@Composable
-private fun LicensesDialog(
-    onDismiss: () -> Unit
-) {
-    // 开源库列表
-    data class License(
-        val name: String,
-        val author: String,
-        val license: String
-    )
-
-    val licenses = listOf(
-        License(
-            name = "Jetpack Compose",
-            author = "Google",
-            license = "Apache License 2.0"
-        ),
-        License(
-            name = "Material Design 3",
-            author = "Google",
-            license = "Apache License 2.0"
-        ),
-        License(
-            name = "腾讯地图 SDK",
-            author = "腾讯",
-            license = "腾讯位置服务协议"
-        ),
-        License(
-            name = "腾讯定位 SDK",
-            author = "腾讯",
-            license = "腾讯位置服务协议"
-        ),
-        License(
-            name = "Eclipse Paho MQTT",
-            author = "Eclipse Foundation",
-            license = "Eclipse Public License 2.0"
-        ),
-        License(
-            name = "Room Database",
-            author = "Google",
-            license = "Apache License 2.0"
-        ),
-        License(
-            name = "Firebase Cloud Messaging",
-            author = "Google",
-            license = "Firebase Terms of Service"
-        ),
-        License(
-            name = "Firebase Firestore",
-            author = "Google",
-            license = "Firebase Terms of Service"
-        ),
-        License(
-            name = "Coil",
-            author = "Coil Contributors",
-            license = "Apache License 2.0"
-        ),
-        License(
-            name = "Accompanist Permissions",
-            author = "Google",
-            license = "Apache License 2.0"
-        ),
-        License(
-            name = "Koin",
-            author = "Insert Koin",
-            license = "Apache License 2.0"
-        ),
-        License(
-            name = "Kotlin Coroutines",
-            author = "JetBrains",
-            license = "Apache License 2.0"
-        ),
-        License(
-            name = "AndroidX Libraries",
-            author = "Google",
-            license = "Apache License 2.0"
-        ),
-        License(
-            name = "WorkManager",
-            author = "Google",
-            license = "Apache License 2.0"
-        ),
-        License(
-            name = "Biometric",
-            author = "Google",
-            license = "Apache License 2.0"
-        ),
-        License(
-            name = "Security Crypto",
-            author = "Google",
-            license = "Apache License 2.0"
-        ),
-        License(
-            name = "Google Play Services Location",
-            author = "Google",
-            license = "Google Play Services Terms"
-        ),
-        License(
-            name = "Gson",
-            author = "Google",
-            license = "Apache License 2.0"
-        )
-    )
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Text(
-                text = "开源协议",
-                fontWeight = FontWeight.SemiBold
-            )
-        },
-        text = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(400.dp)
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Text(
-                    text = "本应用使用了以下开源库，感谢开源社区的贡献：",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                Spacer(modifier = Modifier.height(4.dp))
-
-                licenses.forEach { license ->
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
-                        ),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Code,
-                                contentDescription = null,
-                                modifier = Modifier.size(20.dp),
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                            Spacer(modifier = Modifier.width(12.dp))
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = license.name,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.Medium
-                                )
-                                Text(
-                                    text = "${license.author} · ${license.license}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // Apache License 2.0 说明
-                Text(
-                    text = "Apache License 2.0",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(
-                    text = "Licensed under the Apache License, Version 2.0. " +
-                            "You may obtain a copy of the License at:\n" +
-                            "http://www.apache.org/licenses/LICENSE-2.0",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) {
-                Text(
-                    text = "确定",
-                    fontWeight = FontWeight.SemiBold
-                )
-            }
-        },
-        shape = RoundedCornerShape(16.dp)
-    )
-}
-

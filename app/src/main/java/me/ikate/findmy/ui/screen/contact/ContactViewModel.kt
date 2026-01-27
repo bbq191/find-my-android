@@ -367,9 +367,6 @@ class ContactViewModel(
             Log.i(TAG, "[联系人监听] 开始监听联系人列表变化...")
             contactRepository.observeMyContacts().collect { contactList ->
                 Log.i(TAG, "[联系人监听] 收到联系人列表更新，数量: ${contactList.size}")
-                contactList.forEach { contact ->
-                    Log.d(TAG, "[联系人监听] - ${contact.name}: 状态=${contact.shareStatus}, 位置=${contact.location != null}, 更新时间=${contact.lastUpdateTime}")
-                }
                 detectAndNotifyNewInvitations(contactList)
                 // 订阅已接受共享的联系人的位置主题（应用启动时恢复订阅）
                 subscribeToAcceptedContacts(contactList)
