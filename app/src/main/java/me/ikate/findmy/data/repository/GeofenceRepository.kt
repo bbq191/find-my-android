@@ -8,6 +8,7 @@ import com.tencent.tencentmap.mapsdk.maps.model.LatLng
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -19,6 +20,7 @@ import me.ikate.findmy.data.model.Geofence
 import me.ikate.findmy.data.model.GeofenceEvent
 import me.ikate.findmy.data.model.GeofenceEventType
 import me.ikate.findmy.data.model.GeofenceTriggerType
+import me.ikate.findmy.data.model.GeofenceType
 import me.ikate.findmy.data.model.latLngOf
 import java.util.UUID
 
@@ -57,7 +59,7 @@ class GeofenceRepository(private val context: Context) {
     // ==================== 围栏配置操作 ====================
 
     /**
-     * 创建电子围栏
+     * 创建电子围栏 (iOS Find My 风格)
      *
      * @param contactId 被监控的联系人ID
      * @param contactName 联系人名称
@@ -65,7 +67,11 @@ class GeofenceRepository(private val context: Context) {
      * @param center 围栏中心点 (GCJ-02)
      * @param radiusMeters 半径（米），建议最小200米
      * @param triggerType 触发类型
-     * @param isOneTime 是否一次性触发
+     * @param isOneTime 是否一次性触发（iOS 默认 true）
+     * @param geofenceType 围栏类型（FIXED_LOCATION / LEFT_BEHIND）
+     * @param address 位置地址（逆地理编码）
+     * @param wasInsideOnCreate 创建时联系人是否在围栏内
+     * @param ownerLocation 我的位置（仅 LEFT_BEHIND 使用）
      * @return 创建的围栏
      */
     suspend fun createGeofence(
@@ -75,7 +81,11 @@ class GeofenceRepository(private val context: Context) {
         center: LatLng,
         radiusMeters: Float,
         triggerType: GeofenceTriggerType = GeofenceTriggerType.ENTER,
-        isOneTime: Boolean = false
+        isOneTime: Boolean = true,
+        geofenceType: GeofenceType = GeofenceType.FIXED_LOCATION,
+        address: String = "",
+        wasInsideOnCreate: Boolean = false,
+        ownerLocation: LatLng? = null
     ): Result<Geofence> {
         return try {
             // 生成唯一ID
@@ -87,10 +97,15 @@ class GeofenceRepository(private val context: Context) {
                 contactName = contactName,
                 locationName = locationName,
                 center = center,
-                radiusMeters = radiusMeters.coerceAtLeast(200f), // 最小200米
+                radiusMeters = radiusMeters.coerceAtLeast(100f), // LEFT_BEHIND 最小100米
                 triggerType = triggerType,
                 isActive = true,
-                isOneTime = isOneTime
+                isOneTime = isOneTime,
+                geofenceType = geofenceType,
+                address = address,
+                wasInsideOnCreate = wasInsideOnCreate,
+                ownerLatitude = ownerLocation?.latitude,
+                ownerLongitude = ownerLocation?.longitude
             )
 
             // 先删除该联系人的旧围栏（每个联系人只能有一个围栏）
@@ -102,7 +117,8 @@ class GeofenceRepository(private val context: Context) {
             // 同步到云端
             syncGeofenceToCloud(geofence)
 
-            Log.d(TAG, "围栏创建成功: $geofenceId, 联系人: $contactName, 位置: $locationName")
+            Log.d(TAG, "围栏创建成功: $geofenceId, 联系人: $contactName, 类型: $geofenceType, " +
+                    "位置: $locationName, 一次性: $isOneTime")
             Result.success(geofence)
         } catch (e: Exception) {
             Log.e(TAG, "创建围栏失败", e)
@@ -308,7 +324,7 @@ class GeofenceRepository(private val context: Context) {
     // ==================== 云端同步 ====================
 
     /**
-     * 同步围栏到云端 (Firestore)
+     * 同步围栏到云端 (Firestore) - iOS Find My 风格
      */
     private suspend fun syncGeofenceToCloud(geofence: Geofence) {
         try {
@@ -331,8 +347,16 @@ class GeofenceRepository(private val context: Context) {
                 "isActive" to geofence.isActive,
                 "isOneTime" to geofence.isOneTime,
                 "createdAt" to geofence.createdAt,
-                "updatedAt" to geofence.updatedAt
+                "updatedAt" to geofence.updatedAt,
+                // iOS Find My 新增字段
+                "geofenceType" to geofence.geofenceType.name,
+                "address" to geofence.address,
+                "wasInsideOnCreate" to geofence.wasInsideOnCreate
             )
+
+            // 可选字段：我的位置（仅 LEFT_BEHIND 使用）
+            geofence.ownerLatitude?.let { data["ownerLatitude"] = it }
+            geofence.ownerLongitude?.let { data["ownerLongitude"] = it }
 
             docRef.set(data).await()
             Log.d(TAG, "围栏已同步到云端: ${geofence.id}")
@@ -361,7 +385,7 @@ class GeofenceRepository(private val context: Context) {
     }
 
     /**
-     * 从云端拉取围栏配置并同步到本地
+     * 从云端拉取围栏配置并同步到本地 (iOS Find My 风格)
      */
     suspend fun syncFromCloud(): Result<Int> {
         return try {
@@ -374,26 +398,7 @@ class GeofenceRepository(private val context: Context) {
                 .await()
 
             val geofences = snapshot.documents.mapNotNull { doc ->
-                try {
-                    val data = doc.data ?: return@mapNotNull null
-                    GeofenceEntity(
-                        id = data["id"] as? String ?: doc.id,
-                        contactId = data["contactId"] as? String ?: "",
-                        contactName = data["contactName"] as? String ?: "",
-                        locationName = data["locationName"] as? String ?: "",
-                        latitude = (data["latitude"] as? Number)?.toDouble() ?: 0.0,
-                        longitude = (data["longitude"] as? Number)?.toDouble() ?: 0.0,
-                        radiusMeters = (data["radiusMeters"] as? Number)?.toFloat() ?: 200f,
-                        triggerType = data["triggerType"] as? String ?: GeofenceTriggerType.ENTER.name,
-                        isActive = data["isActive"] as? Boolean ?: true,
-                        isOneTime = data["isOneTime"] as? Boolean ?: false,
-                        createdAt = (data["createdAt"] as? Number)?.toLong() ?: System.currentTimeMillis(),
-                        updatedAt = (data["updatedAt"] as? Number)?.toLong() ?: System.currentTimeMillis()
-                    )
-                } catch (e: Exception) {
-                    Log.e(TAG, "解析围栏文档失败: ${doc.id}", e)
-                    null
-                }
+                parseGeofenceFromFirestore(doc.id, doc.data)
             }
 
             geofenceDao.upsertAll(geofences)
@@ -406,7 +411,7 @@ class GeofenceRepository(private val context: Context) {
     }
 
     /**
-     * 开始监听云端围栏变化
+     * 开始监听云端围栏变化 (iOS Find My 风格)
      */
     fun startListeningCloudChanges() {
         val currentUid = getCurrentUid()
@@ -425,21 +430,10 @@ class GeofenceRepository(private val context: Context) {
                 snapshot?.documentChanges?.forEach { change ->
                     scope.launch {
                         try {
-                            val data = change.document.data
-                            val geofence = GeofenceEntity(
-                                id = data["id"] as? String ?: change.document.id,
-                                contactId = data["contactId"] as? String ?: "",
-                                contactName = data["contactName"] as? String ?: "",
-                                locationName = data["locationName"] as? String ?: "",
-                                latitude = (data["latitude"] as? Number)?.toDouble() ?: 0.0,
-                                longitude = (data["longitude"] as? Number)?.toDouble() ?: 0.0,
-                                radiusMeters = (data["radiusMeters"] as? Number)?.toFloat() ?: 200f,
-                                triggerType = data["triggerType"] as? String ?: GeofenceTriggerType.ENTER.name,
-                                isActive = data["isActive"] as? Boolean ?: true,
-                                isOneTime = data["isOneTime"] as? Boolean ?: false,
-                                createdAt = (data["createdAt"] as? Number)?.toLong() ?: System.currentTimeMillis(),
-                                updatedAt = (data["updatedAt"] as? Number)?.toLong() ?: System.currentTimeMillis()
-                            )
+                            val geofence = parseGeofenceFromFirestore(
+                                change.document.id,
+                                change.document.data
+                            ) ?: return@launch
 
                             when (change.type) {
                                 com.google.firebase.firestore.DocumentChange.Type.ADDED,
@@ -469,9 +463,48 @@ class GeofenceRepository(private val context: Context) {
     }
 
     /**
+     * 从 Firestore 文档数据解析 GeofenceEntity (iOS Find My 风格)
+     * 统一处理字段映射和默认值
+     *
+     * @param docId 文档 ID
+     * @param data 文档数据
+     * @return GeofenceEntity 或 null（解析失败时）
+     */
+    private fun parseGeofenceFromFirestore(docId: String, data: Map<String, Any>?): GeofenceEntity? {
+        if (data == null) return null
+        return try {
+            GeofenceEntity(
+                id = data["id"] as? String ?: docId,
+                contactId = data["contactId"] as? String ?: "",
+                contactName = data["contactName"] as? String ?: "",
+                locationName = data["locationName"] as? String ?: "",
+                latitude = (data["latitude"] as? Number)?.toDouble() ?: 0.0,
+                longitude = (data["longitude"] as? Number)?.toDouble() ?: 0.0,
+                radiusMeters = (data["radiusMeters"] as? Number)?.toFloat() ?: 200f,
+                triggerType = data["triggerType"] as? String ?: GeofenceTriggerType.ENTER.name,
+                isActive = data["isActive"] as? Boolean ?: true,
+                isOneTime = data["isOneTime"] as? Boolean ?: true,
+                createdAt = (data["createdAt"] as? Number)?.toLong() ?: System.currentTimeMillis(),
+                updatedAt = (data["updatedAt"] as? Number)?.toLong() ?: System.currentTimeMillis(),
+                // iOS Find My 新增字段（兼容旧数据）
+                geofenceType = data["geofenceType"] as? String ?: GeofenceType.FIXED_LOCATION.name,
+                address = data["address"] as? String ?: "",
+                wasInsideOnCreate = data["wasInsideOnCreate"] as? Boolean ?: false,
+                ownerLatitude = (data["ownerLatitude"] as? Number)?.toDouble(),
+                ownerLongitude = (data["ownerLongitude"] as? Number)?.toDouble()
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "解析围栏文档失败: $docId", e)
+            null
+        }
+    }
+
+    /**
      * 清理资源
+     * 注意：必须取消 CoroutineScope，防止内存泄漏
      */
     fun destroy() {
         stopListeningCloudChanges()
+        scope.cancel()
     }
 }

@@ -104,7 +104,19 @@ class DeviceRepository(private val context: Context? = null) {
 
             // 2. 发布到 MQTT（如果已配置）
             if (MqttConfig.isConfigured()) {
+                val manager = getMqttManager(ctx)
                 val service = getMqttService(ctx)
+
+                // 确保 MQTT 已连接
+                if (!manager.isConnected()) {
+                    Log.d(TAG, "MQTT 未连接，尝试连接...")
+                    val connectResult = manager.connect()
+                    if (connectResult.isFailure) {
+                        Log.w(TAG, "MQTT 连接失败: ${connectResult.exceptionOrNull()?.message}")
+                        // 连接失败时，publishLocation 会自动将消息加入离线队列
+                    }
+                }
+
                 val result = service.publishLocation(device)
                 if (result.isSuccess) {
                     Log.d(TAG, "设备位置已发布到 MQTT: ${device.id}")

@@ -394,6 +394,16 @@ class SmartLocationSyncManager(
                 return
             }
 
+            // 确保 MQTT 已连接
+            if (!mqttManager.isConnected()) {
+                Log.d(TAG, "MQTT 未连接，尝试连接...")
+                val connectResult = mqttManager.connect()
+                if (connectResult.isFailure) {
+                    Log.w(TAG, "MQTT 连接失败: ${connectResult.exceptionOrNull()?.message}")
+                    return
+                }
+            }
+
             val requestData = mapOf(
                 "requesterUid" to currentUid,
                 "targetUid" to targetUid,

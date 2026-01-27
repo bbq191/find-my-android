@@ -2,6 +2,7 @@ package me.ikate.findmy.service
 
 import android.content.Context
 import android.util.Log
+import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.NetworkType
@@ -175,16 +176,32 @@ class GeofenceServiceController private constructor(private val context: Context
     /**
      * 启动 WorkManager 心跳任务
      * 作为低功耗模式的备用方案
+     *
+     * Samsung S24 Ultra / One UI 8.0+ 优化：
+     * - 使用灵活时间窗口（5分钟），允许系统批量执行以节省电量
+     * - 使用指数退避策略，失败后自动重试
+     * - 配合电池优化白名单使用效果更佳
      */
     private fun startHeartbeatWork() {
         val constraints = Constraints.Builder()
             .setRequiredNetworkType(NetworkType.CONNECTED)
             .build()
 
+        // 使用灵活时间窗口：允许系统在 [interval, interval + flexInterval] 范围内执行
+        // 这让系统可以批量处理多个任务，节省电量
+        val flexIntervalMinutes = 5L
+
         val heartbeatRequest = PeriodicWorkRequestBuilder<GeofenceHeartbeatWorker>(
-            HEARTBEAT_INTERVAL_MINUTES, TimeUnit.MINUTES
+            HEARTBEAT_INTERVAL_MINUTES, TimeUnit.MINUTES,
+            flexIntervalMinutes, TimeUnit.MINUTES  // 灵活时间窗口
         )
             .setConstraints(constraints)
+            // 指数退避策略：失败后 30秒 → 60秒 → 120秒 ... 重试
+            .setBackoffCriteria(
+                BackoffPolicy.EXPONENTIAL,
+                30L,
+                TimeUnit.SECONDS
+            )
             .build()
 
         WorkManager.getInstance(context).enqueueUniquePeriodicWork(
@@ -192,7 +209,7 @@ class GeofenceServiceController private constructor(private val context: Context
             ExistingPeriodicWorkPolicy.KEEP,
             heartbeatRequest
         )
-        Log.d(TAG, "心跳任务已启动，间隔: ${HEARTBEAT_INTERVAL_MINUTES}分钟")
+        Log.d(TAG, "心跳任务已启动，间隔: ${HEARTBEAT_INTERVAL_MINUTES}分钟，灵活窗口: ${flexIntervalMinutes}分钟")
     }
 
     /**

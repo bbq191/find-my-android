@@ -217,30 +217,3 @@ fun StaticAvatar(
         }
     }
 }
-
-// 保留旧的 LongPressAvatar 名称作为别名，便于向后兼容
-@Deprecated(
-    message = "Use ClickableAvatar instead. LongPressAvatar has been simplified to single-click.",
-    replaceWith = ReplaceWith("ClickableAvatar(avatarUrl, fallbackText, isOnline, isEnabled, onLongPressComplete, modifier, size)")
-)
-@Composable
-fun LongPressAvatar(
-    avatarUrl: String?,
-    fallbackText: String,
-    isOnline: Boolean,
-    isEnabled: Boolean,
-    onLongPressComplete: () -> Unit,
-    modifier: Modifier = Modifier,
-    size: Dp = 56.dp,
-    @Suppress("UNUSED_PARAMETER") progressDurationMs: Long = 400L
-) {
-    ClickableAvatar(
-        avatarUrl = avatarUrl,
-        fallbackText = fallbackText,
-        isOnline = isOnline,
-        isEnabled = isEnabled,
-        onClick = onLongPressComplete,
-        modifier = modifier,
-        size = size
-    )
-}

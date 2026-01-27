@@ -4,7 +4,9 @@ import android.content.Context
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -23,6 +25,7 @@ import me.ikate.findmy.data.remote.mqtt.message.GeofenceSyncAction
 import me.ikate.findmy.data.remote.mqtt.message.GeofenceSyncMessage
 import me.ikate.findmy.data.remote.mqtt.message.LocationMessage
 import me.ikate.findmy.service.GeofenceEventHandler
+import me.ikate.findmy.service.GeofenceForegroundService
 import me.ikate.findmy.service.GeofenceManager
 import me.ikate.findmy.data.remote.mqtt.message.PresenceMessage
 import me.ikate.findmy.data.remote.mqtt.message.RequestMessage
@@ -49,8 +52,11 @@ class LocationMqttService(
     private val pendingMessageDao = database.pendingMessageDao()
 
     // 围栏管理器（用于检测联系人位置是否触发围栏）
-    private val geofenceManager by lazy { GeofenceManager(context) }
+    private val geofenceManager by lazy { GeofenceManager.getInstance(context) }
     private val geofenceEventHandler by lazy { GeofenceEventHandler.getInstance(context) }
+
+    // 消息监听 Job，用于在 destroy 时取消
+    private var messageObserverJob: Job? = null
 
     // 位置更新流（高频，缓冲区较大）
     // 使用 DROP_OLDEST 策略：当缓冲区满时丢弃最旧的消息，保证新消息不阻塞
@@ -129,7 +135,7 @@ class LocationMqttService(
      * 监听 MQTT 消息
      */
     private fun observeMqttMessages() {
-        scope.launch {
+        messageObserverJob = scope.launch {
             mqttManager.messageFlow.collect { message ->
                 handleMessage(message)
             }
@@ -347,7 +353,7 @@ class LocationMqttService(
     }
 
     /**
-     * 检查联系人位置是否触发围栏
+     * 检查联系人位置是否触发围栏 (iOS Find My 风格)
      * 当收到联系人位置更新时调用
      */
     private fun checkGeofenceTrigger(contactUserId: String, latitude: Double, longitude: Double) {
@@ -362,8 +368,10 @@ class LocationMqttService(
 
             if (geofenceData != null) {
                 val contactLocation = com.tencent.tencentmap.mapsdk.maps.model.LatLng(latitude, longitude)
-                geofenceManager.checkGeofenceForContact(contactUserId, contactLocation)
-                Log.d(TAG, "[围栏检测] 已检查联系人 $contactUserId 的围栏状态")
+                // 获取我的当前位置（用于 LEFT_BEHIND 类型）
+                val ownerLocation = GeofenceForegroundService.getOwnerLocation()
+                geofenceManager.checkGeofenceForContact(contactUserId, contactLocation, ownerLocation)
+                Log.d(TAG, "[围栏检测] 已检查联系人 $contactUserId 的围栏状态, 我的位置: $ownerLocation")
             }
         } catch (e: Exception) {
             Log.e(TAG, "[围栏检测] 检查围栏触发失败", e)
@@ -977,5 +985,17 @@ class LocationMqttService(
         }
 
         return result
+    }
+
+    /**
+     * 销毁服务，释放资源
+     * 取消协程作用域和消息监听
+     */
+    fun destroy() {
+        Log.d(TAG, "销毁 LocationMqttService")
+        messageObserverJob?.cancel()
+        messageObserverJob = null
+        scope.cancel()
+        subscribedUsers.clear()
     }
 }

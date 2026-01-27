@@ -35,6 +35,27 @@ import me.ikate.findmy.util.TencentMapCameraHelper
 import me.ikate.findmy.worker.LocationReportWorker
 import me.ikate.findmy.worker.SmartLocationWorker
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
+
+/**
+ * 主屏幕 UI 聚合状态
+ * 将多个独立的 StateFlow 合并为一个，减少 Compose 重组次数
+ *
+ * 性能优化：
+ * - 原来有 13+ 个独立的 collectAsState()，每个状态变化都可能触发重组
+ * - 现在合并为一个 MainUiState，只有相关状态变化时才重组
+ */
+data class MainUiState(
+    val tencentMap: TencentMap? = null,
+    val isLocationCentered: Boolean = false,
+    val devices: List<Device> = emptyList(),
+    val trackingTargetId: String? = null,
+    val currentDeviceRealtimeLocation: com.tencent.tencentmap.mapsdk.maps.model.LatLng? = null,
+    val currentDeviceBearing: Float = 0f,
+    val mqttConnectionState: MqttConnectionManager.ConnectionState = MqttConnectionManager.ConnectionState.Disconnected
+)
 
 /**
  * MainViewModel - 主屏幕状态管理
@@ -111,6 +132,35 @@ class MainViewModel(
         MqttConnectionManager.ConnectionState.Disconnected
     )
     val mqttConnectionState: StateFlow<MqttConnectionManager.ConnectionState> = _mqttConnectionState.asStateFlow()
+
+    /**
+     * 聚合 UI 状态
+     * 将多个 StateFlow 合并为一个，供 MainScreen 使用
+     * 减少 collectAsState() 调用次数，提升性能
+     */
+    val uiState: StateFlow<MainUiState> = combine(
+        _tencentMap,
+        _isLocationCentered,
+        _devices,
+        _trackingTargetId,
+        _currentDeviceRealtimeLocation,
+        _currentDeviceBearing,
+        _mqttConnectionState
+    ) { flows ->
+        MainUiState(
+            tencentMap = flows[0] as? TencentMap,
+            isLocationCentered = flows[1] as Boolean,
+            devices = @Suppress("UNCHECKED_CAST") (flows[2] as List<Device>),
+            trackingTargetId = flows[3] as? String,
+            currentDeviceRealtimeLocation = flows[4] as? com.tencent.tencentmap.mapsdk.maps.model.LatLng,
+            currentDeviceBearing = flows[5] as Float,
+            mqttConnectionState = flows[6] as MqttConnectionManager.ConnectionState
+        )
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = MainUiState()
+    )
 
     init {
         // 确保用户已登录（自动匿名登录）

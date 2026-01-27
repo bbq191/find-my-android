@@ -57,7 +57,16 @@ class GeofenceForegroundService : Service(), TencentLocationListener {
         @Volatile
         private var instance: GeofenceForegroundService? = null
 
+        // 我的当前位置（用于 LEFT_BEHIND 类型围栏检测）
+        @Volatile
+        private var currentOwnerLocation: LatLng? = null
+
         fun isRunning(): Boolean = instance != null
+
+        /**
+         * 获取我的当前位置（用于 LEFT_BEHIND 围栏检测）
+         */
+        fun getOwnerLocation(): LatLng? = currentOwnerLocation
 
         /**
          * 启动围栏监控服务
@@ -117,7 +126,7 @@ class GeofenceForegroundService : Service(), TencentLocationListener {
         Log.d(TAG, "围栏监控服务创建")
 
         // 初始化
-        geofenceManager = GeofenceManager(applicationContext)
+        geofenceManager = GeofenceManager.getInstance(applicationContext)
         database = FindMyDatabase.getInstance(applicationContext)
 
         // 创建低优先级通知渠道
@@ -287,22 +296,10 @@ class GeofenceForegroundService : Service(), TencentLocationListener {
                     updateNotification()
                 }
 
-                // 同步围栏数据到 GeofenceManager
-                syncGeofencesToManager(geofences)
-
                 // 如果没有激活的围栏，可以考虑停止服务
                 // 但这里我们保持服务运行，由外部控制器决定
             }
         }
-    }
-
-    /**
-     * 同步围栏数据到 GeofenceManager
-     */
-    private fun syncGeofencesToManager(entities: List<GeofenceEntity>) {
-        // GeofenceManager 使用自己的存储，这里只是确保数据同步
-        // 实际检测逻辑由 GeofenceManager 处理
-        Log.d(TAG, "同步 ${entities.size} 个围栏到管理器")
     }
 
     /**
@@ -313,8 +310,9 @@ class GeofenceForegroundService : Service(), TencentLocationListener {
             val latLng = LatLng(location.latitude, location.longitude)
             Log.d(TAG, "位置更新: (${location.latitude}, ${location.longitude})")
 
-            // 检查所有围栏
-            checkAllGeofences(latLng)
+            // 保存我的当前位置（用于 LEFT_BEHIND 围栏检测）
+            currentOwnerLocation = latLng
+            // 实际的围栏触发逻辑由 GeofenceManager.checkGeofenceForContact 在联系人位置更新时处理
         } else {
             Log.w(TAG, "位置获取失败: $error - $reason")
         }
@@ -327,61 +325,31 @@ class GeofenceForegroundService : Service(), TencentLocationListener {
         Log.d(TAG, "定位状态: $name, status=$status, desc=$desc")
     }
 
-    /**
-     * 检查所有围栏触发
-     * 注意：这里检查的是本机位置与联系人设置的围栏
-     * 如果是监控联系人的位置，应该在联系人位置更新时调用 GeofenceManager.checkGeofenceForContact
-     */
-    private fun checkAllGeofences(currentLocation: LatLng) {
-        // 获取当前所有激活的围栏
-        serviceScope.launch {
-            val activeGeofences = database.geofenceDao().getActiveGeofences()
-
-            activeGeofences.forEach { geofence ->
-                // 计算距离
-                val distance = calculateDistance(
-                    currentLocation.latitude, currentLocation.longitude,
-                    geofence.latitude, geofence.longitude
-                )
-
-                Log.d(TAG, "围栏检查: ${geofence.locationName}, 距离: ${distance.toInt()}m, 半径: ${geofence.radiusMeters.toInt()}m")
-
-                // 实际的围栏触发逻辑由 GeofenceManager 处理
-                // 这里只是进行位置采集
-            }
-        }
-    }
-
-    /**
-     * 计算两点之间的距离（米）
-     * 使用 Haversine 公式
-     */
-    private fun calculateDistance(
-        lat1: Double, lon1: Double,
-        lat2: Double, lon2: Double
-    ): Double {
-        val earthRadius = 6371000.0
-        val dLat = Math.toRadians(lat2 - lat1)
-        val dLon = Math.toRadians(lon2 - lon1)
-        val a = kotlin.math.sin(dLat / 2) * kotlin.math.sin(dLat / 2) +
-                kotlin.math.cos(Math.toRadians(lat1)) * kotlin.math.cos(Math.toRadians(lat2)) *
-                kotlin.math.sin(dLon / 2) * kotlin.math.sin(dLon / 2)
-        val c = 2 * kotlin.math.atan2(kotlin.math.sqrt(a), kotlin.math.sqrt(1 - a))
-        return earthRadius * c
-    }
-
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
         super.onDestroy()
-        instance = null
         Log.d(TAG, "围栏监控服务销毁")
 
         // 停止位置监控
         stopLocationMonitoring()
 
+        // 释放定位管理器引用（防止泄漏）
+        locationManager = null
+
+        // 清理围栏管理器
+        if (::geofenceManager.isInitialized) {
+            geofenceManager.destroy()
+        }
+
         // 取消协程
         observeJob?.cancel()
         serviceScope.cancel()
+
+        // 清除我的位置缓存
+        currentOwnerLocation = null
+
+        // 最后清除实例引用
+        instance = null
     }
 }

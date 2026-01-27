@@ -12,6 +12,7 @@ import kotlinx.coroutines.launch
 import me.ikate.findmy.data.remote.mqtt.MqttConfig
 import me.ikate.findmy.data.repository.DeviceRepository
 import me.ikate.findmy.push.PushWebhookService
+import java.util.concurrent.ConcurrentHashMap
 
 /**
  * 位置刷新管理器（简化版）
@@ -35,7 +36,8 @@ class LocationTrackingManager(
     val refreshingContacts: StateFlow<Set<String>> = _refreshingContacts.asStateFlow()
 
     // 每个联系人的上次请求时间（用于防抖）
-    private val lastRequestTime = mutableMapOf<String, Long>()
+    // 使用 ConcurrentHashMap 保证多协程并发访问的线程安全
+    private val lastRequestTime = ConcurrentHashMap<String, Long>()
 
     // 错误消息
     private val _errorMessage = MutableStateFlow<String?>(null)
@@ -163,11 +165,18 @@ class LocationTrackingManager(
                 // 通过 MQTT 发送请求
                 if (MqttConfig.isConfigured()) {
                     val mqttManager = DeviceRepository.getMqttManager(context)
-                    val isConnected = mqttManager.isConnected()
+                    var isConnected = mqttManager.isConnected()
                     Log.i(TAG, "[位置请求] MQTT 连接状态: ${if (isConnected) "已连接" else "未连接"}")
 
                     if (!isConnected) {
                         Log.w(TAG, "[位置请求] MQTT 未连接，尝试重新连接...")
+                        val connectResult = mqttManager.connect()
+                        if (connectResult.isSuccess) {
+                            isConnected = true
+                            Log.i(TAG, "[位置请求] MQTT 重连成功")
+                        } else {
+                            Log.e(TAG, "[位置请求] MQTT 重连失败: ${connectResult.exceptionOrNull()?.message}")
+                        }
                     }
 
                     val requestData = mapOf(

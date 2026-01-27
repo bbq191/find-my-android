@@ -5,10 +5,15 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.tencent.tencentmap.mapsdk.maps.model.LatLng
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -33,6 +38,31 @@ import me.ikate.findmy.util.PermissionStatusChecker
 import me.ikate.findmy.util.ReverseGeocodeHelper
 
 /**
+ * 联系人 UI 聚合状态
+ * 将多个独立的 StateFlow 合并为一个，减少 Compose 重组次数
+ *
+ * 性能优化：
+ * - 原来有 13+ 个独立的 collectAsState()
+ * - 现在合并为一个 ContactUiState，只有相关状态变化时才重组
+ */
+data class ContactUiState(
+    val contacts: List<Contact> = emptyList(),
+    val currentUser: User? = null,
+    val meName: String? = null,
+    val meAvatarUrl: String? = null,
+    val meStatus: String? = null,
+    val myDevice: Device? = null,
+    val myAddress: String? = null,
+    val showAddDialog: Boolean = false,
+    val isLoading: Boolean = false,
+    val errorMessage: String? = null,
+    val refreshingContacts: Set<String> = emptySet(),
+    val ringingContactUid: String? = null,
+    val showPermissionGuide: Boolean = false,
+    val missingPermissions: List<String> = emptyList()
+)
+
+/**
  * 联系人功能 ViewModel
  * 管理联系人列表、位置共享操作和 UI 状态
  */
@@ -47,6 +77,7 @@ class ContactViewModel(
         private const val TAG = "ContactViewModel"
         private const val KEY_ME_NAME = "me_name"
         private const val KEY_ME_AVATAR = "me_avatar"
+        private const val KEY_ME_STATUS = "me_status"
     }
 
     // ====================================================================
@@ -59,7 +90,7 @@ class ContactViewModel(
         me.ikate.findmy.util.SecurePreferences.migrateFromPlainPrefs(context, "user_profile")
     }
     private val locationReportService = LocationReportService(context)
-    private val geofenceManager = GeofenceManager(context)
+    private val geofenceManager = GeofenceManager.getInstance(context)
 
     // 追踪管理器
     private val trackingManager = LocationTrackingManager(
@@ -67,6 +98,9 @@ class ContactViewModel(
         locationReportService = locationReportService,
         scope = viewModelScope
     )
+
+    // 定期清理任务（用于取消）
+    private var periodicCleanupJob: Job? = null
 
     // MQTT 服务（用于接收邀请）
     private val mqttService = DeviceRepository.getMqttService(context)
@@ -92,6 +126,10 @@ class ContactViewModel(
 
     private val _meAvatarUrl = MutableStateFlow<String?>(null)
     val meAvatarUrl: StateFlow<String?> = _meAvatarUrl.asStateFlow()
+
+    // "我"的状态签名
+    private val _meStatus = MutableStateFlow<String?>(null)
+    val meStatus: StateFlow<String?> = _meStatus.asStateFlow()
 
     // 当前设备信息
     private val _myDevice = MutableStateFlow<Device?>(null)
@@ -124,6 +162,47 @@ class ContactViewModel(
 
     private val _missingPermissions = MutableStateFlow<List<String>>(emptyList())
     val missingPermissions: StateFlow<List<String>> = _missingPermissions.asStateFlow()
+
+    /**
+     * 聚合 UI 状态
+     * 将多个 StateFlow 合并为一个，供 MainScreen 使用
+     * 减少 collectAsState() 调用次数，提升性能
+     *
+     * 使用 combine 最多支持 5 个参数，因此分两层组合
+     */
+    val uiState: StateFlow<ContactUiState> = combine(
+        combine(_contacts, _currentUser, _meName, _meAvatarUrl, _meStatus) { contacts, currentUser, meName, meAvatarUrl, meStatus ->
+            ContactUiState(
+                contacts = contacts,
+                currentUser = currentUser,
+                meName = meName,
+                meAvatarUrl = meAvatarUrl,
+                meStatus = meStatus
+            )
+        },
+        combine(_myDevice, _myAddress, _showAddDialog, _isLoading, _errorMessage) { myDevice, myAddress, showAddDialog, isLoading, errorMessage ->
+            Triple(Triple(myDevice, myAddress, showAddDialog), isLoading, errorMessage)
+        },
+        combine(trackingManager.refreshingContacts, _ringingContactUid, _showPermissionGuide, _missingPermissions) { refreshingContacts, ringingContactUid, showPermissionGuide, missingPermissions ->
+            Triple(Triple(refreshingContacts, ringingContactUid, showPermissionGuide), missingPermissions, Unit)
+        }
+    ) { baseState, deviceState, permissionState ->
+        baseState.copy(
+            myDevice = deviceState.first.first,
+            myAddress = deviceState.first.second,
+            showAddDialog = deviceState.first.third,
+            isLoading = deviceState.second,
+            errorMessage = deviceState.third,
+            refreshingContacts = permissionState.first.first,
+            ringingContactUid = permissionState.first.second,
+            showPermissionGuide = permissionState.first.third,
+            missingPermissions = permissionState.second
+        )
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = ContactUiState()
+    )
 
     private var pendingAction: (() -> Unit)? = null
     private var previousContactIds = setOf<String>()
@@ -182,22 +261,44 @@ class ContactViewModel(
     private fun loadLocalProfile() {
         _meName.value = prefs.getString(KEY_ME_NAME, null)
         _meAvatarUrl.value = prefs.getString(KEY_ME_AVATAR, null)
+        _meStatus.value = prefs.getString(KEY_ME_STATUS, null)
     }
 
     /**
      * 更新"我"的显示名称
+     * 注意：SharedPreferences 写入在 IO 线程执行，避免主线程阻塞
      */
     fun updateMeName(name: String) {
         _meName.value = name
-        prefs.edit().putString(KEY_ME_NAME, name).apply()
+        viewModelScope.launch(Dispatchers.IO) {
+            prefs.edit().putString(KEY_ME_NAME, name).apply()
+        }
     }
 
     /**
      * 更新"我"的头像 URL
+     * 注意：SharedPreferences 写入在 IO 线程执行，避免主线程阻塞
      */
     fun updateMeAvatar(avatarUrl: String?) {
         _meAvatarUrl.value = avatarUrl
-        prefs.edit().putString(KEY_ME_AVATAR, avatarUrl).apply()
+        viewModelScope.launch(Dispatchers.IO) {
+            prefs.edit().putString(KEY_ME_AVATAR, avatarUrl).apply()
+        }
+    }
+
+    /**
+     * 更新"我"的状态签名
+     * 注意：SharedPreferences 写入在 IO 线程执行，避免主线程阻塞
+     */
+    fun updateMeStatus(status: String?) {
+        _meStatus.value = status
+        viewModelScope.launch(Dispatchers.IO) {
+            if (status.isNullOrBlank()) {
+                prefs.edit().remove(KEY_ME_STATUS).apply()
+            } else {
+                prefs.edit().putString(KEY_ME_STATUS, status).apply()
+            }
+        }
     }
 
     // ====================================================================
@@ -319,9 +420,10 @@ class ContactViewModel(
     }
 
     private fun startPeriodicCleanup() {
-        viewModelScope.launch {
-            while (true) {
-                delay(60 * 60 * 1000L)
+        periodicCleanupJob?.cancel()
+        periodicCleanupJob = viewModelScope.launch {
+            while (isActive) {
+                delay(60 * 60 * 1000L) // 每小时清理一次
                 if (authRepository.isSignedIn()) {
                     contactRepository.cleanupExpiredShares()
                 }
@@ -776,5 +878,20 @@ class ContactViewModel(
 
     fun disableLostMode(targetUid: String) {
         trackingManager.disableLostMode(_currentUser.value?.uid, targetUid)
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        Log.d(TAG, "ContactViewModel 销毁")
+
+        // 取消定期清理任务
+        periodicCleanupJob?.cancel()
+        periodicCleanupJob = null
+
+        // 释放定位服务资源
+        locationReportService.destroy()
+
+        // 释放围栏管理器资源
+        geofenceManager.destroy()
     }
 }

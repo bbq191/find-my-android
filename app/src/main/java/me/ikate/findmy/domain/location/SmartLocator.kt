@@ -125,7 +125,7 @@ class SmartLocator private constructor(private val context: Context) {
 
     // 组件
     private val activityManager by lazy { ActivityRecognitionManager(context) }
-    private val geofenceManager by lazy { GeofenceManager(context) }
+    private val geofenceManager by lazy { GeofenceManager.getInstance(context) }
     private val workManager by lazy { WorkManager.getInstance(context) }
 
     // WiFi 监听

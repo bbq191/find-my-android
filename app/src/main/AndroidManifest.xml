@@ -175,6 +175,7 @@
         </receiver>
 
         <!-- 开机启动广播接收器（确保服务在设备重启后恢复） -->
+        <!-- Samsung S24 Ultra / One UI 8.0+ 兼容 -->
         <receiver
             android:name=".service.BootReceiver"
             android:enabled="true"
@@ -184,6 +185,8 @@
                 <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
                 <action android:name="android.intent.action.QUICKBOOT_POWERON" />
                 <action android:name="com.htc.intent.action.QUICKBOOT_POWERON" />
+                <!-- Samsung 专属开机广播 -->
+                <action android:name="com.samsung.android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
 

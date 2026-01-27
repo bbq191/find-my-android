@@ -5,10 +5,11 @@ import androidx.room.Index
 import androidx.room.PrimaryKey
 import me.ikate.findmy.data.model.Geofence
 import me.ikate.findmy.data.model.GeofenceTriggerType
+import me.ikate.findmy.data.model.GeofenceType
 import me.ikate.findmy.data.model.latLngOf
 
 /**
- * 电子围栏实体（Room 数据库表）
+ * 电子围栏实体（Room 数据库表）- iOS Find My 风格
  * 用于本地持久化围栏配置
  *
  * 注意：坐标使用 GCJ-02 (腾讯坐标系)
@@ -30,9 +31,15 @@ data class GeofenceEntity(
     val radiusMeters: Float,         // 围栏半径（米）
     val triggerType: String = GeofenceTriggerType.ENTER.name,
     val isActive: Boolean = true,
-    val isOneTime: Boolean = false,  // 是否一次性触发
+    val isOneTime: Boolean = true,   // 是否一次性触发（iOS 默认一次性）
     val createdAt: Long = System.currentTimeMillis(),
-    val updatedAt: Long = System.currentTimeMillis()
+    val updatedAt: Long = System.currentTimeMillis(),
+    // iOS Find My 新增字段
+    val geofenceType: String = GeofenceType.FIXED_LOCATION.name,  // 围栏类型
+    val address: String = "",        // 位置地址（逆地理编码结果）
+    val wasInsideOnCreate: Boolean = false,  // 创建时联系人是否在围栏内
+    val ownerLatitude: Double? = null,   // 我的位置纬度（仅 LEFT_BEHIND 使用）
+    val ownerLongitude: Double? = null   // 我的位置经度（仅 LEFT_BEHIND 使用）
 ) {
 
     /**
@@ -53,7 +60,17 @@ data class GeofenceEntity(
         isActive = isActive,
         isOneTime = isOneTime,
         createdAt = createdAt,
-        updatedAt = updatedAt
+        updatedAt = updatedAt,
+        // iOS Find My 新增字段
+        geofenceType = try {
+            GeofenceType.valueOf(geofenceType)
+        } catch (e: Exception) {
+            GeofenceType.FIXED_LOCATION
+        },
+        address = address,
+        wasInsideOnCreate = wasInsideOnCreate,
+        ownerLatitude = ownerLatitude,
+        ownerLongitude = ownerLongitude
     )
 
     companion object {
@@ -72,7 +89,13 @@ data class GeofenceEntity(
             isActive = geofence.isActive,
             isOneTime = geofence.isOneTime,
             createdAt = geofence.createdAt,
-            updatedAt = System.currentTimeMillis()
+            updatedAt = System.currentTimeMillis(),
+            // iOS Find My 新增字段
+            geofenceType = geofence.geofenceType.name,
+            address = geofence.address,
+            wasInsideOnCreate = geofence.wasInsideOnCreate,
+            ownerLatitude = geofence.ownerLatitude,
+            ownerLongitude = geofence.ownerLongitude
         )
     }
 }

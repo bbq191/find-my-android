@@ -29,14 +29,20 @@ class DynamicDurationCalculator(
      * @return 建议的动画时长（毫秒）
      */
     fun calculate(currentTimeMs: Long = System.currentTimeMillis()): Long {
-        val timeDiff = if (lastUpdateTimeMs == 0L) {
-            // 首次调用，使用默认时长
-            defaultDurationMs
+        val isFirstCall = lastUpdateTimeMs == 0L
+        val timeDiff = if (isFirstCall) {
+            // 首次调用，使用快速首次动画时长（500ms 而非 2000ms，避免延迟感）
+            FIRST_ANIM_DURATION_MS
         } else {
             currentTimeMs - lastUpdateTimeMs
         }
 
         lastUpdateTimeMs = currentTimeMs
+
+        // 首次调用直接返回首次动画时长
+        if (isFirstCall) {
+            return FIRST_ANIM_DURATION_MS
+        }
 
         // 边界检查
         return when {
@@ -76,6 +82,9 @@ class DynamicDurationCalculator(
 
         /** 默认动画时长：2秒，断网恢复时使用 */
         const val DEFAULT_DURATION_MS = 2_000L
+
+        /** 首次动画时长：500ms，快速显示首个位置，避免 2 秒延迟感 */
+        const val FIRST_ANIM_DURATION_MS = 500L
 
         /**
          * 根据设备类型获取优化后的默认时长

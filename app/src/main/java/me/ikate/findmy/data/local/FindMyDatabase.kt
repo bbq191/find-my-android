@@ -28,7 +28,7 @@ import me.ikate.findmy.data.local.entity.PendingMessageEntity
         GeofenceEntity::class,
         GeofenceEventEntity::class
     ],
-    version = 3,
+    version = 4,
     exportSchema = true
 )
 abstract class FindMyDatabase : RoomDatabase() {
@@ -109,6 +109,24 @@ abstract class FindMyDatabase : RoomDatabase() {
         }
 
         /**
+         * 版本 3 -> 4 迁移
+         * iOS Find My 风格地理围栏：新增围栏类型、地址、首次触发跳过、我的位置字段
+         */
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // 围栏类型：FIXED_LOCATION（固定位置）/ LEFT_BEHIND（离开我身边）
+                db.execSQL("ALTER TABLE geofences ADD COLUMN geofenceType TEXT NOT NULL DEFAULT 'FIXED_LOCATION'")
+                // 位置地址（逆地理编码结果）
+                db.execSQL("ALTER TABLE geofences ADD COLUMN address TEXT NOT NULL DEFAULT ''")
+                // 创建时联系人是否在围栏内（用于跳过首次触发）
+                db.execSQL("ALTER TABLE geofences ADD COLUMN wasInsideOnCreate INTEGER NOT NULL DEFAULT 0")
+                // 我的位置（仅 LEFT_BEHIND 类型使用）
+                db.execSQL("ALTER TABLE geofences ADD COLUMN ownerLatitude REAL")
+                db.execSQL("ALTER TABLE geofences ADD COLUMN ownerLongitude REAL")
+            }
+        }
+
+        /**
          * 获取数据库单例
          */
         fun getInstance(context: Context): FindMyDatabase {
@@ -123,8 +141,7 @@ abstract class FindMyDatabase : RoomDatabase() {
                 FindMyDatabase::class.java,
                 DATABASE_NAME
             )
-                .addMigrations(MIGRATION_2_3)
-                // 未来版本升级时添加新迁移: .addMigrations(MIGRATION_2_3, MIGRATION_3_4, ...)
+                .addMigrations(MIGRATION_2_3, MIGRATION_3_4)
                 // 仅当没有对应迁移脚本时才破坏性重建（开发阶段兜底）
                 .fallbackToDestructiveMigration(false)
                 .build()

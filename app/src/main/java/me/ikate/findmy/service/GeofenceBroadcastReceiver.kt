@@ -36,19 +36,28 @@ class GeofenceBroadcastReceiver : BroadcastReceiver() {
         val contactName = intent.getStringExtra("contact_name") ?: "联系人"
         val locationName = intent.getStringExtra("location_name") ?: "位置"
         val transitionType = intent.getIntExtra("transition_type", -1)
+        // iOS Find My 新增字段
+        val geofenceType = intent.getStringExtra("geofence_type") ?: "FIXED_LOCATION"
+        val address = intent.getStringExtra("address") ?: ""
+        val distance = intent.getDoubleExtra("distance", 0.0)
+        val isOneTime = intent.getBooleanExtra("is_one_time", true)
+        val isLeftBehind = geofenceType == "LEFT_BEHIND"
 
-        Log.d(TAG, "围栏事件: fenceId=$fenceId, contactId=$contactId, transition=$transitionType")
+        Log.d(TAG, "围栏事件: fenceId=$fenceId, contactId=$contactId, " +
+                "transition=$transitionType, type=$geofenceType, distance=${distance.toInt()}m")
 
         when (transitionType) {
             GeofenceManager.GEOFENCE_TRANSITION_ENTER -> {
                 Log.d(TAG, "$contactName 进入围栏: $locationName")
 
-                // 发送通知
-                sendGeofenceNotification(
+                // 发送 iOS 风格通知
+                NotificationHelper.showGeofenceEventNotification(
                     context = context,
                     contactName = contactName,
-                    locationName = locationName,
-                    isEntering = true
+                    address = address.ifBlank { locationName },
+                    isEntering = true,
+                    isLeftBehind = false,
+                    distance = distance
                 )
 
                 // 触发位置上报（自身围栏进入）
@@ -57,14 +66,20 @@ class GeofenceBroadcastReceiver : BroadcastReceiver() {
                 }
             }
             GeofenceManager.GEOFENCE_TRANSITION_EXIT -> {
-                Log.d(TAG, "$contactName 离开围栏: $locationName")
+                if (isLeftBehind) {
+                    Log.d(TAG, "$contactName 离开我身边: 距离 ${distance.toInt()}m")
+                } else {
+                    Log.d(TAG, "$contactName 离开围栏: $locationName")
+                }
 
-                // 发送通知
-                sendGeofenceNotification(
+                // 发送 iOS 风格通知
+                NotificationHelper.showGeofenceEventNotification(
                     context = context,
                     contactName = contactName,
-                    locationName = locationName,
-                    isEntering = false
+                    address = address.ifBlank { locationName },
+                    isEntering = false,
+                    isLeftBehind = isLeftBehind,
+                    distance = distance
                 )
 
                 // 触发位置上报（自身围栏离开 - 说明位置变化）
@@ -89,27 +104,5 @@ class GeofenceBroadcastReceiver : BroadcastReceiver() {
         } catch (e: Exception) {
             Log.e(TAG, "触发位置上报失败", e)
         }
-    }
-
-    /**
-     * 发送围栏通知
-     */
-    private fun sendGeofenceNotification(
-        context: Context,
-        contactName: String,
-        locationName: String,
-        isEntering: Boolean
-    ) {
-        val title = if (isEntering) "$contactName 进入围栏" else "$contactName 离开围栏"
-        val message = if (isEntering) "$contactName 已进入 $locationName" else "$contactName 已离开 $locationName"
-
-        NotificationHelper.showGeofenceNotification(
-            context = context,
-            title = title,
-            message = message,
-            isEntering = isEntering
-        )
-
-        Log.d(TAG, "地理围栏通知已发送: $contactName ${if (isEntering) "进入" else "离开"} $locationName")
     }
 }

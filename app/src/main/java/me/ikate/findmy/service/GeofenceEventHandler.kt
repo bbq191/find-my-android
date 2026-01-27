@@ -87,7 +87,15 @@ class GeofenceEventHandler(private val context: Context) {
                 Log.d(TAG, "[围栏触发] 事件已记录: ${event.id}")
 
                 // 2. 发送本地通知
-                sendLocalNotification(geofence, eventType)
+                val isEntering = eventType == GeofenceEventType.ENTER || eventType == GeofenceEventType.DWELL
+                NotificationHelper.showGeofenceEventNotification(
+                    context = context,
+                    contactName = geofence.contactName,
+                    address = geofence.address.ifBlank { geofence.locationName },
+                    isEntering = isEntering,
+                    isLeftBehind = geofence.isLeftBehind,
+                    radiusMeters = geofence.radiusMeters
+                )
 
                 // 3. 通过 MQTT 通知观察者（如果需要）
                 // 注意：这里是"被监控者"触发围栏后通知"观察者"
@@ -105,34 +113,6 @@ class GeofenceEventHandler(private val context: Context) {
                 Log.e(TAG, "[围栏触发] ✗ 事件处理失败", e)
             }
         }
-    }
-
-    /**
-     * 发送本地通知
-     */
-    private fun sendLocalNotification(geofence: Geofence, eventType: GeofenceEventType) {
-        val title = when (eventType) {
-            GeofenceEventType.ENTER -> "到达通知"
-            GeofenceEventType.EXIT -> "离开通知"
-            GeofenceEventType.DWELL -> "停留通知"
-        }
-
-        val message = when (eventType) {
-            GeofenceEventType.ENTER -> "${geofence.contactName} 已到达 ${geofence.locationName}"
-            GeofenceEventType.EXIT -> "${geofence.contactName} 已离开 ${geofence.locationName}"
-            GeofenceEventType.DWELL -> "${geofence.contactName} 正在 ${geofence.locationName}"
-        }
-
-        val isEntering = eventType == GeofenceEventType.ENTER || eventType == GeofenceEventType.DWELL
-
-        NotificationHelper.showGeofenceNotification(
-            context = context,
-            title = title,
-            message = message,
-            isEntering = isEntering
-        )
-
-        Log.d(TAG, "[围栏通知] 已发送: $message")
     }
 
     /**

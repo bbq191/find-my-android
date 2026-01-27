@@ -1,17 +1,11 @@
 package me.ikate.findmy.ui.screen.main.tabs
 
-import android.Manifest
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.provider.Settings
-import com.google.accompanist.permissions.ExperimentalPermissionsApi
-import com.google.accompanist.permissions.isGranted
-import com.google.accompanist.permissions.rememberPermissionState
-import com.google.accompanist.permissions.shouldShowRationale
-import me.ikate.findmy.ui.components.ContactsPermissionDialog
 import me.ikate.findmy.ui.components.PermissionSecurityScreen
 import me.ikate.findmy.ui.components.getPermissionStatusSummary
 import me.ikate.findmy.util.PermissionStatusChecker
@@ -44,6 +38,7 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.QrCode2
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Warning
@@ -85,41 +80,30 @@ import kotlinx.coroutines.launch
 import me.ikate.findmy.BuildConfig
 import me.ikate.findmy.R
 import me.ikate.findmy.data.model.User
+import me.ikate.findmy.ui.screen.main.tabs.components.EditProfileSheet
+import me.ikate.findmy.ui.screen.main.tabs.components.MyQrCodeSheet
 import me.ikate.findmy.util.ProfileHelper
 
 /**
  * 我的 Tab
  * 个人资料和设置页面
  */
-@OptIn(ExperimentalPermissionsApi::class)
 @Composable
 fun MeTab(
     currentUser: User?,
     meName: String?,
     meAvatarUrl: String?,
+    meStatus: String? = null,
     sharingWithCount: Int = 0,
     onNameChange: (String) -> Unit = {},
     onAvatarChange: (String?) -> Unit = {},
+    onStatusChange: (String?) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    var showEditNameDialog by remember { mutableStateOf(false) }
+    var showEditProfileSheet by remember { mutableStateOf(false) }
+    var showQrCodeSheet by remember { mutableStateOf(false) }
     var showAppIconDialog by remember { mutableStateOf(false) }
-
-    // 通讯录权限状态
-    val contactsPermissionState = rememberPermissionState(Manifest.permission.READ_CONTACTS)
-
-    var showContactsPermissionDialog by remember { mutableStateOf(false) }
-    // 记录权限请求后要执行的操作
-    var pendingContactsAction by remember { mutableStateOf<(() -> Unit)?>(null) }
-
-    // 监听权限状态变化，执行待处理的操作
-    androidx.compose.runtime.LaunchedEffect(contactsPermissionState.status.isGranted) {
-        if (contactsPermissionState.status.isGranted && pendingContactsAction != null) {
-            pendingContactsAction?.invoke()
-            pendingContactsAction = null
-        }
-    }
 
     var showAboutDialog by remember { mutableStateOf(false) }
     var showPermissionSecurityScreen by remember { mutableStateOf(false) }
@@ -129,49 +113,30 @@ fun MeTab(
         mutableStateOf(PermissionStatusChecker.checkAllPermissions(context))
     }
 
-    // 用于从通讯录选择联系人的临时状态
-    var pendingContactName by remember { mutableStateOf<String?>(null) }
-    var pendingContactAvatar by remember { mutableStateOf<String?>(null) }
-
-    // 联系人选择器
-    val contactPickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        contract = androidx.activity.result.contract.ActivityResultContracts.PickContact()
-    ) { uri ->
-        if (uri != null) {
-            val profile = ProfileHelper.getContactFromUri(context, uri)
-            if (profile != null && !profile.displayName.isNullOrBlank()) {
-                pendingContactName = profile.displayName
-                pendingContactAvatar = profile.photoUri?.toString()
+    // 编辑资料 BottomSheet
+    if (showEditProfileSheet) {
+        EditProfileSheet(
+            currentName = meName,
+            currentAvatarUrl = meAvatarUrl,
+            currentStatus = meStatus,
+            onDismiss = { showEditProfileSheet = false },
+            onSave = { newName, avatarUrl, status ->
+                onNameChange(newName)
+                avatarUrl?.let { onAvatarChange(it) }
+                onStatusChange(status)
+                showEditProfileSheet = false
             }
-        }
+        )
     }
 
-    // 编辑名称对话框
-    if (showEditNameDialog) {
-        EditNameDialog(
-            currentName = meName ?: "",
-            pendingName = pendingContactName,
-            pendingAvatar = pendingContactAvatar,
-            onDismiss = {
-                showEditNameDialog = false
-                pendingContactName = null
-                pendingContactAvatar = null
-            },
-            onConfirm = { newName, avatarUri ->
-                onNameChange(newName)
-                avatarUri?.let { onAvatarChange(it) }
-                showEditNameDialog = false
-                pendingContactName = null
-                pendingContactAvatar = null
-            },
-            onPickContact = {
-                contactPickerLauncher.launch(null)
-            },
-            hasContactsPermission = contactsPermissionState.status.isGranted,
-            onRequestContactsPermission = { action ->
-                pendingContactsAction = action
-                showContactsPermissionDialog = true
-            }
+    // 名片二维码 BottomSheet
+    if (showQrCodeSheet && currentUser != null) {
+        MyQrCodeSheet(
+            uid = currentUser.uid,
+            nickname = meName ?: "未设置",
+            avatarUrl = meAvatarUrl,
+            status = meStatus,
+            onDismiss = { showQrCodeSheet = false }
         )
     }
 
@@ -201,34 +166,6 @@ fun MeTab(
         return
     }
 
-    // 通讯录权限引导对话框
-    if (showContactsPermissionDialog) {
-        val isPermanentlyDenied = !contactsPermissionState.status.isGranted &&
-            !contactsPermissionState.status.shouldShowRationale
-
-        ContactsPermissionDialog(
-            onRequestPermission = {
-                showContactsPermissionDialog = false
-                contactsPermissionState.launchPermissionRequest()
-            },
-            onDismiss = {
-                showContactsPermissionDialog = false
-                pendingContactsAction = null
-            },
-            onOpenSettings = if (isPermanentlyDenied) {
-                {
-                    showContactsPermissionDialog = false
-                    // 打开应用设置
-                    val intent = Intent(
-                        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                        Uri.fromParts("package", context.packageName, null)
-                    )
-                    context.startActivity(intent)
-                }
-            } else null
-        )
-    }
-
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -250,7 +187,8 @@ fun MeTab(
                     displayName = meName,
                     avatarUrl = meAvatarUrl,
                     sharingWithCount = sharingWithCount,
-                    onEditClick = { showEditNameDialog = true }
+                    onEditClick = { showEditProfileSheet = true },
+                    onQrCodeClick = { showQrCodeSheet = true }
                 )
             }
 
@@ -297,10 +235,23 @@ private fun ProfileCard(
     displayName: String?,
     avatarUrl: String?,
     sharingWithCount: Int = 0,
-    onEditClick: () -> Unit
+    onEditClick: () -> Unit,
+    onQrCodeClick: () -> Unit = {}
 ) {
+    val context = LocalContext.current
     val clipboard = LocalClipboard.current
     val scope = rememberCoroutineScope()
+
+    // UID 掩码显示
+    val maskedUid = remember(user?.uid) {
+        user?.uid?.let { uid ->
+            if (uid.length > 8) {
+                "${uid.take(4)}...${uid.takeLast(4)}"
+            } else {
+                uid
+            }
+        }
+    }
 
     Card(
         modifier = Modifier
@@ -421,42 +372,56 @@ private fun ProfileCard(
 
                 Spacer(modifier = Modifier.height(2.dp))
 
-                // UID - 完整显示
+                // UID - 掩码显示，点击复制
                 user?.let { u ->
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(
-                            text = u.uid,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f, fill = false)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        IconButton(
-                            onClick = {
+                        modifier = Modifier
+                            .clickable {
                                 scope.launch {
                                     clipboard.setClipEntry(
                                         androidx.compose.ui.platform.ClipEntry(
                                             android.content.ClipData.newPlainText("UID", u.uid)
                                         )
                                     )
+                                    android.widget.Toast.makeText(
+                                        context,
+                                        "UID 已复制",
+                                        android.widget.Toast.LENGTH_SHORT
+                                    ).show()
                                 }
-                            },
-                            modifier = Modifier.size(20.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.ContentCopy,
-                                contentDescription = "复制 UID",
-                                modifier = Modifier.size(14.dp),
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                        }
+                            }
+                            .padding(vertical = 2.dp)
+                    ) {
+                        Text(
+                            text = "ID: ${maskedUid ?: u.uid}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Icon(
+                            imageVector = Icons.Default.ContentCopy,
+                            contentDescription = "复制 UID",
+                            modifier = Modifier.size(12.dp),
+                            tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
+                        )
                     }
                 }
+            }
+
+            // 二维码图标
+            IconButton(
+                onClick = onQrCodeClick,
+                modifier = Modifier.size(40.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.QrCode2,
+                    contentDescription = "我的名片",
+                    modifier = Modifier.size(28.dp),
+                    tint = MaterialTheme.colorScheme.primary
+                )
             }
 
             Icon(
@@ -645,248 +610,6 @@ private fun SettingsItem(
             tint = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
-}
-
-/**
- * 编辑名称对话框
- * @param pendingName 从通讯录选择后待确认的名称
- * @param pendingAvatar 从通讯录选择后待确认的头像
- * @param onConfirm (name, avatarUri) -> Unit
- * @param onPickContact 打开通讯录选择器
- * @param hasContactsPermission 是否有通讯录权限
- * @param onRequestContactsPermission 请求通讯录权限的回调
- */
-@Composable
-private fun EditNameDialog(
-    currentName: String,
-    pendingName: String? = null,
-    pendingAvatar: String? = null,
-    onDismiss: () -> Unit,
-    onConfirm: (String, String?) -> Unit,
-    onPickContact: () -> Unit = {},
-    hasContactsPermission: Boolean = false,
-    onRequestContactsPermission: (action: () -> Unit) -> Unit = {}
-) {
-    val context = LocalContext.current
-    var name by remember { mutableStateOf(currentName) }
-    var avatarUri by remember { mutableStateOf<String?>(null) }
-    var importMessage by remember { mutableStateOf<String?>(null) }
-    var isError by remember { mutableStateOf(false) }
-    var showSourcePicker by remember { mutableStateOf(false) }
-    var availableSources by remember { mutableStateOf<List<Pair<ProfileHelper.ProfileSource, ProfileHelper.OwnerProfile>>>(emptyList()) }
-
-    // 当从通讯录选择返回时，更新状态
-    androidx.compose.runtime.LaunchedEffect(pendingName, pendingAvatar) {
-        if (pendingName != null) {
-            name = pendingName
-            avatarUri = pendingAvatar
-            importMessage = "已选择: $pendingName" +
-                    if (pendingAvatar != null) " (含头像)" else ""
-            isError = false
-        }
-    }
-
-    // 来源选择对话框
-    if (showSourcePicker) {
-        AlertDialog(
-            onDismissRequest = { showSourcePicker = false },
-            title = {
-                Text(
-                    text = "选择导入来源",
-                    fontWeight = FontWeight.SemiBold
-                )
-            },
-            text = {
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    if (availableSources.isEmpty()) {
-                        Text(
-                            text = "未找到可用的导入来源",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    } else {
-                        availableSources.forEach { (source, profile) ->
-                            Card(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        name = profile.displayName ?: ""
-                                        avatarUri = profile.photoUri?.toString()
-                                        importMessage = "已导入: ${profile.displayName}" +
-                                                if (profile.photoUri != null) " (含头像)" else ""
-                                        isError = false
-                                        showSourcePicker = false
-                                    },
-                                colors = CardDefaults.cardColors(
-                                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
-                                ),
-                                shape = RoundedCornerShape(12.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(12.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Column(modifier = Modifier.weight(1f)) {
-                                        Text(
-                                            text = source.label,
-                                            style = MaterialTheme.typography.labelMedium,
-                                            color = MaterialTheme.colorScheme.primary
-                                        )
-                                        Spacer(modifier = Modifier.height(2.dp))
-                                        Text(
-                                            text = profile.displayName ?: "",
-                                            style = MaterialTheme.typography.bodyLarge,
-                                            fontWeight = FontWeight.Medium
-                                        )
-                                    }
-                                    Icon(
-                                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showSourcePicker = false }) {
-                    Text("取消")
-                }
-            },
-            shape = RoundedCornerShape(16.dp)
-        )
-    }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Text(
-                text = "设置名称",
-                fontWeight = FontWeight.SemiBold
-            )
-        },
-        text = {
-            Column {
-                Text(
-                    text = "设置一个名称，方便联系人识别你",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = {
-                        name = it
-                        importMessage = null
-                    },
-                    label = { Text("名称") },
-                    placeholder = { Text("请输入名称") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp)
-                )
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                // 从机主信息导入按钮
-                TextButton(
-                    onClick = {
-                        // 检查权限
-                        if (!hasContactsPermission) {
-                            // 请求权限，并设置授权后的操作
-                            onRequestContactsPermission {
-                                availableSources = ProfileHelper.getAvailableSources(context)
-                                if (availableSources.isEmpty()) {
-                                    importMessage = "未找到可用的导入来源，请从通讯录选择"
-                                    isError = true
-                                } else {
-                                    showSourcePicker = true
-                                }
-                            }
-                            return@TextButton
-                        }
-
-                        // 获取可用来源
-                        availableSources = ProfileHelper.getAvailableSources(context)
-                        if (availableSources.isEmpty()) {
-                            importMessage = "未找到可用的导入来源，请从通讯录选择"
-                            isError = true
-                        } else {
-                            showSourcePicker = true
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Person,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("从机主信息导入")
-                }
-
-                // 从通讯录选择按钮
-                TextButton(
-                    onClick = {
-                        if (!hasContactsPermission) {
-                            onRequestContactsPermission { onPickContact() }
-                        } else {
-                            onPickContact()
-                        }
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Share,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("从通讯录选择")
-                }
-
-                // 提示信息
-                importMessage?.let { message ->
-                    Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = message,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = if (isError) {
-                            MaterialTheme.colorScheme.error
-                        } else {
-                            MaterialTheme.colorScheme.primary
-                        }
-                    )
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = { onConfirm(name.trim(), avatarUri) },
-                enabled = name.trim().isNotEmpty()
-            ) {
-                Text(
-                    text = "确定",
-                    fontWeight = FontWeight.SemiBold
-                )
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("取消")
-            }
-        },
-        shape = RoundedCornerShape(16.dp)
-    )
 }
 
 /**

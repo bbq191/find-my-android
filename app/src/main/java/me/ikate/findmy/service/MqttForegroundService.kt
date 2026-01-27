@@ -345,16 +345,46 @@ class MqttForegroundService : Service() {
         // 取消注册应用生命周期观察者
         ProcessLifecycleOwner.get().lifecycle.removeObserver(lifecycleObserver)
 
+        // 取消待处理的重启闹钟（防止 PendingIntent 泄漏）
+        cancelPendingRestartAlarm()
+
         // 先取消所有协程（防止正在执行的协程访问已销毁的资源）
         serviceScope.cancel()
 
         // 释放资源
+        smartLocationSyncManager.destroy()
         locationReportService.destroy()
 
         // 最后清除实例引用（确保所有清理工作完成后才允许创建新实例）
         // 使用同步确保线程安全
         synchronized(Companion::class.java) {
             instance = null
+        }
+    }
+
+    /**
+     * 取消待处理的重启闘钟
+     * 防止 AlarmManager 持有 PendingIntent 导致内存泄漏
+     */
+    private fun cancelPendingRestartAlarm() {
+        try {
+            val intent = Intent(this, MqttForegroundService::class.java).apply {
+                action = ACTION_RESTART
+            }
+            val pendingIntent = PendingIntent.getService(
+                this,
+                RESTART_ALARM_REQUEST_CODE,
+                intent,
+                PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
+            )
+            if (pendingIntent != null) {
+                val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+                alarmManager.cancel(pendingIntent)
+                pendingIntent.cancel()
+                Log.d(TAG, "已取消待处理的重启闹钟")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "取消重启闹钟失败: ${e.message}")
         }
     }
 

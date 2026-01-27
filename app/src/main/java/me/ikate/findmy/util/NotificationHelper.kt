@@ -522,7 +522,61 @@ object NotificationHelper {
     // ====================================================================
 
     /**
-     * 显示地理围栏通知
+     * 显示地理围栏事件通知 (iOS Find My 风格)
+     *
+     * 通知样式：
+     * - 到达：「张三已到达」「静安区南京西路 1000 号」
+     * - 离开：「张三已离开」「静安区南京西路 1000 号」
+     * - 离开我身边：「张三已离开你身边」「当前距离约 500 米」或「已超出 200 米范围」
+     *
+     * @param context 上下文
+     * @param contactName 联系人名称
+     * @param address 位置地址
+     * @param isEntering 是否为进入事件
+     * @param isLeftBehind 是否为"离开我身边"类型
+     * @param distance 距离（米），仅 isLeftBehind 为 true 时使用
+     * @param radiusMeters 围栏半径（米），仅 isLeftBehind 为 true 且 distance 为 0 时使用
+     */
+    fun showGeofenceEventNotification(
+        context: Context,
+        contactName: String,
+        address: String,
+        isEntering: Boolean,
+        isLeftBehind: Boolean = false,
+        distance: Double = 0.0,
+        radiusMeters: Float = 0f
+    ) {
+        val title: String
+        val message: String
+
+        when {
+            isLeftBehind && !isEntering -> {
+                // 离开我身边
+                title = "${contactName}已离开你身边"
+                message = if (distance > 0) {
+                    "当前距离约 ${distance.toInt()} 米"
+                } else {
+                    "已超出 ${radiusMeters.toInt()} 米范围"
+                }
+            }
+            isEntering -> {
+                // 到达
+                title = "${contactName}已到达"
+                message = address
+            }
+            else -> {
+                // 离开
+                title = "${contactName}已离开"
+                message = address
+            }
+        }
+
+        showGeofenceNotification(context, title, message, isEntering)
+        android.util.Log.d("NotificationHelper", "iOS 风格围栏通知: $title - $message")
+    }
+
+    /**
+     * 显示地理围栏通知（低级 API）
      * @param context 上下文
      * @param title 通知标题
      * @param message 通知内容

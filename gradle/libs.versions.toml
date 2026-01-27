@@ -47,6 +47,14 @@ koin = "4.1.1"
 playServicesLocation = "21.3.0"
 # LeakCanary 内存泄漏检测（仅 Debug 构建）
 leakcanary = "2.14"
+# ZXing 二维码生成
+zxing = "3.5.1"
+# CameraX 相机预览
+camerax = "1.4.1"
+# ML Kit 条码扫描
+mlkitBarcodeScanning = "17.3.0"
+# Guava (CameraX ListenableFuture 依赖)
+guava = "33.4.0-android"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -94,3 +102,14 @@ koin-androidx-compose = { group = "io.insert-koin", name = "koin-androidx-compos
 play-services-location = { group = "com.google.android.gms", name = "play-services-location", version.ref = "playServicesLocation" }
 # LeakCanary 内存泄漏检测（仅 Debug 构建）
 leakcanary-android = { group = "com.squareup.leakcanary", name = "leakcanary-android", version.ref = "leakcanary" }
+# ZXing 二维码生成
+zxing-core = { group = "com.google.zxing", name = "core", version.ref = "zxing" }
+# CameraX 相机预览
+camerax-core = { group = "androidx.camera", name = "camera-core", version.ref = "camerax" }
+camerax-camera2 = { group = "androidx.camera", name = "camera-camera2", version.ref = "camerax" }
+camerax-lifecycle = { group = "androidx.camera", name = "camera-lifecycle", version.ref = "camerax" }
+camerax-view = { group = "androidx.camera", name = "camera-view", version.ref = "camerax" }
+# ML Kit 条码扫描
+mlkit-barcode-scanning = { group = "com.google.mlkit", name = "barcode-scanning", version.ref = "mlkitBarcodeScanning" }
+# Guava (CameraX ListenableFuture 依赖)
+guava = { group = "com.google.guava", name = "guava", version.ref = "guava" }

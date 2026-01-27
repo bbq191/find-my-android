@@ -21,7 +21,9 @@ class BootReceiver : BroadcastReceiver() {
             Intent.ACTION_BOOT_COMPLETED,
             Intent.ACTION_LOCKED_BOOT_COMPLETED,
             "android.intent.action.QUICKBOOT_POWERON",
-            "com.htc.intent.action.QUICKBOOT_POWERON" -> {
+            "com.htc.intent.action.QUICKBOOT_POWERON",
+            // Samsung S24 Ultra / One UI 8.0+ 专属开机广播
+            "com.samsung.android.intent.action.BOOT_COMPLETED" -> {
                 Log.d(TAG, "收到开机广播: ${intent.action}")
                 startMqttService(context)
                 initGeofenceServiceController(context)

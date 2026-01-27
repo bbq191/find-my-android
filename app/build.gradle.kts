@@ -184,6 +184,21 @@ dependencies {
     // Google Play Services (Activity Recognition)
     implementation(libs.play.services.location)
 
+    // ZXing 二维码生成
+    implementation(libs.zxing.core)
+
+    // CameraX 相机预览（用于扫码）
+    implementation(libs.camerax.core)
+    implementation(libs.camerax.camera2)
+    implementation(libs.camerax.lifecycle)
+    implementation(libs.camerax.view)
+
+    // ML Kit 条码扫描
+    implementation(libs.mlkit.barcode.scanning)
+
+    // Guava (CameraX ListenableFuture 依赖)
+    implementation(libs.guava)
+
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)

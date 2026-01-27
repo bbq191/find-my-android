@@ -5,7 +5,6 @@ import android.net.Uri
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -46,8 +45,10 @@ import me.ikate.findmy.ui.components.NetworkStatusIndicator
 import me.ikate.findmy.ui.components.PermissionGuideDialog
 import me.ikate.findmy.ui.components.TrackingStatusIndicator
 import me.ikate.findmy.util.DeviceAdminHelper
-import me.ikate.findmy.ui.dialog.GeofenceConfig
-import me.ikate.findmy.ui.dialog.GeofenceDialog
+import me.ikate.findmy.data.model.GeofenceType
+import me.ikate.findmy.ui.screen.geofence.GeofenceConfig
+import me.ikate.findmy.ui.screen.geofence.GeofenceEditorScreen
+import me.ikate.findmy.ui.screen.geofence.NotificationType
 import me.ikate.findmy.ui.dialog.LostModeAction
 import me.ikate.findmy.ui.dialog.LostModeConfig
 import me.ikate.findmy.ui.dialog.LostModeDialog
@@ -62,6 +63,7 @@ import me.ikate.findmy.ui.screen.main.components.LocationButton
 import me.ikate.findmy.ui.screen.main.components.MapLayerButton
 import me.ikate.findmy.ui.screen.main.components.MapLayerConfig
 import me.ikate.findmy.ui.screen.main.components.TencentMapViewWrapper
+import me.ikate.findmy.ui.screen.main.components.QrCodeScannerSheet
 import me.ikate.findmy.ui.screen.main.components.ShareLocationDialog
 import me.ikate.findmy.ui.screen.main.components.SheetValue
 import me.ikate.findmy.ui.screen.main.tabs.TabContent
@@ -116,26 +118,37 @@ fun MainScreen(
         )
     )
 
-    // 收集 ViewModel 状态
-    val tencentMap by viewModel.tencentMap.collectAsState()
-    val isLocationCentered by viewModel.isLocationCentered.collectAsState()
-    val devices by viewModel.devices.collectAsState() // 收集设备列表
-    val trackingTargetId by viewModel.trackingTargetId.collectAsState() // 正在追踪的目标 ID
-    val currentDeviceRealtimeLocation by viewModel.currentDeviceRealtimeLocation.collectAsState() // 实时位置
-    val currentDeviceBearing by viewModel.currentDeviceBearing.collectAsState() // 实时朝向
+    // 收集 ViewModel 聚合状态（性能优化：减少 collectAsState 调用次数）
+    val uiState by viewModel.uiState.collectAsState()
 
-    // 收集联系人 ViewModel 状态
-    val contacts by contactViewModel.contacts.collectAsState()
-    val currentUser by contactViewModel.currentUser.collectAsState() // 收集当前用户
-    val meName by contactViewModel.meName.collectAsState() // "我"的本地显示名称
-    val meAvatarUrl by contactViewModel.meAvatarUrl.collectAsState() // "我"的本地显示头像
-    val myDevice by contactViewModel.myDevice.collectAsState() // 收集当前设备
-    val myAddress by contactViewModel.myAddress.collectAsState() // 收集当前设备地址
-    val showAddDialog by contactViewModel.showAddDialog.collectAsState()
-    val isLoading by contactViewModel.isLoading.collectAsState()
-    val errorMessage by contactViewModel.errorMessage.collectAsState()
-    val refreshingContacts by contactViewModel.refreshingContacts.collectAsState() // 正在刷新位置的联系人
-    val ringingContactUid by contactViewModel.ringingContactUid.collectAsState() // 正在响铃的联系人
+    // 解构聚合状态，便于使用
+    val tencentMap = uiState.tencentMap
+    val isLocationCentered = uiState.isLocationCentered
+    val devices = uiState.devices
+    val trackingTargetId = uiState.trackingTargetId
+    val currentDeviceRealtimeLocation = uiState.currentDeviceRealtimeLocation
+    val currentDeviceBearing = uiState.currentDeviceBearing
+
+    // 收集联系人 ViewModel 聚合状态（性能优化：减少 collectAsState 调用次数）
+    val contactUiState by contactViewModel.uiState.collectAsState()
+
+    // 解构聚合状态，便于使用
+    val contacts = contactUiState.contacts
+    val currentUser = contactUiState.currentUser
+    val meName = contactUiState.meName
+    val meAvatarUrl = contactUiState.meAvatarUrl
+    val meStatus = contactUiState.meStatus
+    val myDevice = contactUiState.myDevice
+    val myAddress = contactUiState.myAddress
+    val showAddDialog = contactUiState.showAddDialog
+    val isLoading = contactUiState.isLoading
+    val errorMessage = contactUiState.errorMessage
+    val refreshingContacts = contactUiState.refreshingContacts
+    val ringingContactUid = contactUiState.ringingContactUid
+
+    // 扫码状态
+    var showQrCodeScanner by remember { mutableStateOf(false) }
+    var scannedUid by remember { mutableStateOf<String?>(null) }
 
     // 获取当前设备实时朝向
     val currentHeading = CompassHelper.rememberCompassHeading()
@@ -174,7 +187,7 @@ fun MainScreen(
 
     // 地理围栏对话框状态
     var contactForGeofence by remember { mutableStateOf<Contact?>(null) }
-    val geofenceManager = remember { GeofenceManager(context) }
+    val geofenceManager = remember { GeofenceManager.getInstance(context) }
     val activeGeofences by geofenceManager.activeGeofences.collectAsState()
     val geofenceContactIds = remember(activeGeofences) {
         activeGeofences.map { it.contactId }.toSet()
@@ -502,9 +515,11 @@ fun MainScreen(
                     currentUser = currentUser,
                     meName = meName,
                     meAvatarUrl = meAvatarUrl,
+                    meStatus = meStatus,
                     sharingWithCount = contacts.size,
                     onNameChange = { name -> contactViewModel.updateMeName(name) },
-                    onAvatarChange = { avatarUrl -> contactViewModel.updateMeAvatar(avatarUrl) }
+                    onAvatarChange = { avatarUrl -> contactViewModel.updateMeAvatar(avatarUrl) },
+                    onStatusChange = { status -> contactViewModel.updateMeStatus(status) }
                 )
             },
             onSheetValueChange = { value ->
@@ -589,19 +604,36 @@ fun MainScreen(
         ShareLocationDialog(
             isLoading = isLoading,
             errorMessage = errorMessage,
+            initialUid = scannedUid,
             onDismiss = {
                 contactViewModel.clearError()
                 contactViewModel.hideAddDialog()
+                scannedUid = null // 清除扫描的 UID
             },
             onConfirm = { email, duration ->
                 contactViewModel.shareLocation(email, duration)
+                scannedUid = null // 清除扫描的 UID
+            },
+            onScanQrCode = {
+                showQrCodeScanner = true
             }
         )
     }
 
-    // 权限引导对话框
-    val showPermissionGuide by contactViewModel.showPermissionGuide.collectAsState()
-    val missingPermissions by contactViewModel.missingPermissions.collectAsState()
+    // 二维码扫描 Sheet
+    if (showQrCodeScanner) {
+        QrCodeScannerSheet(
+            onDismiss = { showQrCodeScanner = false },
+            onScanResult = { uid ->
+                scannedUid = uid
+                showQrCodeScanner = false
+            }
+        )
+    }
+
+    // 权限引导对话框（从聚合状态中获取）
+    val showPermissionGuide = contactUiState.showPermissionGuide
+    val missingPermissions = contactUiState.missingPermissions
 
     if (showPermissionGuide) {
         PermissionGuideDialog(
@@ -755,18 +787,29 @@ fun MainScreen(
             GeofenceConfig(
                 enabled = true,
                 locationName = existingGeofence.locationName,
+                address = existingGeofence.address,
                 center = contact.location,
                 radiusMeters = existingGeofence.radiusMeters,
-                notifyOnEnter = existingGeofence.notifyOnEnter,
-                notifyOnExit = existingGeofence.notifyOnExit
+                notificationType = when {
+                    existingGeofence.geofenceType == GeofenceType.LEFT_BEHIND -> NotificationType.LEFT_BEHIND
+                    existingGeofence.notifyOnExit && !existingGeofence.notifyOnEnter -> NotificationType.LEAVE
+                    else -> NotificationType.ARRIVE
+                },
+                isOneTime = existingGeofence.isOneTime,
+                geofenceType = existingGeofence.geofenceType,
+                ownerLocation = if (existingGeofence.ownerLatitude != null && existingGeofence.ownerLongitude != null) {
+                    com.tencent.tencentmap.mapsdk.maps.model.LatLng(existingGeofence.ownerLatitude, existingGeofence.ownerLongitude)
+                } else null,
+                wasInsideOnCreate = existingGeofence.wasInsideOnCreate
             )
         } else {
             GeofenceConfig()
         }
 
-        GeofenceDialog(
+        GeofenceEditorScreen(
             contactName = contact.name,
             contactLocation = contact.location,
+            myLocation = myDevice?.location,
             currentConfig = currentConfig,
             onDismiss = { contactForGeofence = null },
             onConfirm = { config ->
@@ -774,25 +817,38 @@ fun MainScreen(
                 // 因为位置消息中的 userId 与 targetUserId 对应
                 val targetId = contact.targetUserId ?: contact.id
                 if (config.enabled && config.center != null) {
+                    // 确定通知类型
+                    val notifyOnEnter = config.notificationType == NotificationType.ARRIVE
+                    val notifyOnExit = config.notificationType == NotificationType.LEAVE ||
+                            config.notificationType == NotificationType.LEFT_BEHIND
+
                     geofenceManager.addGeofence(
                         contactId = targetId,
                         contactName = contact.name,
                         locationName = config.locationName,
                         center = config.center,
                         radiusMeters = config.radiusMeters,
-                        notifyOnEnter = config.notifyOnEnter,
-                        notifyOnExit = config.notifyOnExit,
+                        notifyOnEnter = notifyOnEnter,
+                        notifyOnExit = notifyOnExit,
+                        geofenceType = config.geofenceType,
+                        address = config.address,
+                        wasInsideOnCreate = config.wasInsideOnCreate,
+                        ownerLocation = config.ownerLocation,
+                        isOneTime = config.isOneTime,
                         onSuccess = {
                             scope.launch {
-                                snackbarHostState.showSnackbar(
-                                    message = "已为「${contact.name}」设置地理围栏"
-                                )
+                                val message = when (config.notificationType) {
+                                    NotificationType.ARRIVE -> "已设置「${contact.name}」到达通知"
+                                    NotificationType.LEAVE -> "已设置「${contact.name}」离开通知"
+                                    NotificationType.LEFT_BEHIND -> "已设置「${contact.name}」离开我身边通知"
+                                }
+                                snackbarHostState.showSnackbar(message = message)
                             }
                         },
                         onFailure = { errorMessage ->
                             scope.launch {
                                 snackbarHostState.showSnackbar(
-                                    message = "设置地理围栏失败: $errorMessage"
+                                    message = "设置位置通知失败: $errorMessage"
                                 )
                             }
                         }
@@ -801,7 +857,7 @@ fun MainScreen(
                     geofenceManager.removeGeofence(targetId)
                     scope.launch {
                         snackbarHostState.showSnackbar(
-                            message = "已移除「${contact.name}」的地理围栏"
+                            message = "已移除「${contact.name}」的位置通知"
                         )
                     }
                 }

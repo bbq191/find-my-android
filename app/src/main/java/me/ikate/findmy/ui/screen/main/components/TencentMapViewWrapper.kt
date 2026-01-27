@@ -615,7 +615,7 @@ private fun updateMapContent(
     contactCirclesRef.value = newContactCircles
     animatedContactPositionsRef.value = newAnimatedPositions
 
-    // ==================== 相机追踪 ====================
+    // ==================== 相机追踪（软重定向模式）====================
     if (trackingTargetId != null) {
         val targetLocation: LatLng? = when {
             trackingTargetId == currentDeviceId -> {
@@ -639,23 +639,29 @@ private fun updateMapContent(
 
         targetLocation?.let { newPosition ->
             if (!newPosition.latitude.isNaN() && !newPosition.longitude.isNaN()) {
-                val lastPosition = lastTrackingPositionRef.value
+                val lastTargetPosition = lastTrackingPositionRef.value
 
-                val hasSignificantChange = lastPosition == null ||
-                    kotlin.math.abs(lastPosition.latitude - newPosition.latitude) > 0.000001 ||
-                    kotlin.math.abs(lastPosition.longitude - newPosition.longitude) > 0.000001
+                val hasSignificantChange = lastTargetPosition == null ||
+                    kotlin.math.abs(lastTargetPosition.latitude - newPosition.latitude) > 0.000001 ||
+                    kotlin.math.abs(lastTargetPosition.longitude - newPosition.longitude) > 0.000001
 
                 if (hasSignificantChange) {
+                    // 软重定向：先捕获当前相机位置，再取消动画
+                    // 这确保新动画从当前视觉位置开始，避免抖动
+                    val currentCameraPosition = tencentMap.cameraPosition.target
                     cameraAnimatorRef.value?.cancel()
 
-                    if (lastPosition != null) {
+                    // 使用捕获的相机位置作为起点（软重定向核心）
+                    val startPosition = currentCameraPosition ?: lastTargetPosition
+
+                    if (startPosition != null) {
                         val animator = ValueAnimator.ofFloat(0f, 1f).apply {
                             duration = animConfig.cameraAnimDurationMs
                             interpolator = LinearInterpolator()
                             addUpdateListener { animation ->
                                 val fraction = animation.animatedValue as Float
-                                val lat = lastPosition.latitude + (newPosition.latitude - lastPosition.latitude) * fraction
-                                val lng = lastPosition.longitude + (newPosition.longitude - lastPosition.longitude) * fraction
+                                val lat = startPosition.latitude + (newPosition.latitude - startPosition.latitude) * fraction
+                                val lng = startPosition.longitude + (newPosition.longitude - startPosition.longitude) * fraction
                                 val interpolatedPosition = latLngOf(lat, lng)
 
                                 tencentMap.moveCamera(

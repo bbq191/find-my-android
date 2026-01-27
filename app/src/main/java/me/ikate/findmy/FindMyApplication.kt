@@ -2,6 +2,7 @@ package me.ikate.findmy
 
 import android.app.Application
 import android.os.Build
+import android.os.PowerManager
 import android.os.StrictMode
 import android.util.Log
 import com.tencent.map.geolocation.TencentLocationManager
@@ -75,6 +76,9 @@ class FindMyApplication : Application() {
         // 初始化围栏服务智能开关控制器（通过 Koin 注入，由 Koin 管理生命周期）
         // 根据数据库中是否有激活围栏，自动决定是否启动围栏监控前台服务
         initGeofenceServiceController()
+
+        // 检查电池优化白名单状态（S24U / One UI 8.0+ 优化）
+        checkBatteryOptimization()
     }
 
     /**
@@ -240,5 +244,47 @@ class FindMyApplication : Application() {
         )
 
         Log.d(TAG, "StrictMode 初始化完成（精简模式：仅检测网络访问和资源泄漏）")
+    }
+
+    /**
+     * 检查电池优化白名单状态
+     *
+     * Samsung S24 Ultra / One UI 8.0+ 对后台服务限制严格
+     * 应用需要在电池优化白名单中才能保持后台服务稳定运行
+     *
+     * 注意：
+     * - 仅记录状态，不主动弹窗请求（避免影响用户体验）
+     * - 实际的白名单引导在首次向导或权限引导中完成
+     */
+    private fun checkBatteryOptimization() {
+        try {
+            val powerManager = getSystemService(POWER_SERVICE) as PowerManager
+            val isIgnoringBatteryOptimizations = powerManager.isIgnoringBatteryOptimizations(packageName)
+
+            if (isIgnoringBatteryOptimizations) {
+                Log.d(TAG, "电池优化白名单状态: 已在白名单中 ✓")
+            } else {
+                Log.w(TAG, "电池优化白名单状态: 未在白名单中 ✗")
+                Log.w(TAG, "建议用户将应用添加到电池优化白名单以确保后台服务稳定运行")
+                // 记录状态，供后续权限引导使用
+                // 不在此处弹窗，避免影响启动体验
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "检查电池优化白名单失败", e)
+        }
+    }
+
+    /**
+     * 检查应用是否在电池优化白名单中
+     * 可供其他组件调用
+     */
+    fun isBatteryOptimizationIgnored(): Boolean {
+        return try {
+            val powerManager = getSystemService(POWER_SERVICE) as PowerManager
+            powerManager.isIgnoringBatteryOptimizations(packageName)
+        } catch (e: Exception) {
+            Log.e(TAG, "检查电池优化白名单失败", e)
+            false
+        }
     }
 }

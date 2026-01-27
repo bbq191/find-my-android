@@ -58,9 +58,11 @@ fun TabContent(
     currentUser: User?,
     meName: String?,
     meAvatarUrl: String?,
+    meStatus: String?,
     sharingWithCount: Int,
     onNameChange: (String) -> Unit,
-    onAvatarChange: (String?) -> Unit
+    onAvatarChange: (String?) -> Unit,
+    onStatusChange: (String?) -> Unit
 ) {
     AnimatedContent(
         targetState = selectedTab,
@@ -122,9 +124,11 @@ fun TabContent(
                 currentUser = currentUser,
                 meName = meName,
                 meAvatarUrl = meAvatarUrl,
+                meStatus = meStatus,
                 sharingWithCount = sharingWithCount,
                 onNameChange = onNameChange,
-                onAvatarChange = onAvatarChange
+                onAvatarChange = onAvatarChange,
+                onStatusChange = onStatusChange
             )
         }
     }

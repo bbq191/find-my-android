@@ -16,6 +16,33 @@ object DistanceCalculator {
 
     /**
      * 计算两个经纬度之间的距离
+     * @param lat1 起点纬度
+     * @param lon1 起点经度
+     * @param lat2 终点纬度
+     * @param lon2 终点经度
+     * @return 距离（米）
+     */
+    fun calculateDistance(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Double {
+        val lat1Rad = Math.toRadians(lat1)
+        val lon1Rad = Math.toRadians(lon1)
+        val lat2Rad = Math.toRadians(lat2)
+        val lon2Rad = Math.toRadians(lon2)
+
+        val dLat = lat2Rad - lat1Rad
+        val dLon = lon2Rad - lon1Rad
+
+        val a = sin(dLat / 2) * sin(dLat / 2) +
+                cos(lat1Rad) * cos(lat2Rad) *
+                sin(dLon / 2) * sin(dLon / 2)
+
+        val c = 2 * atan2(sqrt(a), sqrt(1 - a))
+
+        val distanceKm = EARTH_RADIUS_KM * c
+        return distanceKm * 1000 // 转换为米
+    }
+
+    /**
+     * 计算两个经纬度之间的距离
      * @param from 起点坐标
      * @param to 终点坐标
      * @return 距离（米）

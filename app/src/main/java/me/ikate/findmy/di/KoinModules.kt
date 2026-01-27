@@ -52,7 +52,7 @@ val repositoryModule = module {
  * 提供围栏管理相关依赖
  */
 val geofenceModule = module {
-    single { GeofenceManager(androidContext()) }
+    single { GeofenceManager.getInstance(androidContext()) }
 }
 
 /**

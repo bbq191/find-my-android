@@ -148,11 +148,18 @@ class SmoothMarker(
         durationMs: Long,
         onUpdate: ((LatLng, Float) -> Unit)?
     ) {
-        // 1. 取消正在进行的动画（防止鬼畜）
+        // 1. 软重定向：先捕获当前动画位置，再取消动画
+        // 这确保新动画从当前视觉位置开始，避免跳跃
+        val capturedPosition = animatedPosition
+        val capturedBearing = marker.rotation
         currentAnimator?.cancel()
 
+        // 使用捕获的位置作为起点（软重定向核心）
+        val effectiveFromLatLng = capturedPosition
+        val effectiveFromBearingRaw = if (rotateMarker) capturedBearing else fromBearing
+
         // 2. 计算移动距离，决定是否更新航向角
-        val distance = calculateDistance(fromLatLng, toLatLng)
+        val distance = calculateDistance(effectiveFromLatLng, toLatLng)
         val shouldUpdateBearing = BearingEvaluator.shouldUpdateBearing(distance, bearingThresholdMeters)
 
         // 3. 确定最终的航向角
@@ -162,10 +169,10 @@ class SmoothMarker(
             lastBearing // 低速时保持原航向角
         }
 
-        val effectiveFromBearing = BearingEvaluator.normalizeAngle(fromBearing)
+        val effectiveFromBearing = BearingEvaluator.normalizeAngle(effectiveFromBearingRaw)
 
         // 4. 通知动画开始
-        animationListener?.onAnimationStart(fromLatLng, toLatLng)
+        animationListener?.onAnimationStart(effectiveFromLatLng, toLatLng)
 
         // 5. 创建动画
         val animator = ValueAnimator.ofFloat(0f, 1f).apply {
@@ -175,8 +182,8 @@ class SmoothMarker(
             addUpdateListener { animation ->
                 val fraction = animation.animatedValue as Float
 
-                // 计算插值坐标
-                val interpolatedPosition = latLngEvaluator.evaluate(fraction, fromLatLng, toLatLng)
+                // 计算插值坐标（从捕获的当前位置开始，实现软重定向）
+                val interpolatedPosition = latLngEvaluator.evaluate(fraction, effectiveFromLatLng, toLatLng)
 
                 // 计算插值航向角（最短路径）
                 val interpolatedBearing = BearingEvaluator.evaluate(
