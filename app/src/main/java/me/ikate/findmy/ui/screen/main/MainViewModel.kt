@@ -18,10 +18,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import me.ikate.findmy.data.model.Device
 import me.ikate.findmy.data.model.latLngOf
-import me.ikate.findmy.data.remote.mqtt.LocationMqttService
 import me.ikate.findmy.data.remote.mqtt.MqttConfig
 import me.ikate.findmy.data.remote.mqtt.MqttConnectionManager
-import me.ikate.findmy.data.remote.mqtt.message.RequestMessage
 import me.ikate.findmy.data.repository.AuthRepository
 import me.ikate.findmy.data.repository.ContactRepository
 import me.ikate.findmy.data.repository.DeviceRepository
@@ -112,9 +110,6 @@ class MainViewModel(
     // 选中的设备（用于显示详情）
     private val _selectedDevice = MutableStateFlow<Device?>(null)
     val selectedDevice: StateFlow<Device?> = _selectedDevice.asStateFlow()
-
-    // 底部面板状态
-    private val _sheetValue = MutableStateFlow(SheetValue.Collapsed)
 
     // 是否已完成首次自动定位
     private var hasInitialCentered = false
@@ -325,11 +320,27 @@ class MainViewModel(
      * 启动实时位置更新
      * 像 iOS Find My 一样，查看自己位置时地图点位实时跟随移动
      */
+    // 实时定位：是否已获得过 GPS 定位（获得后不再接受网络定位，防止精度回退跳动）
+    private var hasReceivedGps = false
+    // 实时定位：上次接受的坐标（用于最小距离过滤）
+    private var lastRealtimeLat = Double.NaN
+    private var lastRealtimeLng = Double.NaN
+
+    // 实时定位精度门槛（仅接受精度优于此值的位置）
+    private val realtimeAccuracyThreshold = 25f
+    // 实时定位最小变化距离（米），低于此值不更新 marker，避免 GPS 微跳
+    private val realtimeMinDistanceMeters = 3.0
+
     private fun startRealtimeLocationUpdates() {
         if (realtimeLocationJob?.isActive == true) {
             Log.d(TAG, "实时定位已在运行中")
             return
         }
+
+        // 重置过滤状态
+        hasReceivedGps = false
+        lastRealtimeLat = Double.NaN
+        lastRealtimeLng = Double.NaN
 
         Log.d(TAG, "启动实时位置更新（像 iOS Find My 一样）")
         realtimeLocationJob = viewModelScope.launch {
@@ -338,11 +349,34 @@ class MainViewModel(
             ).collect { locationResult ->
                 if (locationResult.isSuccess) {
                     val latLng = locationResult.latLng
-                    if (!latLng.latitude.isNaN() && !latLng.longitude.isNaN()) {
-                        // 更新实时位置（用于地图显示）
-                        _currentDeviceRealtimeLocation.value = latLng
-                        _currentDeviceBearing.value = locationResult.bearing
+                    if (latLng.latitude.isNaN() || latLng.longitude.isNaN()) return@collect
+
+                    val isGps = locationResult.locationType ==
+                        me.ikate.findmy.service.TencentLocationService.LOCATION_TYPE_GPS
+
+                    // 精度降级过滤：已获得 GPS 后，忽略网络定位（防止 30m 精度回退导致跳动）
+                    if (hasReceivedGps && !isGps) return@collect
+
+                    // 精度门槛过滤：丢弃精度过差的位置
+                    if (locationResult.accuracy > realtimeAccuracyThreshold && !isGps) return@collect
+
+                    if (isGps) hasReceivedGps = true
+
+                    // 最小距离过滤：GPS 微跳抑制
+                    if (!lastRealtimeLat.isNaN() && !lastRealtimeLng.isNaN()) {
+                        val dist = me.ikate.findmy.util.DistanceCalculator.calculateDistance(
+                            lastRealtimeLat, lastRealtimeLng,
+                            latLng.latitude, latLng.longitude
+                        )
+                        if (dist < realtimeMinDistanceMeters) return@collect
                     }
+
+                    lastRealtimeLat = latLng.latitude
+                    lastRealtimeLng = latLng.longitude
+
+                    // 更新实时位置（用于地图显示）
+                    _currentDeviceRealtimeLocation.value = latLng
+                    _currentDeviceBearing.value = locationResult.bearing
                 }
             }
         }
@@ -381,14 +415,6 @@ class MainViewModel(
     }
 
     /**
-     * 检查当前用户是否为匿名用户
-     * 简化实现：使用 Android ID 时不存在匿名用户概念，始终返回 false
-     */
-    private fun isAnonymousUser(): Boolean {
-        return false
-    }
-
-    /**
      * 初始化 MQTT 连接
      */
     private fun initMqttConnection() {
@@ -398,56 +424,12 @@ class MainViewModel(
         }
 
         viewModelScope.launch {
-            // 连接 MQTT
+            // 连接 MQTT（订阅由 MqttForegroundService 统一管理）
             val result = deviceRepository.connectMqtt()
             result.fold(
                 onSuccess = {
                     Log.d(TAG, "MQTT 连接成功")
                     _mqttConnectionState.value = MqttConnectionManager.ConnectionState.Connected
-                    // 订阅当前用户的位置主题和共享主题
-                    val userId = authRepository.getCurrentUserId()
-                    if (userId != null) {
-                        deviceRepository.subscribeToUser(userId)
-                        // 订阅共享主题（接收邀请和响应）和请求主题
-                        val mqttService = DeviceRepository.getMqttService(getApplication())
-                        viewModelScope.launch {
-                            // 订阅共享主题
-                            val shareResult = mqttService.subscribeToShareTopics(userId)
-                            if (shareResult.isSuccess) {
-                                Log.d(TAG, "已订阅共享主题")
-                            } else {
-                                Log.e(TAG, "订阅共享主题失败")
-                            }
-                            // 订阅请求主题（位置请求、发声请求等）
-                            val requestResult = mqttService.subscribeToRequestTopic(userId)
-                            if (requestResult.isSuccess) {
-                                Log.d(TAG, "已订阅请求主题")
-                                // 开始监听请求
-                                observeRequests(mqttService)
-                            } else {
-                                Log.e(TAG, "订阅请求主题失败")
-                            }
-                            // 订阅共享暂停状态主题
-                            val pauseResult = mqttService.subscribeToSharePauseTopic(userId)
-                            if (pauseResult.isSuccess) {
-                                Log.d(TAG, "已订阅暂停状态主题")
-                            } else {
-                                Log.e(TAG, "订阅暂停状态主题失败")
-                            }
-                            // 订阅围栏主题（事件 + 同步）
-                            val geofenceResult = mqttService.subscribeToGeofenceTopics(userId)
-                            if (geofenceResult.isSuccess) {
-                                Log.d(TAG, "已订阅围栏主题")
-                            } else {
-                                Log.e(TAG, "订阅围栏主题失败")
-                            }
-                            // 刷新离线消息队列
-                            val sentCount = mqttService.flushPendingMessages()
-                            if (sentCount > 0) {
-                                Log.d(TAG, "已发送 $sentCount 条离线消息")
-                            }
-                        }
-                    }
                 },
                 onFailure = { error ->
                     Log.e(TAG, "MQTT 连接失败", error)
@@ -482,91 +464,6 @@ class MainViewModel(
     }
 
     /**
-     * 监听 MQTT 请求消息（位置请求、发声请求等）
-     */
-    private fun observeRequests(mqttService: LocationMqttService) {
-        viewModelScope.launch {
-            Log.i(TAG, "[请求监听] 开始监听 MQTT 请求消息...")
-            mqttService.requestUpdates.collect { request ->
-                Log.i(TAG, "========== [请求监听] 收到请求 ==========")
-                Log.i(TAG, "[请求监听] 类型: ${request.type}")
-                Log.i(TAG, "[请求监听] 来自: ${request.requesterUid}")
-                Log.i(TAG, "[请求监听] 目标: ${request.targetUid}")
-                handleRequest(request)
-            }
-        }
-    }
-
-    /**
-     * 处理收到的请求
-     * 在响应请求前检查共享状态：
-     * 1. 请求者必须在联系人列表中
-     * 2. 共享状态必须是 ACCEPTED
-     * 3. 我没有暂停与该用户的共享
-     */
-    private fun handleRequest(request: RequestMessage) {
-        viewModelScope.launch {
-            Log.i(TAG, "[处理请求] 开始处理请求: type=${request.type}")
-
-            // 检查是否应该响应该请求
-            Log.d(TAG, "[处理请求] 步骤1: 检查共享状态...")
-            val shouldRespond = contactRepository.shouldRespondToRequest(request.requesterUid)
-            if (!shouldRespond) {
-                Log.w(TAG, "[处理请求] ✗ 忽略请求: 共享已暂停或无效 (from=${request.requesterUid})")
-                return@launch
-            }
-            Log.i(TAG, "[处理请求] ✓ 共享状态有效，将响应请求")
-
-            when (request.type) {
-                RequestMessage.TYPE_SINGLE -> {
-                    // 单次位置请求 - 立即上报位置
-                    Log.i(TAG, "[处理请求] → 单次位置请求，正在上报位置...")
-                    reportLocationNow()
-                    Log.i(TAG, "[处理请求] ✓ 位置上报完成")
-                }
-                RequestMessage.TYPE_CONTINUOUS -> {
-                    // 持续追踪请求 - 触发连续上报
-                    Log.i(TAG, "[处理请求] → 持续追踪请求，开始上报位置...")
-                    reportLocationNow()
-                    Log.i(TAG, "[处理请求] ✓ 位置上报完成")
-                }
-                RequestMessage.TYPE_PLAY_SOUND -> {
-                    // 播放声音请求 - 直接调用 SoundPlaybackService
-                    Log.i(TAG, "[处理请求] → 播放声音请求，来自: ${request.requesterUid}")
-                    me.ikate.findmy.service.SoundPlaybackService.startPlaying(
-                        context = getApplication(),
-                        requesterUid = request.requesterUid
-                    )
-                }
-                RequestMessage.TYPE_STOP_SOUND -> {
-                    // 停止声音 - 直接调用 SoundPlaybackService
-                    Log.i(TAG, "[处理请求] → 停止声音请求")
-                    me.ikate.findmy.service.SoundPlaybackService.stopPlaying(getApplication())
-                }
-                RequestMessage.TYPE_LOST_MODE -> {
-                    // 丢失模式 - 直接调用 LostModeService
-                    Log.i(TAG, "[处理请求] → 丢失模式请求: message=${request.message}, phone=${request.phoneNumber}, playSound=${request.playSound}")
-                    me.ikate.findmy.service.LostModeService.enable(
-                        context = getApplication(),
-                        message = request.message ?: "此设备已丢失",
-                        phoneNumber = request.phoneNumber ?: "",
-                        playSound = request.playSound,
-                        requesterUid = request.requesterUid
-                    )
-                }
-                RequestMessage.TYPE_DISABLE_LOST_MODE -> {
-                    // 关闭丢失模式
-                    Log.i(TAG, "[处理请求] → 关闭丢失模式请求")
-                    me.ikate.findmy.service.LostModeService.disable(getApplication())
-                }
-                else -> {
-                    Log.w(TAG, "[处理请求] ✗ 未知请求类型: ${request.type}")
-                }
-            }
-        }
-    }
-
-    /**
      * 设置地图实例 (腾讯地图)
      */
     fun setTencentMap(map: TencentMap) {
@@ -596,10 +493,7 @@ class MainViewModel(
                 TencentMapCameraHelper.jumpToLocation(map, result.latLng, zoom = DEFAULT_SINGLE_DEVICE_ZOOM)
                 updateLocationCenteredState(true)
 
-                // 只有注册用户点击重定位时才上报位置，匿名用户不上报
-                if (!isAnonymousUser()) {
-                    reportLocationNow()
-                }
+                reportLocationNow()
             } else {
                 Log.e(TAG, "定位失败: ${result.errorInfo}")
             }
@@ -616,8 +510,8 @@ class MainViewModel(
     /**
      * 更新底部面板状态
      */
-    fun updateSheetValue(value: SheetValue) {
-        _sheetValue.value = value
+    fun updateSheetValue(@Suppress("UNUSED_PARAMETER") value: SheetValue) {
+        // 预留接口，供 MainScreen 调用
     }
 
     /**
@@ -896,6 +790,8 @@ class MainViewModel(
         // 释放腾讯定位资源
         tencentLocationService.destroy()
         locationReportService.destroy()
+        // 释放 TencentMap 引用，避免 Activity 重建后旧引用导致内存泄漏
+        _tencentMap.value = null
         // 注意：不断开 MQTT 连接，由 MqttForegroundService 管理
         // 这样 APP 退出后仍能保持连接，支持后台功能（刷新、追踪、响铃、丢失模式）
     }

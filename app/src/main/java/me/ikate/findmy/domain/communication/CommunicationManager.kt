@@ -101,8 +101,8 @@ class CommunicationManager private constructor(private val context: Context) {
     private val _connectionStatus = MutableStateFlow(ConnectionStatus.DISCONNECTED)
     val connectionStatus: StateFlow<ConnectionStatus> = _connectionStatus.asStateFlow()
 
-    // 网络状态
-    private val _networkType = MutableStateFlow(NetworkType.NONE)
+    // 网络状态（构造时同步读取，避免初始 NONE 导致 Banner 闪烁）
+    private val _networkType = MutableStateFlow(detectCurrentNetworkType())
     val networkType: StateFlow<NetworkType> = _networkType.asStateFlow()
 
     // 离线消息数量
@@ -118,7 +118,9 @@ class CommunicationManager private constructor(private val context: Context) {
 
     // 重连任务
     private var reconnectJob: Job? = null
+    @Volatile
     private var reconnectAttempt = 0
+    @Volatile
     private var isReconnecting = false
 
     // 队列刷新任务
@@ -234,13 +236,35 @@ class CommunicationManager private constructor(private val context: Context) {
     }
 
     /**
+     * 同步检测当前网络类型（用于初始值，避免启动时 Banner 闪烁）
+     */
+    private fun detectCurrentNetworkType(): NetworkType {
+        return try {
+            val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE)
+                as ConnectivityManager
+            val network = connectivityManager.activeNetwork
+            val capabilities = network?.let { connectivityManager.getNetworkCapabilities(it) }
+            resolveNetworkType(capabilities)
+        } catch (e: Exception) {
+            Log.w(TAG, "同步检测网络类型失败", e)
+            NetworkType.NONE
+        }
+    }
+
+    /**
      * 更新网络类型
      */
     private fun updateNetworkType(connectivityManager: ConnectivityManager) {
         val network = connectivityManager.activeNetwork
         val capabilities = connectivityManager.getNetworkCapabilities(network)
+        _networkType.value = resolveNetworkType(capabilities)
+    }
 
-        _networkType.value = when {
+    /**
+     * 根据 NetworkCapabilities 解析网络类型
+     */
+    private fun resolveNetworkType(capabilities: NetworkCapabilities?): NetworkType {
+        return when {
             capabilities == null -> NetworkType.NONE
             capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> NetworkType.WIFI
             capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> NetworkType.CELLULAR

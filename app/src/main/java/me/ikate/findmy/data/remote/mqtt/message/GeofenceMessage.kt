@@ -88,49 +88,6 @@ data class GeofenceEventMessage(
             timestamp = event.timestamp
         )
 
-        /**
-         * 创建进入事件消息
-         */
-        fun enter(
-            eventId: Long,
-            geofenceId: String,
-            contactId: String,
-            contactName: String,
-            locationName: String,
-            latitude: Double,
-            longitude: Double
-        ): GeofenceEventMessage = GeofenceEventMessage(
-            eventId = eventId,
-            geofenceId = geofenceId,
-            contactId = contactId,
-            contactName = contactName,
-            locationName = locationName,
-            eventType = GeofenceEventType.ENTER.name,
-            latitude = latitude,
-            longitude = longitude
-        )
-
-        /**
-         * 创建离开事件消息
-         */
-        fun exit(
-            eventId: Long,
-            geofenceId: String,
-            contactId: String,
-            contactName: String,
-            locationName: String,
-            latitude: Double,
-            longitude: Double
-        ): GeofenceEventMessage = GeofenceEventMessage(
-            eventId = eventId,
-            geofenceId = geofenceId,
-            contactId = contactId,
-            contactName = contactName,
-            locationName = locationName,
-            eventType = GeofenceEventType.EXIT.name,
-            latitude = latitude,
-            longitude = longitude
-        )
     }
 }
 

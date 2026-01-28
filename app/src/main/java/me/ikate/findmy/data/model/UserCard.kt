@@ -26,15 +26,17 @@ data class UserCard(
     /**
      * 序列化为 JSON 字符串
      */
-    fun toJson(): String = Gson().toJson(this)
+    fun toJson(): String = gson.toJson(this)
 
     companion object {
+        private val gson = Gson()
+
         /**
          * 从 JSON 解析 UserCard
          * @return 解析成功返回 UserCard，失败返回 null
          */
         fun fromJson(json: String): UserCard? = try {
-            Gson().fromJson(json, UserCard::class.java)
+            gson.fromJson(json, UserCard::class.java)
         } catch (e: Exception) {
             null
         }

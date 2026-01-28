@@ -82,9 +82,13 @@ fun NetworkStatusIndicator(
     val pendingMessageCount by communicationManager.pendingMessageCount.collectAsState()
     val reconnectStats by communicationManager.reconnectStats.collectAsState()
 
-    // 根据状态决定是否显示提示
-    val shouldShowBanner = connectionStatus != CommunicationManager.ConnectionStatus.CONNECTED ||
-            networkType == CommunicationManager.NetworkType.NONE
+    // 根据状态决定是否显示提示：
+    // - 无网络时始终显示
+    // - MQTT 连接失败或断开时显示
+    // - MQTT 正在连接/重连中不显示（避免启动时闪烁红色 Banner）
+    val shouldShowBanner = networkType == CommunicationManager.NetworkType.NONE ||
+            connectionStatus == CommunicationManager.ConnectionStatus.FAILED ||
+            connectionStatus == CommunicationManager.ConnectionStatus.RECONNECTING
 
     Column(modifier = modifier) {
         // 连接问题横幅

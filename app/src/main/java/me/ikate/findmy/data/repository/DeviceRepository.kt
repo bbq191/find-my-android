@@ -6,6 +6,7 @@ import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -37,12 +38,13 @@ class DeviceRepository(private val context: Context? = null) {
          */
         @SuppressLint("HardwareIds")
         fun getMqttManager(context: Context): MqttConnectionManager {
+            val ctx = context.applicationContext
             return mqttManager ?: synchronized(this) {
                 mqttManager ?: run {
-                    val userId = AuthRepository.getUserId(context)
+                    val userId = AuthRepository.getUserId(ctx)
                     val deviceId = userId // Android ID 同时作为用户 ID 和设备 ID
                     val clientId = MqttConfig.generateClientId(userId, deviceId)
-                    MqttConnectionManager(context, clientId).also { mqttManager = it }
+                    MqttConnectionManager(ctx, clientId).also { mqttManager = it }
                 }
             }
         }
@@ -51,10 +53,11 @@ class DeviceRepository(private val context: Context? = null) {
          * 获取 MQTT 位置服务（单例）
          */
         fun getMqttService(context: Context): LocationMqttService {
+            val ctx = context.applicationContext
             return mqttService ?: synchronized(this) {
                 mqttService ?: LocationMqttService(
-                    context,
-                    getMqttManager(context)
+                    ctx,
+                    getMqttManager(ctx)
                 ).also { mqttService = it }
             }
         }
@@ -180,5 +183,12 @@ class DeviceRepository(private val context: Context? = null) {
      */
     suspend fun clearLocalData() {
         deviceDao?.deleteAll()
+    }
+
+    /**
+     * 释放资源，取消内部 CoroutineScope
+     */
+    fun destroy() {
+        scope.cancel()
     }
 }

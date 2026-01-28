@@ -22,7 +22,6 @@ import me.ikate.findmy.data.model.GeofenceEventType
 import me.ikate.findmy.data.model.GeofenceTriggerType
 import me.ikate.findmy.data.model.GeofenceType
 import me.ikate.findmy.data.model.latLngOf
-import java.util.UUID
 
 /**
  * 电子围栏数据仓库

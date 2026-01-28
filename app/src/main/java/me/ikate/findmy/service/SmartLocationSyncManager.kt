@@ -74,6 +74,9 @@ class SmartLocationSyncManager(
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+    // 缓存 AuthRepository，避免每次 requestLocationUpdate 都创建新实例
+    private val authRepository = me.ikate.findmy.data.repository.AuthRepository(context)
+
     // 当前选中的联系人 UID（用于高频更新）
     private val _focusedContactUid = MutableStateFlow<String?>(null)
     val focusedContactUid: StateFlow<String?> = _focusedContactUid.asStateFlow()
@@ -88,6 +91,13 @@ class SmartLocationSyncManager(
 
     // 已订阅的联系人 UID 集合
     private val subscribedContacts = mutableSetOf<String>()
+
+    // 自身位置上报节流：上次上报时间戳
+    @Volatile
+    private var lastSelfReportTimeMs: Long = 0L
+
+    // 自身位置上报最小间隔（30秒）
+    private val selfReportThrottleMs = 30_000L
 
     /**
      * 初始化同步管理器
@@ -193,6 +203,27 @@ class SmartLocationSyncManager(
     }
 
     /**
+     * 节流上报自身位置
+     * 距离上次上报不足 30 秒时跳过，避免高频定位写入数据库导致地图点位抖动
+     * 使用 synchronized 保证 check-then-act 原子性，防止并发协程绕过节流
+     */
+    private suspend fun throttledReportSelfLocation() {
+        val shouldReport = synchronized(this) {
+            val now = System.currentTimeMillis()
+            if (now - lastSelfReportTimeMs < selfReportThrottleMs) {
+                Log.d(TAG, "自身位置上报节流: 距上次上报 ${(now - lastSelfReportTimeMs) / 1000}秒，跳过")
+                false
+            } else {
+                lastSelfReportTimeMs = now
+                true
+            }
+        }
+        if (shouldReport) {
+            locationReportService.reportCurrentLocation()
+        }
+    }
+
+    /**
      * 刷新所有联系人位置
      * 向所有已接受共享的联系人发送位置请求
      */
@@ -209,8 +240,8 @@ class SmartLocationSyncManager(
 
                 Log.i(TAG, "刷新所有联系人位置，数量: ${validContacts.size}")
 
-                // 先上报自己的位置
-                locationReportService.reportCurrentLocation()
+                // 节流上报自己的位置
+                throttledReportSelfLocation()
 
                 // 向每个联系人发送位置请求
                 validContacts.forEach { contact ->
@@ -232,8 +263,8 @@ class SmartLocationSyncManager(
             try {
                 Log.d(TAG, "刷新联系人位置: $targetUid")
 
-                // 先上报自己的位置
-                locationReportService.reportCurrentLocation()
+                // 节流上报自己的位置
+                throttledReportSelfLocation()
 
                 // 发送位置请求
                 requestLocationUpdate(targetUid)
@@ -372,8 +403,8 @@ class SmartLocationSyncManager(
 
             Log.d(TAG, "后台刷新联系人位置，数量: ${validContacts.size}")
 
-            // 先上报自己的位置
-            locationReportService.reportCurrentLocation()
+            // 节流上报自己的位置
+            throttledReportSelfLocation()
 
             // 向每个联系人发送位置请求
             validContacts.forEach { contact ->
@@ -430,7 +461,7 @@ class SmartLocationSyncManager(
     private suspend fun requestLocationUpdate(targetUid: String) {
         try {
             val mqttManager = DeviceRepository.getMqttManager(context)
-            val currentUid = me.ikate.findmy.data.repository.AuthRepository(context).getCurrentUserId()
+            val currentUid = authRepository.getCurrentUserId()
 
             if (currentUid == null) {
                 Log.w(TAG, "当前用户未登录，无法请求位置")
@@ -468,6 +499,14 @@ class SmartLocationSyncManager(
         } catch (e: Exception) {
             Log.e(TAG, "发送位置请求异常", e)
         }
+    }
+
+    /**
+     * 上报当前位置（委托给内部的 LocationReportService）
+     * 供 MqttForegroundService 调用，避免重复创建 LocationReportService 实例
+     */
+    suspend fun reportCurrentLocation(): Result<me.ikate.findmy.data.model.Device> {
+        return locationReportService.reportCurrentLocation()
     }
 
     /**

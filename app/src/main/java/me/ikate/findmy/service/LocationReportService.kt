@@ -8,6 +8,7 @@ import me.ikate.findmy.data.model.DeviceType
 import me.ikate.findmy.data.repository.AuthRepository
 import me.ikate.findmy.data.repository.DeviceRepository
 import me.ikate.findmy.util.DeviceIdProvider
+import me.ikate.findmy.util.DistanceCalculator
 
 /**
  * 位置上报服务
@@ -22,6 +23,15 @@ class LocationReportService(private val context: Context) {
 
     private val tencentLocationService = TencentLocationService(context)
     private val deviceRepository = DeviceRepository(context)
+
+    // 上次上报的位置坐标，用于最小距离过滤
+    @Volatile
+    private var lastReportedLat: Double = Double.NaN
+    @Volatile
+    private var lastReportedLng: Double = Double.NaN
+
+    // 最小位置变化阈值（米），低于此值时跳过上报
+    private val minDistanceThresholdMeters = 5.0
 
     /**
      * 获取当前设备ID
@@ -109,6 +119,30 @@ class LocationReportService(private val context: Context) {
             android.util.Log.i(TAG, "[位置上报服务] 定位类型: ${getLocationTypeName(locationResult.locationType)}")
             android.util.Log.i(TAG, "[位置上报服务] 精度: ${locationResult.accuracy}m")
 
+            // 最小距离过滤：位置变化不足 5 米时跳过上报，避免 GPS 精度波动导致地图抖动
+            if (!lastReportedLat.isNaN() && !lastReportedLng.isNaN()) {
+                val distance = DistanceCalculator.calculateDistance(
+                    lastReportedLat, lastReportedLng,
+                    latLng.latitude, latLng.longitude
+                )
+                if (distance < minDistanceThresholdMeters) {
+                    android.util.Log.d(TAG, "[位置上报服务] 位置变化 ${String.format("%.1f", distance)}m < ${minDistanceThresholdMeters}m，跳过上报")
+                    return Result.success(Device(
+                        id = getDeviceId(),
+                        name = getDeviceName(),
+                        ownerId = AuthRepository.getUserId(context),
+                        location = latLng,
+                        battery = getBatteryLevel(),
+                        lastUpdateTime = System.currentTimeMillis(),
+                        isOnline = true,
+                        deviceType = getDeviceType(),
+                        customName = getCustomDeviceName(),
+                        bearing = locationResult.bearing,
+                        speed = locationResult.speed
+                    ))
+                }
+            }
+
             val currentUserId = AuthRepository.getUserId(context)
             android.util.Log.i(TAG, "[位置上报服务] 步骤2: 构建设备对象...")
             android.util.Log.i(TAG, "[位置上报服务] 用户ID: $currentUserId")
@@ -132,6 +166,10 @@ class LocationReportService(private val context: Context) {
             // 保存到本地数据库并通过 MQTT 同步
             android.util.Log.i(TAG, "[位置上报服务] 步骤3: 保存并同步到 MQTT...")
             deviceRepository.saveDevice(device)
+
+            // 更新上次上报坐标，供后续最小距离过滤使用
+            lastReportedLat = latLng.latitude
+            lastReportedLng = latLng.longitude
 
             android.util.Log.i(TAG, "[位置上报服务] ✓ 位置上报成功")
             android.util.Log.i(TAG, "[位置上报服务] 设备名: ${device.name}")
@@ -168,5 +206,6 @@ class LocationReportService(private val context: Context) {
      */
     fun destroy() {
         tencentLocationService.destroy()
+        deviceRepository.destroy()
     }
 }

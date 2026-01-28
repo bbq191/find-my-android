@@ -70,11 +70,4 @@ class AuthRepository(private val context: Context? = null) {
         }
     }
 
-    /**
-     * 登出（空实现）
-     * Android ID 无需登出
-     */
-    fun signOut() {
-        android.util.Log.d(TAG, "登出（无操作）")
-    }
 }

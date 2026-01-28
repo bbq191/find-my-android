@@ -337,10 +337,8 @@ class GeofenceForegroundService : Service(), TencentLocationListener {
         // 释放定位管理器引用（防止泄漏）
         locationManager = null
 
-        // 清理围栏管理器
-        if (::geofenceManager.isInitialized) {
-            geofenceManager.destroy()
-        }
+        // 注意：不调用 geofenceManager.destroy()
+        // GeofenceManager 是全局单例，销毁后其他使用方会拿到已销毁的实例
 
         // 取消协程
         observeJob?.cancel()

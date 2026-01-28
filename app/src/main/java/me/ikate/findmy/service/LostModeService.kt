@@ -5,6 +5,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -231,7 +232,15 @@ class LostModeService : Service() {
             message = message,
             phoneNumber = phoneNumber
         )
-        startForeground(NotificationHelper.getLostModeNotificationId(), notification)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(
+                NotificationHelper.getLostModeNotificationId(),
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            )
+        } else {
+            startForeground(NotificationHelper.getLostModeNotificationId(), notification)
+        }
 
         // 播放声音
         if (playSound) {

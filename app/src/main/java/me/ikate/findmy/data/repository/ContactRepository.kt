@@ -44,6 +44,25 @@ class ContactRepository(private val context: Context) {
         private const val TAG = "ContactRepository"
     }
 
+    /**
+     * 异步发送 FCM 推送作为备用通道（不阻塞主流程）
+     * 统一封装 FCM 推送逻辑，消除重复代码
+     */
+    private fun <T> sendFcmAsync(description: String, block: suspend () -> Result<T>) {
+        fcmScope.launch {
+            try {
+                val fcmResult = block()
+                if (fcmResult.isSuccess) {
+                    Log.d(TAG, "${description}已通过 FCM 发送")
+                } else {
+                    Log.w(TAG, "FCM 推送失败: ${fcmResult.exceptionOrNull()?.message}")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "FCM 推送失败，已通过 MQTT 发送", e)
+            }
+        }
+    }
+
     // ====================================================================
     // 用户管理
     // ====================================================================
@@ -170,23 +189,14 @@ class ContactRepository(private val context: Context) {
                 Log.w(TAG, "邀请请求发送失败（已加入离线队列）")
             }
 
-            // 异步触发 FCM 推送作为备用通道（不阻塞主流程）
-            fcmScope.launch {
-                try {
-                    val fcmResult = PushWebhookService.sendShareRequest(
-                        targetUid = targetInput,
-                        senderId = currentUid,
-                        senderName = getCurrentUserName(),
-                        shareId = shareId
-                    )
-                    if (fcmResult.isSuccess) {
-                        Log.d(TAG, "邀请请求已通过 FCM 发送")
-                    } else {
-                        Log.w(TAG, "FCM 推送失败: ${fcmResult.exceptionOrNull()?.message}")
-                    }
-                } catch (e: Exception) {
-                    Log.w(TAG, "FCM 推送失败，已通过 MQTT 发送", e)
-                }
+            // 异步触发 FCM 推送作为备用通道
+            sendFcmAsync("邀请请求") {
+                PushWebhookService.sendShareRequest(
+                    targetUid = targetInput,
+                    senderId = currentUid,
+                    senderName = getCurrentUserName(),
+                    shareId = shareId
+                )
             }
 
             Result.success(shareId)
@@ -221,23 +231,14 @@ class ContactRepository(private val context: Context) {
                     Log.w(TAG, "接受响应发送失败（已加入离线队列）")
                 }
 
-                // 异步触发 FCM 推送作为备用通道（不阻塞主流程）
-                fcmScope.launch {
-                    try {
-                        val fcmResult = PushWebhookService.sendShareAccepted(
-                            targetUid = targetUserId,
-                            accepterId = getCurrentUid(),
-                            accepterName = getCurrentUserName(),
-                            shareId = shareId
-                        )
-                        if (fcmResult.isSuccess) {
-                            Log.d(TAG, "接受响应已通过 FCM 发送")
-                        } else {
-                            Log.w(TAG, "FCM 推送失败: ${fcmResult.exceptionOrNull()?.message}")
-                        }
-                    } catch (e: Exception) {
-                        Log.w(TAG, "FCM 推送失败，已通过 MQTT 发送", e)
-                    }
+                // 异步触发 FCM 推送作为备用通道
+                sendFcmAsync("接受响应") {
+                    PushWebhookService.sendShareAccepted(
+                        targetUid = targetUserId,
+                        accepterId = getCurrentUid(),
+                        accepterName = getCurrentUserName(),
+                        shareId = shareId
+                    )
                 }
             }
 
@@ -346,23 +347,14 @@ class ContactRepository(private val context: Context) {
                     Log.w(TAG, "拒绝响应发送失败（已加入离线队列）")
                 }
 
-                // 异步触发 FCM 推送作为备用通道（不阻塞主流程）
-                fcmScope.launch {
-                    try {
-                        val fcmResult = PushWebhookService.sendShareRejected(
-                            targetUid = targetUserId,
-                            rejecterId = getCurrentUid(),
-                            rejecterName = getCurrentUserName(),
-                            shareId = shareId
-                        )
-                        if (fcmResult.isSuccess) {
-                            Log.d(TAG, "拒绝响应已通过 FCM 发送")
-                        } else {
-                            Log.w(TAG, "FCM 推送失败: ${fcmResult.exceptionOrNull()?.message}")
-                        }
-                    } catch (e: Exception) {
-                        Log.w(TAG, "FCM 推送失败，已通过 MQTT 发送", e)
-                    }
+                // 异步触发 FCM 推送作为备用通道
+                sendFcmAsync("拒绝响应") {
+                    PushWebhookService.sendShareRejected(
+                        targetUid = targetUserId,
+                        rejecterId = getCurrentUid(),
+                        rejecterName = getCurrentUserName(),
+                        shareId = shareId
+                    )
                 }
             }
 
@@ -408,23 +400,14 @@ class ContactRepository(private val context: Context) {
                         Log.w(TAG, "移除通知发送失败（已加入离线队列）")
                     }
 
-                    // 异步触发 FCM 推送作为备用通道（不阻塞主流程）
-                    fcmScope.launch {
-                        try {
-                            val fcmResult = PushWebhookService.sendShareRemoved(
-                                targetUid = targetUserId,
-                                removerId = getCurrentUid(),
-                                removerName = getCurrentUserName(),
-                                shareId = shareId
-                            )
-                            if (fcmResult.isSuccess) {
-                                Log.d(TAG, "移除通知已通过 FCM 发送")
-                            } else {
-                                Log.w(TAG, "FCM 推送失败: ${fcmResult.exceptionOrNull()?.message}")
-                            }
-                        } catch (e: Exception) {
-                            Log.w(TAG, "FCM 推送失败，已通过 MQTT 发送", e)
-                        }
+                    // 异步触发 FCM 推送作为备用通道
+                    sendFcmAsync("移除通知") {
+                        PushWebhookService.sendShareRemoved(
+                            targetUid = targetUserId,
+                            removerId = getCurrentUid(),
+                            removerName = getCurrentUserName(),
+                            shareId = shareId
+                        )
                     }
                 }
             } else {
@@ -463,22 +446,13 @@ class ContactRepository(private val context: Context) {
                     Log.w(TAG, "暂停共享通知发送失败（已加入离线队列）")
                 }
 
-                // 异步触发 FCM 推送作为备用通道（不阻塞主流程）
-                fcmScope.launch {
-                    try {
-                        val fcmResult = PushWebhookService.sendSharePaused(
-                            targetUid = targetUserId,
-                            senderId = getCurrentUid(),
-                            senderName = getCurrentUserName()
-                        )
-                        if (fcmResult.isSuccess) {
-                            Log.d(TAG, "暂停共享通知已通过 FCM 发送")
-                        } else {
-                            Log.w(TAG, "FCM 推送失败: ${fcmResult.exceptionOrNull()?.message}")
-                        }
-                    } catch (e: Exception) {
-                        Log.w(TAG, "FCM 推送失败，已通过 MQTT 发送", e)
-                    }
+                // 异步触发 FCM 推送作为备用通道
+                sendFcmAsync("暂停共享通知") {
+                    PushWebhookService.sendSharePaused(
+                        targetUid = targetUserId,
+                        senderId = getCurrentUid(),
+                        senderName = getCurrentUserName()
+                    )
                 }
             }
 
@@ -526,22 +500,13 @@ class ContactRepository(private val context: Context) {
                     Log.w(TAG, "恢复共享通知发送失败（已加入离线队列）")
                 }
 
-                // 异步触发 FCM 推送作为备用通道（不阻塞主流程）
-                fcmScope.launch {
-                    try {
-                        val fcmResult = PushWebhookService.sendShareResumed(
-                            targetUid = targetUserId,
-                            senderId = getCurrentUid(),
-                            senderName = getCurrentUserName()
-                        )
-                        if (fcmResult.isSuccess) {
-                            Log.d(TAG, "恢复共享通知已通过 FCM 发送")
-                        } else {
-                            Log.w(TAG, "FCM 推送失败: ${fcmResult.exceptionOrNull()?.message}")
-                        }
-                    } catch (e: Exception) {
-                        Log.w(TAG, "FCM 推送失败，已通过 MQTT 发送", e)
-                    }
+                // 异步触发 FCM 推送作为备用通道
+                sendFcmAsync("恢复共享通知") {
+                    PushWebhookService.sendShareResumed(
+                        targetUid = targetUserId,
+                        senderId = getCurrentUid(),
+                        senderName = getCurrentUserName()
+                    )
                 }
             }
 
@@ -614,21 +579,12 @@ class ContactRepository(private val context: Context) {
                         }
 
                         // 异步触发 FCM 推送作为备用通道
-                        fcmScope.launch {
-                            try {
-                                val fcmResult = PushWebhookService.sendShareExpired(
-                                    targetUid = targetUserId,
-                                    senderId = currentUid,
-                                    senderName = currentUserName
-                                )
-                                if (fcmResult.isSuccess) {
-                                    Log.d(TAG, "过期通知已通过 FCM 发送给: $targetUserId")
-                                } else {
-                                    Log.w(TAG, "FCM 推送失败: ${fcmResult.exceptionOrNull()?.message}")
-                                }
-                            } catch (e: Exception) {
-                                Log.w(TAG, "FCM 推送失败，已通过 MQTT 发送", e)
-                            }
+                        sendFcmAsync("过期通知") {
+                            PushWebhookService.sendShareExpired(
+                                targetUid = targetUserId,
+                                senderId = currentUid,
+                                senderName = currentUserName
+                            )
                         }
                     }
                 }

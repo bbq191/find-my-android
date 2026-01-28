@@ -181,7 +181,6 @@ class MqttForegroundService : Service() {
 
     private lateinit var authRepository: AuthRepository
     private lateinit var contactRepository: ContactRepository
-    private lateinit var locationReportService: LocationReportService
 
     // 位置状态机
     private lateinit var stateMachine: LocationStateMachine
@@ -216,7 +215,6 @@ class MqttForegroundService : Service() {
         // 初始化依赖
         authRepository = AuthRepository(applicationContext)
         contactRepository = ContactRepository(applicationContext)
-        locationReportService = LocationReportService(application)
 
         // 初始化位置状态机
         stateMachine = LocationStateMachine.getInstance(applicationContext)
@@ -351,9 +349,8 @@ class MqttForegroundService : Service() {
         // 先取消所有协程（防止正在执行的协程访问已销毁的资源）
         serviceScope.cancel()
 
-        // 释放资源
+        // 释放资源（SmartLocationSyncManager.destroy() 内部会清理 LocationReportService）
         smartLocationSyncManager.destroy()
-        locationReportService.destroy()
 
         // 最后清除实例引用（确保所有清理工作完成后才允许创建新实例）
         // 使用同步确保线程安全
@@ -447,6 +444,9 @@ class MqttForegroundService : Service() {
                 val mqttManager = DeviceRepository.getMqttManager(applicationContext)
                 val mqttService = DeviceRepository.getMqttService(applicationContext)
 
+                // 会话版本检查已移至 MqttConnectionManager.connect() 内部
+                // 确保无论谁先调用 connect()，purge 都能在首次连接前执行
+
                 // 检查是否已连接
                 if (mqttManager.isConnected()) {
                     Log.d(TAG, "MQTT 已连接")
@@ -466,47 +466,20 @@ class MqttForegroundService : Service() {
                 Log.i(TAG, "[MQTT初始化] 当前用户ID: $userId")
                 Log.i(TAG, "[MQTT初始化] MQTT连接状态: ${mqttManager.isConnected()}")
                 if (userId != null) {
-                    // 清理旧版本遗留的无用订阅（持久会话会保留旧订阅）
-                    // 这些主题不再需要，释放 EMQX 订阅配额
-                    Log.i(TAG, "[MQTT初始化] 清理旧版遗留订阅...")
-                    mqttManager.unsubscribe(MqttConfig.getLocationTopic(userId))   // 自己的 location
-                    mqttManager.unsubscribe(MqttConfig.getPresenceTopic(userId))   // 自己的 presence
-                    mqttManager.unsubscribe(MqttConfig.getDebugTopic(userId))      // debug
-                    // 清理联系人的 presence 订阅（新版只订阅 location）
-                    val existingContacts = contactRepository.observeMyContacts().first()
-                    existingContacts.forEach { contact ->
-                        contact.targetUserId?.let { targetId ->
-                            mqttManager.unsubscribe(MqttConfig.getPresenceTopic(targetId))
-                        }
-                    }
-                    Log.i(TAG, "[MQTT初始化] 旧订阅清理完成")
-
-                    // 注意：不订阅自己的 location/presence（自己发布的消息无需订阅回来）
-                    // EMQX 订阅数有限（如 10 个），必须精打细算
-
-                    // 订阅共享主题（接收邀请和响应）— 2个主题
-                    mqttService.subscribeToShareTopics(userId)
-
-                    // 订阅请求主题（位置请求、发声等）— 1个主题
-                    val requestResult = mqttService.subscribeToRequestTopic(userId)
-                    if (requestResult.isSuccess) {
-                        Log.d(TAG, "已订阅请求主题")
-                        // 开始监听请求
-                        observeRequests(mqttService)
+                    // 使用通配符合并系统主题订阅（6 个 → 3 个），节省 EMQX Serverless 配额
+                    // EMQX Cloud Serverless 限制：每客户端最多 10 个订阅
+                    // 3 个系统 + 7 个联系人位置 = 10 个
+                    val systemResult = mqttService.subscribeToSystemTopics(userId)
+                    if (systemResult.isSuccess) {
+                        Log.i(TAG, "[MQTT初始化] 系统主题订阅成功（3个通配符）")
+                    } else {
+                        Log.e(TAG, "[MQTT初始化] 系统主题订阅部分失败")
                     }
 
-                    // 订阅暂停状态主题 — 1个主题
-                    mqttService.subscribeToSharePauseTopic(userId)
+                    // 开始监听请求
+                    observeRequests(mqttService)
 
-                    // 订阅围栏主题（事件 + 同步）— 2个主题
-                    val geofenceResult = mqttService.subscribeToGeofenceTopics(userId)
-                    if (geofenceResult.isSuccess) {
-                        Log.d(TAG, "已订阅围栏主题")
-                    }
-
-                    // 系统主题合计：6个（share/request + share/response + requests + share/pause + geofence/events + geofence/sync）
-                    // 剩余配额可用于联系人订阅（每个联系人 1 个 location 主题）
-                    Log.i(TAG, "[MQTT初始化] 系统主题订阅完成（6个），开始订阅联系人...")
+                    Log.i(TAG, "[MQTT初始化] 系统主题订阅完成（3个），开始订阅联系人...")
 
                     // 确保 MQTT 连接状态正确后再订阅联系人
                     if (mqttManager.isConnected()) {
@@ -552,7 +525,7 @@ class MqttForegroundService : Service() {
                 val hasTargetId = contact.targetUserId != null
 
                 if (statusOk && directionOk && notPaused && hasTargetId) {
-                    mqttService.subscribeToUser(contact.targetUserId!!)
+                    mqttService.subscribeToUser(contact.targetUserId)
                     subscribedCount++
                     Log.i(TAG, "[恢复订阅] ✓ 订阅: ${contact.targetUserId} (${contact.name})")
                 } else {
@@ -686,7 +659,7 @@ class MqttForegroundService : Service() {
      * 立即上报当前位置
      */
     private suspend fun reportLocationNow() {
-        val result = locationReportService.reportCurrentLocation()
+        val result = smartLocationSyncManager.reportCurrentLocation()
         result.fold(
             onSuccess = { Log.d(TAG, "位置上报成功") },
             onFailure = { Log.e(TAG, "位置上报失败", it) }

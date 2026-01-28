@@ -65,20 +65,25 @@ data class LocationMessage(
     fun toJson(): String = gson.toJson(this)
 
     /**
-     * 转换为领域模型
-     * 自动处理坐标系转换：WGS-84 → GCJ-02
+     * 将坐标转换为 GCJ-02（腾讯地图坐标系）
+     * wgs84: 需要转换；gcj02: 无需转换
+     * 注意: Gson 解析时 coordType 可能为 null（旧消息无此字段），默认按 wgs84 处理
      */
-    fun toDomain(): Device {
-        // 根据坐标系类型决定是否转换
-        // wgs84: 需要转换为 GCJ-02（腾讯地图使用）
-        // gcj02: 已经是火星坐标，无需转换
-        // 注意: Gson 解析时可能为 null（旧消息无此字段），默认按 wgs84 处理
+    private fun toGcj02Location(): com.tencent.tencentmap.mapsdk.maps.model.LatLng {
         val isWgs84 = coordType?.lowercase() != "gcj02"
-        val location = if (isWgs84) {
+        return if (isWgs84) {
             CoordinateConverter.wgs84ToGcj02(latitude, longitude)
         } else {
             latLngOf(latitude, longitude)
         }
+    }
+
+    /**
+     * 转换为领域模型
+     * 自动处理坐标系转换：WGS-84 → GCJ-02
+     */
+    fun toDomain(): Device {
+        val location = toGcj02Location()
 
         return Device(
             id = deviceId,
@@ -104,13 +109,7 @@ data class LocationMessage(
      * 存储转换后的 GCJ-02 坐标
      */
     fun toEntity(): DeviceEntity {
-        // 根据坐标系类型决定是否转换（null 时默认按 wgs84 处理）
-        val isWgs84 = coordType?.lowercase() != "gcj02"
-        val location = if (isWgs84) {
-            CoordinateConverter.wgs84ToGcj02(latitude, longitude)
-        } else {
-            latLngOf(latitude, longitude)
-        }
+        val location = toGcj02Location()
 
         return DeviceEntity(
             id = deviceId,

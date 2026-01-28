@@ -70,8 +70,5 @@ enum class PresenceStatus {
     ONLINE,
 
     @SerializedName("offline")
-    OFFLINE,
-
-    @SerializedName("away")
-    AWAY
+    OFFLINE
 }

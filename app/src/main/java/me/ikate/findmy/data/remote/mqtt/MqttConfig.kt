@@ -23,14 +23,23 @@ object MqttConfig {
     /** 保活间隔（秒） */
     const val KEEP_ALIVE_INTERVAL = 60
 
-    /** 是否自动重连 */
-    const val AUTO_RECONNECT = true
-
     /** 最大重连延迟（秒） */
     const val MAX_RECONNECT_DELAY = 128
 
     /** 最大重连次数（达到后停止重连，避免无限重试） */
     const val MAX_RECONNECT_ATTEMPTS = 5
+
+    /**
+     * 会话版本号
+     * 当订阅拓扑发生变化时递增此值，触发 clean session 连接以清除 EMQX 端的旧持久会话
+     * v1: 初始版本（6 个独立系统订阅）
+     * v2: 通配符合并（3 个系统订阅 + N 个联系人位置订阅）
+     * v3-v4: purge 逻辑移至 MqttConnectionManager.connect() 内部，确保在任何 connect 前执行
+     */
+    const val SESSION_VERSION = 5
+
+    /** SharedPreferences Key: 已同步的会话版本号 */
+    const val PREF_SESSION_VERSION = "mqtt_session_version"
 
     /** 消息保留时间 - QoS 1/2 消息的离线保留（秒）*/
     const val MESSAGE_EXPIRY_INTERVAL = 3600L // 1 小时
@@ -167,6 +176,24 @@ object MqttConfig {
      * @return 调试消息主题，如 "findmy/debug/uid123"
      */
     fun getDebugTopic(userId: String): String = "$TOPIC_DEBUG_PREFIX$userId"
+
+    // ==================== 通配符主题（节省 EMQX Serverless 订阅配额，上限 10 个/客户端） ====================
+
+    /**
+     * 获取用户的共享通配符主题
+     * 覆盖 share/request、share/response、share/pause 三个子主题
+     * @param userId 用户 ID
+     * @return 通配符主题，如 "findmy/share/+/uid123"
+     */
+    fun getShareWildcardTopic(userId: String): String = "findmy/share/+/$userId"
+
+    /**
+     * 获取用户的围栏通配符主题
+     * 覆盖 geofence/events、geofence/sync 两个子主题
+     * @param userId 用户 ID
+     * @return 通配符主题，如 "findmy/geofence/+/uid123"
+     */
+    fun getGeofenceWildcardTopic(userId: String): String = "findmy/geofence/+/$userId"
 
     /**
      * 生成客户端 ID

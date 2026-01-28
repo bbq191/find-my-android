@@ -39,6 +39,9 @@ class MqttConnectionManager(
     private val context: Context,
     private val clientId: String
 ) {
+    /** 标记本进程生命周期内是否已完成过 purge 检查，避免重复执行 */
+    @Volatile
+    private var sessionPurgeChecked = false
     companion object {
         private const val TAG = "MqttConnectionManager"
     }
@@ -140,6 +143,29 @@ class MqttConnectionManager(
         _connectionState.value = ConnectionState.Connecting
         reconnectAttempt = 0
 
+        // 首次连接前检查是否需要清除旧持久会话
+        if (!sessionPurgeChecked) {
+            sessionPurgeChecked = true
+            try {
+                val prefs = context.getSharedPreferences("mqtt_prefs", Context.MODE_PRIVATE)
+                val savedVersion = prefs.getInt(MqttConfig.PREF_SESSION_VERSION, 0)
+                if (savedVersion < MqttConfig.SESSION_VERSION) {
+                    Log.i(TAG, "[会话迁移] 检测到会话版本变更: v$savedVersion → v${MqttConfig.SESSION_VERSION}，执行 purge")
+                    val purgeResult = purgeSession()
+                    if (purgeResult.isSuccess) {
+                        prefs.edit().putInt(MqttConfig.PREF_SESSION_VERSION, MqttConfig.SESSION_VERSION).apply()
+                        Log.i(TAG, "[会话迁移] 旧会话已清除，版本号已更新")
+                    } else {
+                        Log.e(TAG, "[会话迁移] 清除旧会话失败，继续正常连接", purgeResult.exceptionOrNull())
+                    }
+                } else {
+                    Log.d(TAG, "[会话迁移] 版本匹配 (v$savedVersion)，无需清理")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "[会话迁移] 检查异常，跳过", e)
+            }
+        }
+
         try {
             // 创建客户端
             val persistence = MemoryPersistence()
@@ -216,6 +242,90 @@ class MqttConnectionManager(
                 }
             }
             pendingConnectCallbacks.clear()
+        }
+    }
+
+    /**
+     * 使用 cleanSession=true 连接后立即断开
+     * 用于清除 EMQX 端的旧持久会话（包括所有遗留订阅）
+     * 调用后客户端处于断开状态，需要再次调用 connect() 建立正常连接
+     *
+     * 使用 10 秒超时（比正常连接短），避免阻塞正常初始化流程
+     */
+    suspend fun purgeSession(): Result<Unit> = withContext(Dispatchers.IO) {
+        Log.i(TAG, "[会话清理] 开始 cleanSession 连接以清除旧持久会话...")
+
+        try {
+            // 整体超时保护：最多 15 秒完成 purge，避免阻塞正常连接
+            kotlinx.coroutines.withTimeout(15_000L) {
+                // 先断开已有连接
+                if (mqttClient?.isConnected == true) {
+                    disconnect()
+                }
+
+                val persistence = MemoryPersistence()
+                val tempClient = MqttAsyncClient(
+                    MqttConfig.brokerUrl,
+                    clientId,
+                    persistence
+                )
+
+                val options = MqttConnectOptions().apply {
+                    userName = MqttConfig.username
+                    password = MqttConfig.password.toCharArray()
+                    connectionTimeout = 10 // 10 秒超时，比正常连接更短
+                    keepAliveInterval = MqttConfig.KEEP_ALIVE_INTERVAL
+                    isAutomaticReconnect = false
+                    isCleanSession = true  // 关键：清除服务端持久会话
+
+                    if (MqttConfig.brokerUrl.startsWith("ssl://")) {
+                        socketFactory = SSLSocketFactory.getDefault()
+                    }
+                }
+
+                // 连接（cleanSession=true 会让 EMQX 清除该 clientId 的所有持久订阅）
+                suspendCancellableCoroutine { continuation ->
+                    tempClient.connect(options, null, object : IMqttActionListener {
+                        override fun onSuccess(asyncActionToken: IMqttToken?) {
+                            Log.i(TAG, "[会话清理] cleanSession 连接成功，旧会话已清除")
+                            continuation.resume(Unit)
+                        }
+                        override fun onFailure(asyncActionToken: IMqttToken?, exception: Throwable?) {
+                            Log.e(TAG, "[会话清理] cleanSession 连接失败", exception)
+                            continuation.resumeWithException(
+                                exception ?: Exception("cleanSession 连接失败")
+                            )
+                        }
+                    })
+                }
+
+                // 立即断开并关闭临时客户端
+                try {
+                    suspendCancellableCoroutine { continuation ->
+                        tempClient.disconnect(null, object : IMqttActionListener {
+                            override fun onSuccess(asyncActionToken: IMqttToken?) {
+                                Log.i(TAG, "[会话清理] 临时连接已断开")
+                                continuation.resume(Unit)
+                            }
+                            override fun onFailure(asyncActionToken: IMqttToken?, exception: Throwable?) {
+                                Log.w(TAG, "[会话清理] 断开临时连接失败", exception)
+                                continuation.resume(Unit) // 忽略断开失败
+                            }
+                        })
+                    }
+                } finally {
+                    try { tempClient.close() } catch (_: Exception) {}
+                }
+            }
+
+            Log.i(TAG, "[会话清理] 完成，EMQX 端旧订阅已全部清除")
+            Result.success(Unit)
+        } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+            Log.w(TAG, "[会话清理] 超时（15秒），跳过会话清理")
+            Result.failure(e)
+        } catch (e: Exception) {
+            Log.e(TAG, "[会话清理] 异常: ${e.message}", e)
+            Result.failure(e)
         }
     }
 
@@ -363,7 +473,9 @@ class MqttConnectionManager(
                     override fun onFailure(asyncActionToken: IMqttToken?, exception: Throwable?) {
                         Log.e(TAG, "取消订阅失败: $topic", exception)
                         subscribedTopics.remove(topic)
-                        continuation.resume(Unit) // 仍然继续
+                        continuation.resumeWithException(
+                            exception ?: Exception("取消订阅失败: $topic")
+                        )
                     }
                 })
             }

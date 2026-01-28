@@ -62,8 +62,6 @@ class SmartLocator private constructor(private val context: Context) {
     companion object {
         private const val TAG = "SmartLocator"
         private const val WORK_NAME_PERIODIC = "smart_location_periodic"
-        private const val WORK_NAME_GEOFENCE_CHECK = "geofence_check"
-
         // 自身位置围栏配置
         private const val SELF_GEOFENCE_ID = "self_location_fence"
         private const val SELF_GEOFENCE_RADIUS_METERS = 200f
@@ -400,13 +398,6 @@ class SmartLocator private constructor(private val context: Context) {
         // 自身围栏触发 - 说明自己移动了
         if (fenceId == SELF_GEOFENCE_ID) {
             triggerLocationReport(reason)
-
-            // 更新自身围栏位置
-            if (reason == TriggerReason.GEOFENCE_EXIT) {
-                scope.launch {
-                    updateSelfGeofence()
-                }
-            }
         }
     }
 
@@ -432,14 +423,6 @@ class SmartLocator private constructor(private val context: Context) {
                 Log.e(TAG, "设置自身位置围栏失败: $error")
             }
         )
-    }
-
-    /**
-     * 更新自身围栏到新位置
-     */
-    private suspend fun updateSelfGeofence() {
-        // 获取最新位置后更新围栏
-        // 这里需要等待位置上报完成后调用 setupSelfGeofence
     }
 
     /**

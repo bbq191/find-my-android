@@ -641,56 +641,49 @@ class LocationMqttService(
     }
 
     /**
-     * 订阅当前用户的共享主题（接收邀请和响应）
+     * 订阅所有系统主题（使用通配符合并，节省 EMQX Serverless 订阅配额）
+     *
+     * EMQX Cloud Serverless 限制每个客户端最多 10 个订阅。
+     * 使用通配符将 6 个系统主题合并为 3 个：
+     *   - findmy/share/+/{uid}     → 覆盖 share/request + share/response + share/pause
+     *   - findmy/requests/{uid}    → 位置请求（无法通配，路径层级不同）
+     *   - findmy/geofence/+/{uid}  → 覆盖 geofence/events + geofence/sync
+     * 剩余 7 个配额可用于联系人位置订阅。
+     *
      * @param userId 当前用户 ID
      */
-    suspend fun subscribeToShareTopics(userId: String): Result<Unit> {
-        val requestTopic = MqttConfig.getShareRequestTopic(userId)
-        val responseTopic = MqttConfig.getShareResponseTopic(userId)
+    suspend fun subscribeToSystemTopics(userId: String): Result<Unit> {
+        val shareWildcard = MqttConfig.getShareWildcardTopic(userId)
+        val requestTopic = MqttConfig.getRequestTopic(userId)
+        val geofenceWildcard = MqttConfig.getGeofenceWildcardTopic(userId)
+
+        Log.i(TAG, "[系统订阅] 开始订阅系统主题（通配符模式）...")
+        Log.i(TAG, "[系统订阅] 1. 共享通配符: $shareWildcard")
+        Log.i(TAG, "[系统订阅] 2. 请求主题: $requestTopic")
+        Log.i(TAG, "[系统订阅] 3. 围栏通配符: $geofenceWildcard")
+
+        val shareResult = mqttManager.subscribe(shareWildcard, qos = 1)
+        if (shareResult.isFailure) {
+            Log.e(TAG, "[系统订阅] 共享通配符订阅失败: ${shareResult.exceptionOrNull()?.message}")
+        }
 
         val requestResult = mqttManager.subscribe(requestTopic, qos = 1)
-        val responseResult = mqttManager.subscribe(responseTopic, qos = 1)
-
-        return if (requestResult.isSuccess && responseResult.isSuccess) {
-            Log.d(TAG, "已订阅共享主题: $userId")
-            Result.success(Unit)
-        } else {
-            Log.e(TAG, "订阅共享主题失败")
-            Result.failure(Exception("订阅共享主题失败"))
+        if (requestResult.isFailure) {
+            Log.e(TAG, "[系统订阅] 请求主题订阅失败: ${requestResult.exceptionOrNull()?.message}")
         }
-    }
 
-    /**
-     * 订阅当前用户的请求主题（接收位置请求、发声请求等）
-     * @param userId 当前用户 ID
-     */
-    suspend fun subscribeToRequestTopic(userId: String): Result<Unit> {
-        val requestTopic = MqttConfig.getRequestTopic(userId)
-        val result = mqttManager.subscribe(requestTopic, qos = 1)
-
-        return if (result.isSuccess) {
-            Log.d(TAG, "已订阅请求主题: $userId")
-            Result.success(Unit)
-        } else {
-            Log.e(TAG, "订阅请求主题失败")
-            Result.failure(Exception("订阅请求主题失败"))
+        val geofenceResult = mqttManager.subscribe(geofenceWildcard, qos = 1)
+        if (geofenceResult.isFailure) {
+            Log.e(TAG, "[系统订阅] 围栏通配符订阅失败: ${geofenceResult.exceptionOrNull()?.message}")
         }
-    }
 
-    /**
-     * 订阅当前用户的共享暂停状态主题
-     * @param userId 当前用户 ID
-     */
-    suspend fun subscribeToSharePauseTopic(userId: String): Result<Unit> {
-        val pauseTopic = MqttConfig.getSharePauseTopic(userId)
-        val result = mqttManager.subscribe(pauseTopic, qos = 1)
+        val allSuccess = shareResult.isSuccess && requestResult.isSuccess && geofenceResult.isSuccess
+        Log.i(TAG, "[系统订阅] 完成: share=${shareResult.isSuccess}, request=${requestResult.isSuccess}, geofence=${geofenceResult.isSuccess}")
 
-        return if (result.isSuccess) {
-            Log.d(TAG, "已订阅暂停状态主题: $userId")
+        return if (allSuccess) {
             Result.success(Unit)
         } else {
-            Log.e(TAG, "订阅暂停状态主题失败")
-            Result.failure(Exception("订阅暂停状态主题失败"))
+            Result.failure(Exception("部分系统主题订阅失败"))
         }
     }
 
@@ -969,57 +962,6 @@ class LocationMqttService(
         }
 
         return result
-    }
-
-    /**
-     * 订阅当前用户的围栏事件主题
-     * @param userId 当前用户 ID
-     */
-    suspend fun subscribeToGeofenceEventTopic(userId: String): Result<Unit> {
-        val eventTopic = MqttConfig.getGeofenceEventTopic(userId)
-        val result = mqttManager.subscribe(eventTopic, qos = 1)
-
-        return if (result.isSuccess) {
-            Log.d(TAG, "已订阅围栏事件主题: $userId")
-            Result.success(Unit)
-        } else {
-            Log.e(TAG, "订阅围栏事件主题失败")
-            Result.failure(Exception("订阅围栏事件主题失败"))
-        }
-    }
-
-    /**
-     * 订阅当前用户的围栏同步主题
-     * @param userId 当前用户 ID
-     */
-    suspend fun subscribeToGeofenceSyncTopic(userId: String): Result<Unit> {
-        val syncTopic = MqttConfig.getGeofenceSyncTopic(userId)
-        val result = mqttManager.subscribe(syncTopic, qos = 1)
-
-        return if (result.isSuccess) {
-            Log.d(TAG, "已订阅围栏同步主题: $userId")
-            Result.success(Unit)
-        } else {
-            Log.e(TAG, "订阅围栏同步主题失败")
-            Result.failure(Exception("订阅围栏同步主题失败"))
-        }
-    }
-
-    /**
-     * 订阅所有围栏相关主题
-     * @param userId 当前用户 ID
-     */
-    suspend fun subscribeToGeofenceTopics(userId: String): Result<Unit> {
-        val eventResult = subscribeToGeofenceEventTopic(userId)
-        val syncResult = subscribeToGeofenceSyncTopic(userId)
-
-        return if (eventResult.isSuccess && syncResult.isSuccess) {
-            Log.d(TAG, "已订阅所有围栏主题: $userId")
-            Result.success(Unit)
-        } else {
-            Log.e(TAG, "订阅围栏主题失败")
-            Result.failure(Exception("订阅围栏主题失败"))
-        }
     }
 
     /**

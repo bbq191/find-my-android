@@ -234,11 +234,10 @@ class ContactViewModel(
             try {
                 mqttService.locationUpdates.collect { device ->
                     // 收到位置更新，清除刷新状态
-                    device.ownerId?.let { ownerId ->
-                        if (trackingManager.isRefreshing(ownerId)) {
-                            Log.d(TAG, "[位置更新] 收到位置更新，清除刷新状态: $ownerId")
-                            trackingManager.onLocationReceived(ownerId)
-                        }
+                    val ownerId = device.ownerId
+                    if (trackingManager.isRefreshing(ownerId)) {
+                        Log.d(TAG, "[位置更新] 收到位置更新，清除刷新状态: $ownerId")
+                        trackingManager.onLocationReceived(ownerId)
                     }
                 }
             } catch (e: Exception) {
@@ -888,7 +887,7 @@ class ContactViewModel(
         // 释放定位服务资源
         locationReportService.destroy()
 
-        // 释放围栏管理器资源
-        geofenceManager.destroy()
+        // 注意：不调用 geofenceManager.destroy()
+        // GeofenceManager 是全局单例，ViewModel 销毁时不应销毁全局资源
     }
 }
